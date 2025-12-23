@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM BDD Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #141416;
+            --bg-tertiary: #1a1a1e;
+            --border-color: #2a2a2e;
+            --text-primary: #f0f0f0;
+            --text-secondary: #888;
+            --accent: #00d4aa;
+            --accent-hover: #00f5c4;
+            --error: #ff6b6b;
+            --success: #00d4aa;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .header h1 span {
+            color: var(--accent);
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+
+        /* Card */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        select, textarea {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 15px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.1);
+        }
+
+        select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23888' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 40px;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+        }
+
+        textarea::placeholder {
+            color: var(--text-secondary);
+        }
+
+        /* Model select - hidden by default */
+        #model-group {
+            display: none;
+        }
+
+        #model-group.visible {
+            display: block;
+        }
+
+        /* Button */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 14px 28px;
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg-primary);
+            width: 100%;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border-color);
+        }
+
+        .btn-download {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .btn-download:hover {
+            background: var(--accent-hover);
+        }
+
+        /* Loading spinner */
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Result Section */
+        #result {
+            display: none;
+        }
+
+        #result.visible {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .result-header .icon {
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 212, 170, 0.1);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .result-header .info h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .result-header .info p {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .result-header .badge {
+            margin-left: auto;
+            padding: 4px 10px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--accent);
+            text-transform: uppercase;
+        }
+
+        /* Preview */
+        .preview-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .preview-box {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #ccc;
+        }
+
+        .preview-box::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .preview-box::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .preview-box::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+
+        /* Action buttons */
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .action-buttons .btn {
+            flex: 1;
+        }
+
+        /* Error */
+        .error-message {
+            background: rgba(255, 107, 107, 0.1);
+            border: 1px solid rgba(255, 107, 107, 0.3);
+            border-radius: 8px;
+            padding: 16px;
+            color: var(--error);
+            font-size: 14px;
+            display: none;
+        }
+
+        .error-message.visible {
+            display: block;
+            animation: shake 0.4s ease;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        /* Examples */
+        .examples {
+            margin-top: 12px;
+        }
+
+        .examples-title {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .example-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .example-chip {
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .example-chip:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding-top: 32px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 <span>LLM</span> BDD Generator</h1>
+            <p>Generate BDD Feature files for hardware verification using AI</p>
+        </div>
+
+        <!-- Main Card -->
+        <div class="card">
+            <!-- LLM Selection -->
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="llm-select">LLM Provider</label>
+                    <select id="llm-select">
+                        <option value="groq">Groq (Fast & Free)</option>
+                        <option value="deepseek">DeepSeek (Chinese LLM)</option>
+                        <option value="openai">OpenAI (GPT-5 Series)</option>
+                        <option value="claude">Claude (Anthropic)</option>
+                        <option value="gemini">Gemini (Google)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="model-group">
+                    <label for="model-select">Model</label>
+                    <select id="model-select">
+                        <option value="gpt-5-mini">GPT-5 Mini (Recommended)</option>
+                        <option value="gpt-5">GPT-5</option>
+                        <option value="gpt-5.1">GPT-5.1</option>
+                        <option value="gpt-5.1-codex">GPT-5.1 Codex</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Input -->
+            <div class="form-group">
+                <label for="input-text">Requirements</label>
+                <textarea id="input-text" placeholder="Describe your ALU requirements...&#10;&#10;Example: 16-bit ALU with ADD, SUB, AND, OR operations"></textarea>
+
+                <div class="examples">
+                    <div class="examples-title">Quick examples:</div>
+                    <div class="example-chips">
+                        <span class="example-chip" onclick="setExample('16-bit ALU')">16-bit ALU</span>
+                        <span class="example-chip" onclick="setExample('32-bit ALU with ADD, SUB, XOR')">32-bit with ADD, SUB, XOR</span>
+                        <span class="example-chip" onclick="setExample('8-bit ALU: ADD(0000), SUB(0001), 10 tests each')">8-bit detailed</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Message -->
+            <div class="error-message" id="error-msg"></div>
+
+            <!-- Generate Button -->
+            <button class="btn btn-primary" id="generate-btn" onclick="generateBDD()">
+                <span id="btn-text">🚀 Generate BDD</span>
+                <div class="spinner" id="btn-spinner" style="display: none;"></div>
+            </button>
+        </div>
+
+        <!-- Result Section -->
+        <div class="card" id="result">
+            <div class="result-header">
+                <div class="icon">✅</div>
+                <div class="info">
+                    <h3 id="result-filename">alu_16bit_xxx.feature</h3>
+                    <p id="result-info">Generated with Groq</p>
+                </div>
+                <div class="badge" id="result-llm">GROQ</div>
+            </div>
+
+            <div class="preview-label">Preview</div>
+            <div class="preview-box" id="preview-content"></div>
+
+            <div class="action-buttons">
+                <button class="btn btn-download" id="download-btn" onclick="downloadFile()">
+                    📥 Download File
+                </button>
+                <button class="btn btn-secondary" onclick="resetForm()">
+                    🔄 Generate Another
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            Hardware Verification Pipeline • Step 1: BDD Generation
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentFilename = null;
+
+        // DOM Elements
+        const llmSelect = document.getElementById('llm-select');
+        const modelGroup = document.getElementById('model-group');
+        const modelSelect = document.getElementById('model-select');
+        const inputText = document.getElementById('input-text');
+        const generateBtn = document.getElementById('generate-btn');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+        const errorMsg = document.getElementById('error-msg');
+        const resultSection = document.getElementById('result');
+
+        // Show/hide model select for OpenAI
+        llmSelect.addEventListener('change', () => {
+            if (llmSelect.value === 'openai') {
+                modelGroup.classList.add('visible');
+            } else {
+                modelGroup.classList.remove('visible');
+            }
+        });
+
+        // Set example text
+        function setExample(text) {
+            inputText.value = text;
+            inputText.focus();
+        }
+
+        // Generate BDD
+        async function generateBDD() {
+            const llm = llmSelect.value;
+            const model = llm === 'openai' ? modelSelect.value : null;
+            const input = inputText.value.trim();
+
+            // Validate
+            if (!input) {
+                showError('Please enter your requirements');
+                return;
+            }
+
+            // Hide error & result
+            hideError();
+            resultSection.classList.remove('visible');
+
+            // Show loading
+            setLoading(true);
+
+            try {
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ llm, model, input })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Generation failed');
+                }
+
+                // Show result
+                showResult(data);
+
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Show result
+        function showResult(data) {
+            currentFilename = data.filename;
+
+            document.getElementById('result-filename').textContent = data.filename;
+            document.getElementById('result-info').textContent = `Generated with ${data.model || data.llm}`;
+            document.getElementById('result-llm').textContent = data.llm.toUpperCase();
+            document.getElementById('preview-content').textContent = data.preview;
+
+            resultSection.classList.add('visible');
+
+            // Scroll to result
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Download file
+        function downloadFile() {
+            if (!currentFilename) return;
+            window.location.href = `/api/download/${encodeURIComponent(currentFilename)}`;
+        }
+
+        // Reset form
+        function resetForm() {
+            resultSection.classList.remove('visible');
+            inputText.value = '';
+            inputText.focus();
+            currentFilename = null;
+
+            // Scroll to top
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Loading state
+        function setLoading(loading) {
+            generateBtn.disabled = loading;
+            btnText.style.display = loading ? 'none' : 'inline';
+            btnSpinner.style.display = loading ? 'inline-block' : 'none';
+
+            if (loading) {
+                btnText.textContent = 'Generating...';
+            } else {
+                btnText.textContent = '🚀 Generate BDD';
+            }
+            btnText.style.display = 'inline';
+        }
+
+        // Error handling
+        function showError(message) {
+            errorMsg.textContent = '❌ ' + message;
+            errorMsg.classList.add('visible');
+        }
+
+        function hideError() {
+            errorMsg.classList.remove('visible');
+        }
+
+        // Enter key to submit
+        inputText.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                generateBDD();
+            }
+        });
+    </script>
+</body>
+</html>

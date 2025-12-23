@@ -1,0 +1,25 @@
+# render.yaml - Render deployment configuration
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: llm-bdd-generator
+    runtime: python
+    region: frankfurt  # 德国节点
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: ENABLE_PROXY
+        value: "false"
+      - key: FLASK_DEBUG
+        value: "false"
+      # API Keys - set these in Render dashboard manually!
+      # Do NOT put actual keys here
+      # - key: GROQ_API_KEY
+      # - key: DEEPSEEK_API_KEY
+      # - key: OPENAI_API_KEY
+      # - key: ANTHROPIC_API_KEY
+      # - key: GEMINI_API_KEY
