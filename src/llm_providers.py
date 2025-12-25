@@ -239,6 +239,87 @@ class GeminiProvider(LLMProvider):
             print(f"⚠️  Gemini REST API request failed: {e}")
             return self._fallback_description(prompt)
 
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        """
+        Streaming API call for Gemini
+        Uses streamGenerateContent endpoint
+        """
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?key={self.api_key}"
+
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": prompt
+                }]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": 0.7
+            }
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(
+                url,
+                json=payload,
+                proxies=proxies,
+                stream=True,
+                timeout=120
+            )
+            response.raise_for_status()
+
+            buffer = ""
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    buffer += chunk.decode('utf-8')
+
+                    # Parse JSON array chunks from Gemini
+                    while True:
+                        try:
+                            if buffer.startswith('['):
+                                buffer = buffer[1:]
+                            if buffer.startswith(','):
+                                buffer = buffer[1:]
+                            buffer = buffer.strip()
+
+                            if not buffer or buffer == ']':
+                                break
+
+                            bracket_count = 0
+                            end_pos = -1
+                            for i, char in enumerate(buffer):
+                                if char == '{':
+                                    bracket_count += 1
+                                elif char == '}':
+                                    bracket_count -= 1
+                                    if bracket_count == 0:
+                                        end_pos = i + 1
+                                        break
+
+                            if end_pos > 0:
+                                json_str = buffer[:end_pos]
+                                buffer = buffer[end_pos:]
+
+                                data = json.loads(json_str)
+                                if 'candidates' in data:
+                                    for candidate in data['candidates']:
+                                        if 'content' in candidate:
+                                            parts = candidate['content'].get('parts', [])
+                                            for part in parts:
+                                                if 'text' in part:
+                                                    yield part['text']
+                            else:
+                                break
+                        except json.JSONDecodeError:
+                            break
+
+        except Exception as e:
+            print(f"⚠️ Gemini streaming failed: {e}")
+            result = self._call_api_rest(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
+
     def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
         """统一的 API 调用接口"""
         if self.use_sdk:
@@ -359,6 +440,68 @@ class GroqProvider(LLMProvider):
         except Exception as e:
             print(f"⚠️  Groq API request failed: {e}")
             return self._fallback_description(prompt)
+
+        def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+            """
+            Streaming API call for Groq
+            Yields chunks of generated text
+            """
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": system_prompt or "You are a hardware verification expert."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": max_tokens,
+                "temperature": 0.7,
+                "stream": True
+            }
+
+            try:
+                proxies = self._get_proxies()
+                response = requests.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload,
+                    proxies=proxies,
+                    stream=True,
+                    timeout=120
+                )
+                response.raise_for_status()
+
+                for line in response.iter_lines():
+                    if line:
+                        line = line.decode('utf-8')
+                        if line.startswith('data: '):
+                            data = line[6:]
+                            if data == '[DONE]':
+                                break
+                            try:
+                                chunk_data = json.loads(data)
+                                if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                    delta = chunk_data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        yield content
+                            except json.JSONDecodeError:
+                                continue
+
+            except Exception as e:
+                print(f"⚠️ Groq streaming failed: {e}")
+                result = self._call_api(prompt, max_tokens, system_prompt)
+                if result:
+                    yield result
 
     def generate_scenario_description(
             self,
@@ -643,6 +786,67 @@ Generate a concise Feature description (2-4 sentences):
             return self._fallback_intent_json(prompt)
         return "Test ALU operation with various input values and verify correct output"
 
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        """
+        Streaming API call for DeepSeek
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                proxies=proxies,
+                stream=True,
+                timeout=180
+            )
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+
+        except Exception as e:
+            print(f"⚠️ DeepSeek streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
+
 
 # ========== PAID PROVIDERS ==========
 
@@ -756,6 +960,55 @@ class OpenAIProvider(LLMProvider):
                 )
 
             return self._fallback_text()
+
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        """
+        Streaming API call for OpenAI
+        """
+        try:
+            if not hasattr(self, 'client') or self.client is None:
+                result = self._call_api(prompt, max_tokens, system_prompt)
+                if result:
+                    yield result
+                return
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+
+            params = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True
+            }
+
+            if 'gpt-5' in self.model.lower():
+                params['max_completion_tokens'] = max_tokens
+                params['temperature'] = 1
+            else:
+                params['max_tokens'] = max_tokens
+                params['temperature'] = 0.7
+
+            response = self.client.chat.completions.create(**params)
+
+            for chunk in response:
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, 'content') and delta.content:
+                        yield delta.content
+
+        except Exception as e:
+            print(f"⚠️ OpenAI streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
 
     def _call_api_with_json_mode(
             self,
@@ -1143,6 +1396,66 @@ Requirements:
 Generate the scenario description:
 """
         return self._call_api(prompt, max_tokens=150)
+
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        """
+        Streaming API call for Claude
+        """
+        url = "https://api.anthropic.com/v1/messages"
+
+        headers = {
+            "x-api-key": self.api_key,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+        }
+
+        payload = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "stream": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                proxies=proxies,
+                stream=True,
+                timeout=120
+            )
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        try:
+                            event = json.loads(data)
+                            if event.get('type') == 'content_block_delta':
+                                delta = event.get('delta', {})
+                                text = delta.get('text', '')
+                                if text:
+                                    yield text
+                        except json.JSONDecodeError:
+                            continue
+
+        except Exception as e:
+            print(f"⚠️ Claude streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
 
     def generate_feature_description(
             self,

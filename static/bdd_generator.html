@@ -5,24 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM BDD Generator</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"
-          rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f9f9fb;
-    --bg-tertiary: #f1f3f5;
-    --border-color: #e0e0e6;
+            --bg-primary: #ffffff;
+            --bg-secondary: #f9fafb;
+            --bg-tertiary: #f3f4f6;
 
-    --text-primary: #1a1a1a;
-    --text-secondary: #666666;
+            --border-color: #e5e7eb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
 
-    --accent: #0066ff;
-    --accent-hover: #0050cc;
-
-    --error: #d32f2f;
-    --success: #2e7d32;
-    }
+            --error: #dc2626;
+            --success: #16a34a;
+        }
 
         * {
             margin: 0;
@@ -39,7 +37,7 @@
         }
 
         .container {
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
             padding: 40px 24px;
         }
@@ -142,7 +140,6 @@
             color: var(--text-secondary);
         }
 
-        /* Model select - hidden by default */
         #model-group {
             display: none;
         }
@@ -216,6 +213,35 @@
             to { transform: rotate(360deg); }
         }
 
+        /* Streaming status */
+        .stream-status {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+
+        .stream-status.visible {
+            display: flex;
+        }
+
+        .stream-status .dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
         /* Result Section */
         #result {
             display: none;
@@ -281,6 +307,22 @@
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .preview-label .streaming-indicator {
+            display: none;
+            width: 6px;
+            height: 6px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: pulse 0.8s ease-in-out infinite;
+        }
+
+        .preview-label .streaming-indicator.active {
+            display: inline-block;
         }
 
         .preview-box {
@@ -291,7 +333,8 @@
             font-family: 'JetBrains Mono', monospace;
             font-size: 13px;
             line-height: 1.7;
-            max-height: 300px;
+            min-height: 200px;
+            max-height: 400px;
             overflow-y: auto;
             white-space: pre-wrap;
             word-break: break-word;
@@ -309,6 +352,22 @@
         .preview-box::-webkit-scrollbar-thumb {
             background: var(--border-color);
             border-radius: 3px;
+        }
+
+        /* Cursor animation for streaming */
+        .preview-box .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1.2em;
+            background: var(--accent);
+            animation: blink 0.8s step-end infinite;
+            vertical-align: text-bottom;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
         }
 
         /* Action buttons */
@@ -386,103 +445,179 @@
             font-size: 13px;
         }
 
+        /* Toggle switch for streaming */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-top: 1px solid var(--border-color);
+            margin-top: 16px;
+        }
 
+        .toggle-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
 
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+        }
 
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 26px;
+            transition: 0.3s;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+            background: var(--bg-primary);
+        }
     </style>
 </head>
 <body>
-<div class="container">
-    <!-- Header -->
-    <div class="header">
-        <h1>🤖 <span>LLM</span> BDD Generator</h1>
-        <p>Generate BDD Feature files for hardware verification using AI</p>
-    </div>
-
-    <!-- Main Card -->
-    <div class="card">
-        <!-- LLM Selection -->
-        <div class="form-row">
-            <div class="form-group">
-                <label for="llm-select">LLM Provider</label>
-                <select id="llm-select">
-                    <option value="groq">Groq (Fast & Free)</option>
-                    <option value="deepseek">DeepSeek (Chinese LLM)</option>
-                    <option value="openai">OpenAI (GPT-5 Series)</option>
-                    <option value="claude">Claude (Anthropic)</option>
-                    <option value="gemini">Gemini (Google)</option>
-                </select>
-            </div>
-            <div class="form-group" id="model-group">
-                <label for="model-select">Model</label>
-                <select id="model-select">
-                    <option value="gpt-5-mini">GPT-5 Mini (Recommended)</option>
-                    <option value="gpt-5">GPT-5</option>
-                    <option value="gpt-5.1">GPT-5.1</option>
-                    <option value="gpt-5.1-codex">GPT-5.1 Codex</option>
-                </select>
-            </div>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 <span>LLM</span> BDD Generator</h1>
+            <p>Generate BDD Feature files for hardware verification using AI</p>
         </div>
 
-        <!-- Input -->
-        <div class="form-group">
-            <label for="input-text">Requirements</label>
-            <textarea id="input-text"
-                      placeholder="Describe your ALU requirements...&#10;&#10;Example: 16-bit ALU with ADD, SUB, AND, OR operations"></textarea>
-
-            <div class="examples">
-                <div class="examples-title">Quick examples:</div>
-                <div class="example-chips">
-                    <span class="example-chip" onclick="setExample('16-bit ALU')">16-bit ALU</span>
-                    <span class="example-chip" onclick="setExample('32-bit ALU with ADD, SUB, XOR')">32-bit with ADD, SUB, XOR</span>
-                    <span class="example-chip" onclick="setExample('8-bit ALU: ADD(0000), SUB(0001), 10 tests each')">8-bit detailed</span>
+        <!-- Main Card -->
+        <div class="card">
+            <!-- LLM Selection -->
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="llm-select">LLM Provider</label>
+                    <select id="llm-select">
+                        <option value="groq">Groq (Fast & Free)</option>
+                        <option value="deepseek">DeepSeek (Chinese LLM)</option>
+                        <option value="openai">OpenAI (GPT-5 Series)</option>
+                        <option value="claude">Claude (Anthropic)</option>
+                        <option value="gemini">Gemini (Google)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="model-group">
+                    <label for="model-select">Model</label>
+                    <select id="model-select">
+                        <option value="gpt-5-mini">GPT-5 Mini (Recommended)</option>
+                        <option value="gpt-5">GPT-5</option>
+                        <option value="gpt-5.1">GPT-5.1</option>
+                        <option value="gpt-5.1-codex">GPT-5.1 Codex</option>
+                    </select>
                 </div>
             </div>
-        </div>
 
-        <!-- Error Message -->
-        <div class="error-message" id="error-msg"></div>
+            <!-- Input -->
+            <div class="form-group">
+                <label for="input-text">Requirements</label>
+                <textarea id="input-text" placeholder="Describe your ALU requirements...&#10;&#10;Example: 16-bit ALU with ADD, SUB, AND, OR operations"></textarea>
 
-        <!-- Generate Button -->
-        <button class="btn btn-primary" id="generate-btn" onclick="generateBDD()">
-            <span id="btn-text">🚀 Generate BDD</span>
-            <div class="spinner" id="btn-spinner" style="display: none;"></div>
-        </button>
-    </div>
-
-    <!-- Result Section -->
-    <div class="card" id="result">
-        <div class="result-header">
-            <div class="icon">✅</div>
-            <div class="info">
-                <h3 id="result-filename">alu_16bit_xxx.feature</h3>
-                <p id="result-info">Generated with Groq</p>
+                <div class="examples">
+                    <div class="examples-title">Quick examples:</div>
+                    <div class="example-chips">
+                        <span class="example-chip" onclick="setExample('16-bit ALU')">16-bit ALU</span>
+                        <span class="example-chip" onclick="setExample('32-bit ALU with ADD, SUB, XOR')">32-bit with ADD, SUB, XOR</span>
+                        <span class="example-chip" onclick="setExample('8-bit ALU: ADD(0000), SUB(0001), 10 tests each')">8-bit detailed</span>
+                    </div>
+                </div>
             </div>
-            <div class="badge" id="result-llm">GROQ</div>
+
+            <!-- Streaming Toggle -->
+            <div class="toggle-row">
+                <span class="toggle-label">⚡ Stream output (real-time display)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="stream-toggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <!-- Error Message -->
+            <div class="error-message" id="error-msg"></div>
+
+            <!-- Streaming Status -->
+            <div class="stream-status" id="stream-status">
+                <div class="dot"></div>
+                <span id="status-text">Connecting to LLM...</span>
+            </div>
+
+            <!-- Generate Button -->
+            <button class="btn btn-primary" id="generate-btn" onclick="generateBDD()">
+                <span id="btn-text">🚀 Generate BDD</span>
+                <div class="spinner" id="btn-spinner" style="display: none;"></div>
+            </button>
         </div>
 
-        <div class="preview-label">Preview</div>
-        <div class="preview-box" id="preview-content"></div>
+        <!-- Result Section -->
+        <div class="card" id="result">
+            <div class="result-header">
+                <div class="icon">✅</div>
+                <div class="info">
+                    <h3 id="result-filename">alu_16bit_xxx.feature</h3>
+                    <p id="result-info">Generated with Groq</p>
+                </div>
+                <div class="badge" id="result-llm">GROQ</div>
+            </div>
 
-        <div class="action-buttons">
-            <button class="btn btn-download" id="download-btn" onclick="downloadFile()">
-                📥 Download File
-            </button>
-            <button class="btn btn-secondary" onclick="resetForm()">
-                🔄 Generate Another
-            </button>
+            <div class="preview-label">
+                Preview
+                <span class="streaming-indicator" id="streaming-indicator"></span>
+            </div>
+            <div class="preview-box" id="preview-content"></div>
+
+            <div class="action-buttons">
+                <button class="btn btn-download" id="download-btn" onclick="downloadFile()">
+                    📥 Download File
+                </button>
+                <button class="btn btn-secondary" onclick="resetForm()">
+                    🔄 Generate Another
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            Hardware Verification Pipeline • Step 1: BDD Generation
         </div>
     </div>
 
-    <!-- Footer -->
-    <div class="footer">
-        Hardware Verification Pipeline • Step 1: BDD Generation
-    </div>
-</div>
-
-<script>
+    <script>
         // State
         let currentFilename = null;
+        let eventSource = null;
 
         // DOM Elements
         const llmSelect = document.getElementById('llm-select');
@@ -494,6 +629,11 @@
         const btnSpinner = document.getElementById('btn-spinner');
         const errorMsg = document.getElementById('error-msg');
         const resultSection = document.getElementById('result');
+        const streamToggle = document.getElementById('stream-toggle');
+        const streamStatus = document.getElementById('stream-status');
+        const statusText = document.getElementById('status-text');
+        const previewContent = document.getElementById('preview-content');
+        const streamingIndicator = document.getElementById('streaming-indicator');
 
         // Show/hide model select for OpenAI
         llmSelect.addEventListener('change', () => {
@@ -515,20 +655,126 @@
             const llm = llmSelect.value;
             const model = llm === 'openai' ? modelSelect.value : null;
             const input = inputText.value.trim();
+            const useStreaming = streamToggle.checked;
 
-            // Validate
             if (!input) {
                 showError('Please enter your requirements');
                 return;
             }
 
-            // Hide error & result
             hideError();
-            resultSection.classList.remove('visible');
-
-            // Show loading
             setLoading(true);
 
+            if (useStreaming) {
+                await generateWithStreaming(llm, model, input);
+            } else {
+                await generateWithoutStreaming(llm, model, input);
+            }
+        }
+
+        // Streaming generation
+        async function generateWithStreaming(llm, model, input) {
+            // Show result section and streaming status
+            resultSection.classList.add('visible');
+            streamStatus.classList.add('visible');
+            streamingIndicator.classList.add('active');
+            previewContent.innerHTML = '<span class="cursor"></span>';
+
+            document.getElementById('result-filename').textContent = 'Generating...';
+            document.getElementById('result-info').textContent = `Using ${llm.toUpperCase()}`;
+            document.getElementById('result-llm').textContent = llm.toUpperCase();
+            document.getElementById('download-btn').style.display = 'none';
+
+            // Scroll to result
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            let fullContent = '';
+
+            try {
+                const response = await fetch('/api/generate-stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ llm, model, input })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleStreamEvent(data, (chunk) => {
+                                    fullContent += chunk;
+                                    updatePreview(fullContent, true);
+                                });
+                            } catch (e) {
+                                // Ignore parse errors
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                setLoading(false);
+                streamStatus.classList.remove('visible');
+                streamingIndicator.classList.remove('active');
+                updatePreview(fullContent, false);
+            }
+        }
+
+        // Handle stream events
+        function handleStreamEvent(data, onChunk) {
+            switch (data.type) {
+                case 'start':
+                    statusText.textContent = `Connected to ${data.llm.toUpperCase()}...`;
+                    break;
+                case 'info':
+                    statusText.textContent = data.message;
+                    break;
+                case 'chunk':
+                    onChunk(data.content);
+                    break;
+                case 'complete':
+                    currentFilename = data.filename;
+                    document.getElementById('result-filename').textContent = data.filename;
+                    document.getElementById('result-info').textContent = `Generated successfully`;
+                    document.getElementById('download-btn').style.display = 'flex';
+                    break;
+                case 'error':
+                    showError(data.message);
+                    break;
+            }
+        }
+
+        // Update preview with cursor
+        function updatePreview(content, showCursor) {
+            if (showCursor) {
+                previewContent.innerHTML = escapeHtml(content) + '<span class="cursor"></span>';
+            } else {
+                previewContent.textContent = content;
+            }
+            // Auto-scroll to bottom
+            previewContent.scrollTop = previewContent.scrollHeight;
+        }
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Non-streaming generation (original)
+        async function generateWithoutStreaming(llm, model, input) {
             try {
                 const response = await fetch('/api/generate', {
                     method: 'POST',
@@ -542,7 +788,6 @@
                     throw new Error(data.error || 'Generation failed');
                 }
 
-                // Show result
                 showResult(data);
 
             } catch (error) {
@@ -552,18 +797,17 @@
             }
         }
 
-        // Show result
+        // Show result (non-streaming)
         function showResult(data) {
             currentFilename = data.filename;
 
             document.getElementById('result-filename').textContent = data.filename;
             document.getElementById('result-info').textContent = `Generated with ${data.model || data.llm}`;
             document.getElementById('result-llm').textContent = data.llm.toUpperCase();
-            document.getElementById('preview-content').textContent = data.preview;
+            previewContent.textContent = data.full_content || data.preview;
+            document.getElementById('download-btn').style.display = 'flex';
 
             resultSection.classList.add('visible');
-
-            // Scroll to result
             resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
@@ -576,18 +820,18 @@
         // Reset form
         function resetForm() {
             resultSection.classList.remove('visible');
+            streamStatus.classList.remove('visible');
             inputText.value = '';
             inputText.focus();
             currentFilename = null;
+            previewContent.textContent = '';
 
-            // Scroll to top
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         // Loading state
         function setLoading(loading) {
             generateBtn.disabled = loading;
-            btnText.style.display = loading ? 'none' : 'inline';
             btnSpinner.style.display = loading ? 'inline-block' : 'none';
 
             if (loading) {
@@ -595,7 +839,6 @@
             } else {
                 btnText.textContent = '🚀 Generate BDD';
             }
-            btnText.style.display = 'inline';
         }
 
         // Error handling
@@ -614,10 +857,6 @@
                 generateBDD();
             }
         });
-
-
-
-
-</script>
+    </script>
 </body>
 </html>
