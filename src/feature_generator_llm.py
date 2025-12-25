@@ -463,13 +463,13 @@ Output ONLY the Feature file content, no explanations.
 
             # Use correct token parameter
             if 'gpt-5' in model.lower():
-                params['max_completion_tokens'] = 4000
+                params['max_completion_tokens'] = 16000
             else:
-                params['max_tokens'] = 4000
+                params['max_tokens'] = 8000
 
             if self.debug:
                 print(f"   🔍 Model: {model}")
-                print(f"   🔍 Max tokens: {'max_completion_tokens' if 'gpt-5' in model.lower() else 'max_tokens'} = 4000")
+                print(f"   🔍 Max tokens: {'max_completion_tokens' if 'gpt-5' in model.lower() else 'max_tokens'} = 8000")
 
             # Call API
             response = self.llm.client.chat.completions.create(**params)
