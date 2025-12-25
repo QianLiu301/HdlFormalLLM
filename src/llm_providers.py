@@ -168,7 +168,7 @@ class GeminiProvider(LLMProvider):
             self.sleep_seconds = 2.0
         else:
             # 降级到旧的 REST API 方式
-            self.model = model or "gemini-2.0-flash"
+            self.model = model or "gemini-2.5-flash"
             self.use_sdk = False
             print("⚠️  Using REST API fallback. For better reliability, install: pip install -U google-genai")
 
