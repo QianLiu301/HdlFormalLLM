@@ -268,11 +268,17 @@
 Example: 16-bit ALU with ADD, SUB, AND, OR operations"></textarea>
                 <div class="examples">
                     <div class="examples-title">Examples:</div>
-                    <div class="example-chips">
-                        <span class="example-chip" onclick="setBddExample('16-bit ALU')">16-bit ALU</span>
-                        <span class="example-chip" onclick="setBddExample('32-bit ALU with ADD, SUB, XOR')">32-bit with ADD, SUB, XOR</span>
-                        <span class="example-chip"
-                              onclick="setBddExample('8-bit ALU: ADD(0000), SUB(0001), 10 tests each')">8-bit detailed</span>
+                    <div class="examples">
+                        <div class="examples-title">Examples:</div>
+                        <div class="example-chips">
+                            <span class="example-chip" onclick="setBddExample('16-bit ALU with ADD, SUB, AND, OR')">16-bit ALU basic</span>
+                            <span class="example-chip"
+                                  onclick="setBddExample('32-bit ALU: ADD, SUB with overflow tests')">32-bit overflow tests</span>
+                            <span class="example-chip"
+                                  onclick="setBddExample('8-bit ALU with boundary values 0x00, 0xFF')">8-bit boundary</span>
+                            <span class="example-chip"
+                                  onclick="setBddExample('16-bit ALU: 10 random test cases for each operation')">16-bit random tests</span>
+                        </div>
                     </div>
                 </div>
             </div>
