@@ -146,7 +146,7 @@ except ImportError as e:
     print(f"⚠️ Counter module not available: {e}")
 
 try:
-    from regfile_generator import RegFileGenerator
+    from register_generator import RegFileGenerator
     HAS_REGFILE_MODULE = True
     print("✅ Register File Generator module loaded")
 except ImportError as e:
