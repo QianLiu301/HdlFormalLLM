@@ -4,6 +4,9 @@ LLM Hardware Generator - Flask Backend
 
 Supports:
 - ALU Verilog Generation
+- Counter Verilog Generation
+- Register File (Coming Soon)
+- CPU (Coming Soon)
 - BDD Test Scenario Generation
 - Streaming output (SSE)
 """
@@ -116,6 +119,9 @@ setup_api_keys()
 # ============================================================================
 HAS_BDD_MODULE = False
 HAS_ALU_MODULE = False
+HAS_COUNTER_MODULE = False
+HAS_REGFILE_MODULE = False
+HAS_CPU_MODULE = False
 
 try:
     from feature_generator_llm import FeatureGeneratorLLM
@@ -132,6 +138,27 @@ try:
 except ImportError as e:
     print(f"⚠️ ALU module not available: {e}")
 
+try:
+    from counter_generator import CounterGenerator
+    HAS_COUNTER_MODULE = True
+    print("✅ Counter Generator module loaded")
+except ImportError as e:
+    print(f"⚠️ Counter module not available: {e}")
+
+try:
+    from regfile_generator import RegFileGenerator
+    HAS_REGFILE_MODULE = True
+    print("✅ Register File Generator module loaded")
+except ImportError as e:
+    print(f"⚠️ Register File module not available: {e}")
+
+try:
+    from cpu_generator import CPUGenerator
+    HAS_CPU_MODULE = True
+    print("✅ CPU Generator module loaded")
+except ImportError as e:
+    print(f"⚠️ CPU module not available: {e}")
+
 # ============================================================================
 # Flask App
 # ============================================================================
@@ -142,7 +169,7 @@ CORS(app)
 
 # Store last generated files
 last_generated_bdd = {'filename': None, 'filepath': None, 'llm': None}
-last_generated_alu = {'filename': None, 'filepath': None, 'llm': None}
+last_generated_hw = {'filename': None, 'filepath': None, 'llm': None, 'module_type': None}
 
 # Ensure output directories exist
 (PROJECT_ROOT / 'output' / 'bdd').mkdir(parents=True, exist_ok=True)
@@ -167,150 +194,217 @@ def health_check():
         'status': 'healthy',
         'bdd_module': HAS_BDD_MODULE,
         'alu_module': HAS_ALU_MODULE,
+        'counter_module': HAS_COUNTER_MODULE,
+        'regfile_module': HAS_REGFILE_MODULE,
+        'cpu_module': HAS_CPU_MODULE,
         'timestamp': datetime.now().isoformat()
     })
 
 
 # ============================================================================
-# ALU Generator API
+# Hardware Generator API (ALU, Counter, etc.)
 # ============================================================================
-@app.route('/api/generate-alu', methods=['POST'])
-def generate_alu():
-    """Generate ALU Verilog (non-streaming)"""
-    if not HAS_ALU_MODULE:
-        return jsonify({
-            'success': False,
-            'error': 'ALU Generator module not available'
-        }), 500
-
-    try:
-        data = request.json
-        llm_name = data.get('llm', 'groq')
-        bitwidth = data.get('bitwidth', 16)
-        natural_input = data.get('input', '')
-
-        # Parse natural language if provided
-        if natural_input:
-            parsed = parse_alu_natural_language(natural_input)
-            bitwidth = parsed.get('bitwidth', bitwidth)
-            if parsed.get('llm'):
-                llm_name = parsed['llm']
-
-        print(f"\n{'='*60}")
-        print(f"🔧 Generating {bitwidth}-bit ALU")
-        print(f"{'='*60}")
-        print(f"   LLM: {llm_name.upper()}")
-        print(f"   Bitwidth: {bitwidth}")
-
-        generator = ALUGenerator(
-            llm_provider=llm_name,
-            project_root=str(PROJECT_ROOT),
-            debug=True
-        )
-
-        alu_path = generator.generate_alu(
-            bitwidth=bitwidth,
-            module_name='alu'
-        )
-
-        if not alu_path:
-            return jsonify({
-                'success': False,
-                'error': 'ALU generation failed'
-            }), 500
-
-        alu_path_obj = Path(alu_path)
-        if not alu_path_obj.exists():
-            return jsonify({
-                'success': False,
-                'error': f'File was not created: {alu_path}'
-            }), 500
-
-        with open(alu_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        last_generated_alu['filename'] = alu_path_obj.name
-        last_generated_alu['filepath'] = str(alu_path)
-        last_generated_alu['llm'] = llm_name
-
-        print(f"\n✅ Success! File: {alu_path_obj.name}")
-
-        return jsonify({
-            'success': True,
-            'filename': alu_path_obj.name,
-            'preview': content[:1000] + ('...' if len(content) > 1000 else ''),
-            'full_content': content,
-            'llm': llm_name,
-            'bitwidth': bitwidth,
-            'filepath': str(alu_path)
-        })
-
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-@app.route('/api/generate-alu-stream', methods=['POST'])
-def generate_alu_stream():
-    """Generate ALU Verilog with streaming output (SSE)"""
-    if not HAS_ALU_MODULE:
-        return jsonify({
-            'success': False,
-            'error': 'ALU Generator module not available'
-        }), 500
-
+@app.route('/api/generate-hardware', methods=['POST'])
+def generate_hardware():
+    """Generate hardware Verilog (non-streaming)"""
     data = request.json
+    module_type = data.get('module_type', 'alu')
     llm_name = data.get('llm', 'groq')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
 
     # Parse natural language if provided
     if natural_input:
-        parsed = parse_alu_natural_language(natural_input)
+        parsed = parse_hardware_natural_language(natural_input)
         bitwidth = parsed.get('bitwidth', bitwidth)
         if parsed.get('llm'):
             llm_name = parsed['llm']
+        if parsed.get('module_type'):
+            module_type = parsed['module_type']
 
-    def generate():
-        try:
-            yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth)
-            yield make_sse_message("info", message=f"Initializing {bitwidth}-bit ALU generator...")
+    print(f"\n{'='*60}")
+    print(f"🔧 Generating {bitwidth}-bit {module_type.upper()}")
+    print(f"{'='*60}")
+    print(f"   LLM: {llm_name.upper()}")
+    print(f"   Module: {module_type}")
+    print(f"   Bitwidth: {bitwidth}")
+
+    try:
+        if module_type == 'alu':
+            if not HAS_ALU_MODULE:
+                return jsonify({'success': False, 'error': 'ALU module not available'}), 500
 
             generator = ALUGenerator(
                 llm_provider=llm_name,
                 project_root=str(PROJECT_ROOT),
-                debug=False
+                debug=True
             )
+            hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
+
+        elif module_type == 'counter':
+            if not HAS_COUNTER_MODULE:
+                return jsonify({'success': False, 'error': 'Counter module not available'}), 500
+
+            generator = CounterGenerator(
+                llm_provider=llm_name,
+                project_root=str(PROJECT_ROOT),
+                debug=True
+            )
+            hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
+
+        elif module_type == 'regfile':
+            if not HAS_REGFILE_MODULE:
+                return jsonify({'success': False, 'error': 'Register File module not available'}), 500
+
+            depth = data.get('depth', 32)  # Number of registers
+            generator = RegFileGenerator(
+                llm_provider=llm_name,
+                project_root=str(PROJECT_ROOT),
+                debug=True
+            )
+            hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
+
+        elif module_type == 'cpu':
+            if not HAS_CPU_MODULE:
+                return jsonify({'success': False, 'error': 'CPU module not available'}), 500
+
+            pipeline_stages = data.get('pipeline_stages', 5)
+            generator = CPUGenerator(
+                llm_provider=llm_name,
+                project_root=str(PROJECT_ROOT),
+                debug=True
+            )
+            hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
+
+        else:
+            return jsonify({'success': False, 'error': f'Unknown module type: {module_type}'}), 400
+
+        if not hw_path:
+            return jsonify({'success': False, 'error': 'Generation failed'}), 500
+
+        hw_path_obj = Path(hw_path)
+        if not hw_path_obj.exists():
+            return jsonify({'success': False, 'error': f'File was not created'}), 500
+
+        with open(hw_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        last_generated_hw['filename'] = hw_path_obj.name
+        last_generated_hw['filepath'] = str(hw_path)
+        last_generated_hw['llm'] = llm_name
+        last_generated_hw['module_type'] = module_type
+
+        return jsonify({
+            'success': True,
+            'filename': hw_path_obj.name,
+            'preview': content[:1000] + ('...' if len(content) > 1000 else ''),
+            'full_content': content,
+            'llm': llm_name,
+            'bitwidth': bitwidth,
+            'module_type': module_type,
+            'filepath': str(hw_path)
+        })
+
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/generate-hardware-stream', methods=['POST'])
+def generate_hardware_stream():
+    """Generate hardware Verilog with streaming output (SSE)"""
+    data = request.json
+    module_type = data.get('module_type', 'alu')
+    llm_name = data.get('llm', 'groq')
+    bitwidth = data.get('bitwidth', 16)
+    natural_input = data.get('input', '')
+
+    # Parse natural language if provided
+    if natural_input:
+        parsed = parse_hardware_natural_language(natural_input)
+        bitwidth = parsed.get('bitwidth', bitwidth)
+        if parsed.get('llm'):
+            llm_name = parsed['llm']
+        if parsed.get('module_type'):
+            module_type = parsed['module_type']
+
+    def generate():
+        try:
+            yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth, module_type=module_type)
+            yield make_sse_message("info", message=f"Initializing {bitwidth}-bit {module_type.upper()} generator...")
+
+            # Select generator based on module type
+            if module_type == 'alu':
+                if not HAS_ALU_MODULE:
+                    yield make_sse_message("error", message="ALU module not available")
+                    return
+                generator = ALUGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=False
+                )
+                operations = {
+                    "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
+                    "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
+                    "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
+                    "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
+                }
+                prompt = generator._create_alu_prompt(bitwidth, operations, "alu")
+
+            elif module_type == 'counter':
+                if not HAS_COUNTER_MODULE:
+                    yield make_sse_message("error", message="Counter module not available")
+                    return
+                generator = CounterGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=False
+                )
+                modes = ['up', 'down', 'updown']
+                prompt = generator._create_counter_prompt(bitwidth, modes, "counter")
+
+            elif module_type == 'regfile':
+                if not HAS_REGFILE_MODULE:
+                    yield make_sse_message("error", message="Register File module not available")
+                    return
+                depth = data.get('depth', 32)
+                generator = RegFileGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=False
+                )
+                prompt = generator._create_regfile_prompt(bitwidth, depth, "regfile")
+
+            elif module_type == 'cpu':
+                if not HAS_CPU_MODULE:
+                    yield make_sse_message("error", message="CPU module not available")
+                    return
+                pipeline_stages = data.get('pipeline_stages', 5)
+                generator = CPUGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=False
+                )
+                prompt = generator._create_cpu_prompt(32, pipeline_stages, "riscv_cpu")
+
+            else:
+                yield make_sse_message("error", message=f"Unknown module type: {module_type}")
+                return
 
             yield make_sse_message("info", message=f"Calling {llm_name.upper()} API...")
 
-            # Get LLM and check for streaming support
+            # Get LLM and stream
             llm = generator.llm
-
-            # Create prompt
-            operations = {
-                "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
-                "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
-                "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
-                "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
-            }
-            prompt = generator._create_alu_prompt(bitwidth, operations, "alu")
-
             full_content = ""
 
             if hasattr(llm, '_call_api_stream'):
-                # Use streaming
                 for chunk in llm._call_api_stream(prompt, max_tokens=3000):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
             else:
-                # Fallback to non-streaming
                 yield make_sse_message("info", message="Using standard mode...")
                 response = llm._call_api(
                     prompt,
@@ -328,20 +422,31 @@ def generate_alu_stream():
                 yield make_sse_message("error", message="LLM returned empty response")
                 return
 
-            # Extract and validate Verilog
+            # Extract and save
             verilog_code = generator._extract_verilog(full_content)
             if not verilog_code:
                 verilog_code = full_content
 
-            # Save file
-            alu_path = generator._save_alu(verilog_code, "alu", bitwidth)
-            filename = Path(alu_path).name
+            # Save based on module type
+            if module_type == 'alu':
+                hw_path = generator._save_alu(verilog_code, "alu", bitwidth)
+            elif module_type == 'counter':
+                hw_path = generator._save_counter(verilog_code, "counter", bitwidth, ['up', 'down', 'updown'])
+            elif module_type == 'regfile':
+                depth = data.get('depth', 32)
+                hw_path = generator._save_regfile(verilog_code, "regfile", bitwidth, depth)
+            elif module_type == 'cpu':
+                pipeline_stages = data.get('pipeline_stages', 5)
+                hw_path = generator._save_cpu(verilog_code, "riscv_cpu", 32, pipeline_stages)
 
-            last_generated_alu['filename'] = filename
-            last_generated_alu['filepath'] = str(alu_path)
-            last_generated_alu['llm'] = llm_name
+            filename = Path(hw_path).name
 
-            yield make_sse_message("complete", filename=filename, filepath=str(alu_path))
+            last_generated_hw['filename'] = filename
+            last_generated_hw['filepath'] = str(hw_path)
+            last_generated_hw['llm'] = llm_name
+            last_generated_hw['module_type'] = module_type
+
+            yield make_sse_message("complete", filename=filename, filepath=str(hw_path))
 
         except Exception as e:
             import traceback
@@ -359,15 +464,15 @@ def generate_alu_stream():
     )
 
 
-@app.route('/api/download-alu/<filename>')
-def download_alu(filename):
-    """Download generated ALU file"""
-    print(f"\n📥 ALU Download request: {filename}")
+@app.route('/api/download-hardware/<filename>')
+def download_hardware(filename):
+    """Download generated hardware file"""
+    print(f"\n📥 Hardware Download request: {filename}")
 
     file_path = None
 
-    if last_generated_alu['filepath']:
-        candidate = Path(last_generated_alu['filepath'])
+    if last_generated_hw['filepath']:
+        candidate = Path(last_generated_hw['filepath'])
         if candidate.exists() and candidate.name == filename:
             file_path = candidate
 
@@ -388,16 +493,27 @@ def download_alu(filename):
     )
 
 
-@app.route('/api/list-alu')
-def list_alu_files():
-    """List generated ALU files"""
+@app.route('/api/list-hardware')
+def list_hardware_files():
+    """List generated hardware files"""
     dut_dir = PROJECT_ROOT / 'output' / 'dut'
     files = []
 
     if dut_dir.exists():
         for f in dut_dir.glob('*.v'):
+            module_type = 'unknown'
+            if 'alu' in f.name.lower():
+                module_type = 'alu'
+            elif 'counter' in f.name.lower():
+                module_type = 'counter'
+            elif 'regfile' in f.name.lower() or 'register' in f.name.lower():
+                module_type = 'regfile'
+            elif 'cpu' in f.name.lower():
+                module_type = 'cpu'
+
             files.append({
                 'filename': f.name,
+                'module_type': module_type,
                 'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
             })
 
@@ -405,12 +521,12 @@ def list_alu_files():
     return jsonify({'files': files})
 
 
-def parse_alu_natural_language(input_text):
-    """Parse natural language input for ALU generation"""
+def parse_hardware_natural_language(input_text):
+    """Parse natural language input for hardware generation"""
     import re
     input_lower = input_text.lower()
 
-    result = {'bitwidth': 16, 'llm': None}
+    result = {'bitwidth': 16, 'llm': None, 'module_type': None}
 
     # Parse bitwidth
     bitwidth_patterns = [
@@ -441,20 +557,184 @@ def parse_alu_natural_language(input_text):
                 result['llm'] = provider
                 break
 
+    # Parse module type
+    module_keywords = {
+        'alu': ['alu', 'arithmetic', 'logic unit'],
+        'counter': ['counter', 'count', '计数器'],
+        'regfile': ['register file', 'regfile', 'register bank', '寄存器'],
+        'cpu': ['cpu', 'processor', '处理器'],
+    }
+
+    for module, keywords in module_keywords.items():
+        for keyword in keywords:
+            if keyword in input_lower:
+                result['module_type'] = module
+                break
+
     return result
 
 
 # ============================================================================
-# BDD Generator API (existing)
+# Legacy ALU API (backward compatibility)
+# ============================================================================
+@app.route('/api/generate-alu', methods=['POST'])
+def generate_alu():
+    """Generate ALU Verilog (non-streaming) - Legacy"""
+    data = dict(request.json) if request.json else {}
+    data['module_type'] = 'alu'
+
+    # Manually call generate_hardware logic
+    module_type = 'alu'
+    llm_name = data.get('llm', 'groq')
+    bitwidth = data.get('bitwidth', 16)
+    natural_input = data.get('input', '')
+
+    if natural_input:
+        parsed = parse_hardware_natural_language(natural_input)
+        bitwidth = parsed.get('bitwidth', bitwidth)
+        if parsed.get('llm'):
+            llm_name = parsed['llm']
+
+    if not HAS_ALU_MODULE:
+        return jsonify({'success': False, 'error': 'ALU module not available'}), 500
+
+    try:
+        generator = ALUGenerator(
+            llm_provider=llm_name,
+            project_root=str(PROJECT_ROOT),
+            debug=True
+        )
+        hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
+
+        if not hw_path:
+            return jsonify({'success': False, 'error': 'Generation failed'}), 500
+
+        hw_path_obj = Path(hw_path)
+        with open(hw_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        last_generated_hw['filename'] = hw_path_obj.name
+        last_generated_hw['filepath'] = str(hw_path)
+        last_generated_hw['llm'] = llm_name
+        last_generated_hw['module_type'] = 'alu'
+
+        return jsonify({
+            'success': True,
+            'filename': hw_path_obj.name,
+            'full_content': content,
+            'llm': llm_name,
+            'bitwidth': bitwidth,
+            'module_type': 'alu',
+            'filepath': str(hw_path)
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/generate-alu-stream', methods=['POST'])
+def generate_alu_stream():
+    """Generate ALU with streaming - Legacy"""
+    data = dict(request.json) if request.json else {}
+    module_type = 'alu'
+    llm_name = data.get('llm', 'groq')
+    bitwidth = data.get('bitwidth', 16)
+    natural_input = data.get('input', '')
+
+    if natural_input:
+        parsed = parse_hardware_natural_language(natural_input)
+        bitwidth = parsed.get('bitwidth', bitwidth)
+        if parsed.get('llm'):
+            llm_name = parsed['llm']
+
+    def generate():
+        try:
+            yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth, module_type='alu')
+            yield make_sse_message("info", message=f"Initializing {bitwidth}-bit ALU generator...")
+
+            if not HAS_ALU_MODULE:
+                yield make_sse_message("error", message="ALU module not available")
+                return
+
+            generator = ALUGenerator(
+                llm_provider=llm_name,
+                project_root=str(PROJECT_ROOT),
+                debug=False
+            )
+            operations = {
+                "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
+                "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
+                "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
+                "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
+            }
+            prompt = generator._create_alu_prompt(bitwidth, operations, "alu")
+
+            yield make_sse_message("info", message=f"Calling {llm_name.upper()} API...")
+
+            llm = generator.llm
+            full_content = ""
+
+            if hasattr(llm, '_call_api_stream'):
+                for chunk in llm._call_api_stream(prompt, max_tokens=3000):
+                    if chunk:
+                        full_content += chunk
+                        yield make_sse_message("chunk", content=chunk)
+            else:
+                yield make_sse_message("info", message="Using standard mode...")
+                response = llm._call_api(prompt, max_tokens=3000, system_prompt="You are an expert Verilog hardware designer.")
+                if response:
+                    full_content = response
+                    for i in range(0, len(full_content), 100):
+                        yield make_sse_message("chunk", content=full_content[i:i+100])
+
+            if not full_content:
+                yield make_sse_message("error", message="LLM returned empty response")
+                return
+
+            verilog_code = generator._extract_verilog(full_content)
+            if not verilog_code:
+                verilog_code = full_content
+
+            hw_path = generator._save_alu(verilog_code, "alu", bitwidth)
+            filename = Path(hw_path).name
+
+            last_generated_hw['filename'] = filename
+            last_generated_hw['filepath'] = str(hw_path)
+            last_generated_hw['llm'] = llm_name
+            last_generated_hw['module_type'] = 'alu'
+
+            yield make_sse_message("complete", filename=filename, filepath=str(hw_path))
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield make_sse_message("error", message=str(e))
+
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'
+    })
+
+
+@app.route('/api/download-alu/<filename>')
+def download_alu(filename):
+    return download_hardware(filename)
+
+
+@app.route('/api/list-alu')
+def list_alu_files():
+    return list_hardware_files()
+
+
+# ============================================================================
+# BDD Generator API
 # ============================================================================
 @app.route('/api/generate-stream', methods=['POST'])
 def generate_bdd_stream():
     """Generate BDD Feature file with streaming output (SSE)"""
     if not HAS_BDD_MODULE:
-        return jsonify({
-            'success': False,
-            'error': 'BDD Generator module not available'
-        }), 500
+        return jsonify({'success': False, 'error': 'BDD Generator module not available'}), 500
 
     data = request.json
     llm_name = data.get('llm', 'groq')
@@ -462,10 +742,7 @@ def generate_bdd_stream():
     user_input = data.get('input', '')
 
     if not user_input:
-        return jsonify({
-            'success': False,
-            'error': 'Please enter your requirements'
-        }), 400
+        return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
     def generate():
         try:
@@ -492,7 +769,6 @@ def generate_bdd_stream():
             yield make_sse_message("info", message=f"Parsed: {bitwidth}-bit ALU with {ops_count} operations")
 
             prompt = generator._create_prompt(requirements)
-
             yield make_sse_message("info", message="Calling LLM API...")
 
             llm = generator.llm
@@ -507,10 +783,8 @@ def generate_bdd_stream():
                 yield make_sse_message("info", message="Using standard mode...")
                 full_content = generator._call_llm(prompt)
                 if full_content:
-                    chunk_size = 50
-                    for i in range(0, len(full_content), chunk_size):
-                        chunk = full_content[i:i+chunk_size]
-                        yield make_sse_message("chunk", content=chunk)
+                    for i in range(0, len(full_content), 50):
+                        yield make_sse_message("chunk", content=full_content[i:i+50])
 
             if not full_content:
                 yield make_sse_message("error", message="LLM returned empty response")
@@ -531,25 +805,16 @@ def generate_bdd_stream():
             traceback.print_exc()
             yield make_sse_message("error", message=str(e))
 
-    return Response(
-        generate(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'
-        }
-    )
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'
+    })
 
 
 @app.route('/api/generate', methods=['POST'])
 def generate_bdd():
     """Generate BDD Feature file (non-streaming)"""
     if not HAS_BDD_MODULE:
-        return jsonify({
-            'success': False,
-            'error': 'BDD Generator module not available'
-        }), 500
+        return jsonify({'success': False, 'error': 'BDD Generator module not available'}), 500
 
     try:
         data = request.json
@@ -558,10 +823,7 @@ def generate_bdd():
         user_input = data.get('input', '')
 
         if not user_input:
-            return jsonify({
-                'success': False,
-                'error': 'Please enter your requirements'
-            }), 400
+            return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
         generator = FeatureGeneratorLLM(
             llm_provider=llm_name,
@@ -573,16 +835,13 @@ def generate_bdd():
             try:
                 llm = LLMFactory.create_provider('openai', model=model)
                 generator.llm = llm
-            except Exception as e:
+            except:
                 pass
 
         feature_path = generator.generate_feature(user_input)
 
         if not feature_path:
-            return jsonify({
-                'success': False,
-                'error': 'Generation failed'
-            }), 500
+            return jsonify({'success': False, 'error': 'Generation failed'}), 500
 
         feature_path_obj = Path(feature_path)
         with open(feature_path, 'r', encoding='utf-8') as f:
@@ -605,10 +864,7 @@ def generate_bdd():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/download/<filename>')
@@ -634,17 +890,12 @@ def download_bdd(filename):
     if not file_path:
         return jsonify({'error': 'File not found'}), 404
 
-    return send_from_directory(
-        str(file_path.parent.absolute()),
-        file_path.name,
-        as_attachment=True,
-        download_name=filename
-    )
+    return send_from_directory(str(file_path.parent.absolute()), file_path.name, as_attachment=True, download_name=filename)
 
 
 @app.route('/api/llm-list')
 def get_llm_list():
-    """Get available LLM providers"""
+    """Get available LLM providers and module types"""
     return jsonify({
         'llms': [
             {'id': 'groq', 'name': 'Groq', 'description': 'Fast & Free'},
@@ -656,10 +907,15 @@ def get_llm_list():
         'openai_models': [
             {'id': 'gpt-5-mini', 'name': 'GPT-5 Mini'},
             {'id': 'gpt-5', 'name': 'GPT-5'},
-            {'id': 'gpt-5.1', 'name': 'GPT-5.1'},
-            {'id': 'gpt-5.1-codex', 'name': 'GPT-5.1 Codex'}
+            {'id': 'gpt-5.1', 'name': 'GPT-5.1'}
         ],
-        'bitwidths': [8, 16, 32, 64]
+        'bitwidths': [8, 16, 32, 64],
+        'module_types': [
+            {'id': 'alu', 'name': 'ALU', 'description': 'Arithmetic Logic Unit', 'available': HAS_ALU_MODULE},
+            {'id': 'counter', 'name': 'Counter', 'description': 'Up/Down Counter', 'available': HAS_COUNTER_MODULE},
+            {'id': 'regfile', 'name': 'Register File', 'description': 'Multi-port Register Bank', 'available': HAS_REGFILE_MODULE},
+            {'id': 'cpu', 'name': 'CPU', 'description': 'RISC-V 5-Stage Pipelined Processor', 'available': HAS_CPU_MODULE}
+        ]
     })
 
 
@@ -677,9 +933,12 @@ if __name__ == '__main__':
     print(f"📁 Project: {PROJECT_ROOT}")
     print(f"📡 Server: http://localhost:{port}")
     print()
-    print("📋 Available Generators:")
-    print(f"   {'✅' if HAS_ALU_MODULE else '❌'} ALU Generator (Verilog)")
-    print(f"   {'✅' if HAS_BDD_MODULE else '❌'} BDD Generator (Test Scenarios)")
+    print("📋 Available Modules:")
+    print(f"   {'✅' if HAS_ALU_MODULE else '❌'} ALU Generator")
+    print(f"   {'✅' if HAS_COUNTER_MODULE else '❌'} Counter Generator")
+    print(f"   {'✅' if HAS_REGFILE_MODULE else '❌'} Register File Generator")
+    print(f"   {'✅' if HAS_CPU_MODULE else '❌'} RISC-V CPU Generator")
+    print(f"   {'✅' if HAS_BDD_MODULE else '❌'} BDD Generator")
     print()
     print("=" * 60)
     print()
