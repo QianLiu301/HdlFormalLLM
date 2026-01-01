@@ -7,368 +7,674 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root { --bg-primary: #ffffff; --bg-secondary: #f8f9fa; --bg-tertiary: #f0f1f3; --border-color: #e0e0e0; --text-primary: #1a1a1a; --text-secondary: #666666; --accent: #00a884; --accent-hover: #008f70; --accent-blue: #2563eb; --accent-purple: #7c3aed; --error: #dc2626; --success: #00a884; --warning: #f59e0b; }
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-tertiary: #f0f1f3;
+            --border-color: #e0e0e0;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --accent: #00a884;
+            --accent-hover: #008f70;
+            --accent-blue: #2563eb;
+            --accent-purple: #7c3aed;
+            --accent-orange: #f59e0b;
+            --error: #dc2626;
+            --success: #00a884;
+            --warning: #f59e0b;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; line-height: 1.6; }
-        .container { max-width: 1000px; margin: 0 auto; padding: 32px 24px; }
-        .header { text-align: center; margin-bottom: 32px; }
+        .container { max-width: 900px; margin: 0 auto; padding: 32px 24px; }
+
+        /* Header */
+        .header { text-align: center; margin-bottom: 40px; }
         .header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
         .header h1 .accent { color: var(--accent); }
         .header h1 .blue { color: var(--accent-blue); }
         .header p { color: var(--text-secondary); font-size: 15px; }
-        .tabs { display: flex; gap: 4px; margin-bottom: 24px; background: var(--bg-secondary); padding: 4px; border-radius: 12px; border: 1px solid var(--border-color); }
-        .tab { flex: 1; padding: 14px 20px; background: transparent; border: none; border-radius: 8px; color: var(--text-secondary); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .tab:hover { color: var(--text-primary); background: var(--bg-tertiary); }
-        .tab.active { background: var(--accent); color: #ffffff; }
-        .tab.active.hw { background: var(--accent-blue); }
-        .tab-icon { font-size: 18px; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 28px; margin-bottom: 20px; }
-        .card-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-        .form-group { margin-bottom: 20px; }
-        .form-row { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+
+        /* Pipeline Overview */
+        .pipeline-overview {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+        }
+        .pipeline-step-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border-radius: 20px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+        .pipeline-step-indicator.active {
+            background: var(--accent-blue);
+            color: white;
+            border-color: var(--accent-blue);
+        }
+        .pipeline-step-indicator.completed {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+        .pipeline-step-indicator .num {
+            width: 20px;
+            height: 20px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 11px;
+        }
+        .pipeline-step-indicator.active .num,
+        .pipeline-step-indicator.completed .num {
+            background: rgba(255,255,255,0.3);
+        }
+        .pipeline-arrow {
+            color: var(--border-color);
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+        }
+
+        /* Step Section */
+        .step-section {
+            margin-bottom: 32px;
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            overflow: hidden;
+            background: var(--bg-primary);
+        }
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px 24px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            user-select: none;
+        }
+        .step-header:hover { background: var(--bg-tertiary); }
+        .step-number {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        .step-number.blue { background: rgba(37, 99, 235, 0.15); color: var(--accent-blue); }
+        .step-number.green { background: rgba(0, 168, 132, 0.15); color: var(--accent); }
+        .step-number.orange { background: rgba(245, 158, 11, 0.15); color: var(--accent-orange); }
+        .step-number.purple { background: rgba(124, 58, 237, 0.15); color: var(--accent-purple); }
+        .step-number.completed { background: var(--accent); color: white; }
+        .step-title-area { flex: 1; }
+        .step-title { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+        .step-subtitle { font-size: 13px; color: var(--text-secondary); }
+        .step-status {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .step-status.pending { background: var(--bg-tertiary); color: var(--text-secondary); }
+        .step-status.in-progress { background: rgba(37, 99, 235, 0.15); color: var(--accent-blue); }
+        .step-status.completed { background: rgba(0, 168, 132, 0.15); color: var(--accent); }
+        .step-toggle {
+            font-size: 20px;
+            color: var(--text-secondary);
+            transition: transform 0.3s;
+        }
+        .step-section.collapsed .step-toggle { transform: rotate(-90deg); }
+        .step-section.collapsed .step-content { display: none; }
+
+        .step-content { padding: 24px; }
+
+        /* Form Elements */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 16px;
+        }
+        .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+        .form-group { margin-bottom: 16px; }
+        .form-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
         .form-row .form-group { flex: 1; min-width: 140px; margin-bottom: 0; }
-        label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-        select, textarea, input[type="text"] { width: 100%; padding: 12px 16px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); font-family: inherit; font-size: 15px; transition: border-color 0.2s, box-shadow 0.2s; }
-        select:focus, textarea:focus, input[type="text"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 168, 132, 0.1); }
-        select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23666' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 40px; }
-        select:disabled { opacity: 0.5; cursor: not-allowed; }
-        textarea { min-height: 120px; resize: vertical; font-family: 'JetBrains Mono', monospace; font-size: 14px; }
-        textarea::placeholder, input::placeholder { color: var(--text-secondary); }
-        .divider { display: flex; align-items: center; margin: 16px 0; color: var(--text-secondary); font-size: 13px; }
+        label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+        select, textarea, input[type="text"] {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 14px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        select:focus, textarea:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23666' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+        textarea { min-height: 100px; resize: vertical; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+
+        .divider { display: flex; align-items: center; margin: 16px 0; color: var(--text-secondary); font-size: 12px; }
         .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border-color); }
         .divider span { padding: 0 12px; }
-        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 28px; font-family: inherit; font-size: 15px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
-        .btn-primary { background: var(--accent); color: #ffffff; width: 100%; }
-        .btn-primary.hw { background: var(--accent-blue); }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: var(--accent-blue); color: #ffffff; width: 100%; }
+        .btn-primary.green { background: var(--accent); }
         .btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.1); }
         .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
         .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); }
         .btn-secondary:hover { background: var(--border-color); }
-        .btn-download { background: var(--accent); color: #ffffff; }
-        .btn-download.hw { background: var(--accent-blue); }
-        .btn-continue { background: var(--accent); color: #ffffff; }
-        .spinner { width: 18px; height: 18px; border: 2px solid transparent; border-top-color: currentColor; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        .btn-sm { padding: 8px 16px; font-size: 13px; }
+
+        .spinner { width: 16px; height: 16px; border: 2px solid transparent; border-top-color: currentColor; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .stream-status { display: none; align-items: center; gap: 12px; padding: 14px 16px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+
+        /* Stream Status */
+        .stream-status {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 13px;
+        }
         .stream-status.visible { display: flex; }
-        .stream-status .dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: pulse 1s ease-in-out infinite; }
-        .stream-status .dot.blue { background: var(--accent-blue); }
+        .stream-status .dot { width: 8px; height: 8px; background: var(--accent-blue); border-radius: 50%; animation: pulse 1s ease-in-out infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* Result */
         .result { display: none; }
         .result.visible { display: block; animation: fadeIn 0.3s ease; }
-        .result-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border-color); }
-        .result-header .icon { width: 40px; height: 40px; background: rgba(0, 168, 132, 0.1); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
-        .result-header .icon.hw { background: rgba(37, 99, 235, 0.1); }
-        .result-header .info h3 { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
-        .result-header .info p { font-size: 13px; color: var(--text-secondary); }
-        .result-header .badge { margin-left: auto; padding: 4px 10px; background: var(--bg-tertiary); border-radius: 4px; font-size: 12px; font-weight: 500; color: var(--accent); text-transform: uppercase; }
-        .result-header .badge.hw { color: var(--accent-blue); }
-        .preview-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-        .preview-box { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.7; min-height: 200px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: #333; }
-        .preview-box::-webkit-scrollbar { width: 6px; }
-        .preview-box::-webkit-scrollbar-track { background: transparent; }
-        .preview-box::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-        .preview-box .cursor { display: inline-block; width: 2px; height: 1.2em; background: var(--accent); animation: blink 0.8s step-end infinite; vertical-align: text-bottom; }
-        .preview-box .cursor.blue { background: var(--accent-blue); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .result-header .icon {
+            width: 36px;
+            height: 36px;
+            background: rgba(0, 168, 132, 0.1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+        .result-header .info h3 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+        .result-header .info p { font-size: 12px; color: var(--text-secondary); }
+        .result-header .badge {
+            margin-left: auto;
+            padding: 4px 10px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            text-transform: uppercase;
+        }
+        .preview-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+        .preview-box {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            min-height: 150px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #333;
+        }
+        .preview-box .cursor { display: inline-block; width: 2px; height: 1.1em; background: var(--accent-blue); animation: blink 0.8s step-end infinite; vertical-align: text-bottom; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-        .action-buttons { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
-        .action-buttons .btn { flex: 1; min-width: 150px; }
-        .error-message { background: rgba(220, 38, 38, 0.1); border: 1px solid rgba(220, 38, 38, 0.3); border-radius: 8px; padding: 14px 16px; color: var(--error); font-size: 14px; display: none; margin-bottom: 16px; }
+        .action-buttons { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+        .action-buttons .btn { flex: 1; min-width: 120px; }
+
+        /* Error */
+        .error-message {
+            background: rgba(220, 38, 38, 0.1);
+            border: 1px solid rgba(220, 38, 38, 0.3);
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: var(--error);
+            font-size: 13px;
+            display: none;
+            margin-bottom: 12px;
+        }
         .error-message.visible { display: block; }
-        .examples { margin-top: 10px; }
-        .examples-title { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
-        .example-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-        .example-chip { padding: 6px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; }
-        .example-chip:hover { border-color: var(--accent); color: var(--accent); }
-        .example-chip.hw:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
-        .instructions { background: linear-gradient(135deg, rgba(0, 168, 132, 0.05), rgba(37, 99, 235, 0.05)); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
-        .instructions h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-        .instructions-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        @media (max-width: 640px) { .instructions-steps { grid-template-columns: 1fr; } }
-        .step { display: flex; gap: 12px; }
-        .step-number { width: 28px; height: 28px; background: var(--bg-tertiary); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0; }
-        .step-number.blue { background: rgba(37, 99, 235, 0.2); color: var(--accent-blue); }
-        .step-number.green { background: rgba(0, 168, 132, 0.2); color: var(--accent); }
-        .step-content h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-        .step-content p { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--border-color); margin-top: 16px; }
-        .toggle-label { font-size: 14px; color: var(--text-secondary); }
-        .toggle-switch { position: relative; width: 44px; height: 24px; }
+
+        /* Examples */
+        .examples { margin-top: 8px; }
+        .examples-title { font-size: 11px; color: var(--text-secondary); margin-bottom: 6px; }
+        .example-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .example-chip {
+            padding: 5px 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .example-chip:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+        /* Toggle */
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color); margin-top: 12px; }
+        .toggle-label { font-size: 13px; color: var(--text-secondary); }
+        .toggle-switch { position: relative; width: 40px; height: 22px; }
         .toggle-switch input { opacity: 0; width: 0; height: 0; }
-        .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 24px; transition: 0.3s; }
-        .toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--text-secondary); border-radius: 50%; transition: 0.3s; }
+        .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 22px; transition: 0.3s; }
+        .toggle-slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background: var(--text-secondary); border-radius: 50%; transition: 0.3s; }
         .toggle-switch input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
-        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); background: #ffffff; }
-        .footer { text-align: center; padding-top: 24px; color: var(--text-secondary); font-size: 13px; }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: #ffffff; }
+
+        /* DUT Status */
+        .dut-status {
+            display: none;
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0.03));
+            border: 1px solid rgba(37, 99, 235, 0.2);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+        }
+        .dut-status.visible { display: block; }
+        .dut-status-header { display: flex; align-items: center; gap: 10px; }
+        .dut-status-icon { font-size: 18px; }
+        .dut-status-info { flex: 1; }
+        .dut-status-info h4 { font-size: 13px; font-weight: 600; color: var(--accent-blue); margin-bottom: 2px; }
+        .dut-status-info p { font-size: 12px; color: var(--text-secondary); }
+        .dut-status-info .filename { font-family: 'JetBrains Mono', monospace; color: var(--text-primary); font-weight: 500; }
+        .dut-status-badge { padding: 3px 8px; background: rgba(37, 99, 235, 0.15); border-radius: 4px; font-size: 10px; font-weight: 600; color: var(--accent-blue); text-transform: uppercase; }
+
+        /* No DUT Warning */
+        .no-dut-warning {
+            display: none;
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+        }
+        .no-dut-warning.visible { display: flex; align-items: center; gap: 12px; }
+        .no-dut-warning-icon { font-size: 18px; }
+        .no-dut-warning-text { flex: 1; }
+        .no-dut-warning-text h4 { font-size: 13px; font-weight: 600; color: var(--accent-orange); margin-bottom: 2px; }
+        .no-dut-warning-text p { font-size: 12px; color: var(--text-secondary); }
+
+        /* Synced indicator */
+        .synced-indicator { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); margin-top: 6px; }
+        .synced-indicator::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
+
+        /* Coming Soon */
+        .coming-soon {
+            padding: 40px 24px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+        .coming-soon-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+        .coming-soon h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--text-primary); }
+        .coming-soon p { font-size: 13px; }
+
+        /* Footer */
+        .footer { text-align: center; padding: 32px 0 16px; color: var(--text-secondary); font-size: 12px; }
+        .footer p { margin-bottom: 4px; }
         .footer a { color: var(--accent); text-decoration: none; }
         .footer a:hover { text-decoration: underline; }
 
-        /* DUT Status Banner */
-        .dut-status { display: none; background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(37, 99, 235, 0.05)); border: 1px solid rgba(37, 99, 235, 0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; }
-        .dut-status.visible { display: block; animation: fadeIn 0.3s ease; }
-        .dut-status-header { display: flex; align-items: center; gap: 12px; }
-        .dut-status-icon { width: 36px; height: 36px; background: rgba(37, 99, 235, 0.2); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
-        .dut-status-info { flex: 1; }
-        .dut-status-info h4 { font-size: 14px; font-weight: 600; color: var(--accent-blue); margin-bottom: 2px; }
-        .dut-status-info p { font-size: 13px; color: var(--text-secondary); }
-        .dut-status-info .filename { font-family: 'JetBrains Mono', monospace; color: var(--text-primary); font-weight: 500; }
-        .dut-status-badge { padding: 4px 10px; background: rgba(37, 99, 235, 0.2); border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--accent-blue); text-transform: uppercase; }
-
-        /* No DUT Warning */
-        .no-dut-warning { display: none; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; }
-        .no-dut-warning.visible { display: block; }
-        .no-dut-warning-content { display: flex; align-items: center; gap: 12px; }
-        .no-dut-warning-icon { font-size: 20px; }
-        .no-dut-warning-text { flex: 1; }
-        .no-dut-warning-text h4 { font-size: 14px; font-weight: 600; color: var(--warning); margin-bottom: 2px; }
-        .no-dut-warning-text p { font-size: 13px; color: var(--text-secondary); }
-        .no-dut-warning .btn { padding: 8px 16px; font-size: 13px; }
-
-        /* Synced indicator */
-        .synced-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent); margin-top: 8px; }
-        .synced-indicator::before { content: ''; width: 8px; height: 8px; background: var(--accent); border-radius: 50%; }
+        @media (max-width: 640px) {
+            .form-row { flex-direction: column; }
+            .form-row .form-group { min-width: 100%; }
+            .pipeline-overview { gap: 4px; }
+            .pipeline-step-indicator { padding: 6px 10px; font-size: 11px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
+        <!-- Header -->
         <div class="header">
-            <h1>🤖 <span class="blue">LLM</span> Hardware <span class="accent">Generator</span></h1>
-            <p>Generate Verilog hardware designs and BDD test scenarios using AI</p>
-        </div>
-        <div class="instructions">
-            <h2>📖 How to Use</h2>
-            <div class="instructions-steps">
-                <div class="step">
-                    <div class="step-number blue">1</div>
-                    <div class="step-content">
-                        <h3>Generate Hardware Design (DUT)</h3>
-                        <p>Use natural language to describe hardware specification. LLM will generate Verilog design (ALU, Counter, CPU, etc.).</p>
-                    </div>
-                </div>
-                <div class="step">
-                    <div class="step-number green">2</div>
-                    <div class="step-content">
-                        <h3>Generate BDD Test Scenarios</h3>
-                        <p>Based on the generated DUT, create test scenarios in Gherkin format using multiple LLMs for comparison.</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="tabs">
-            <button class="tab active hw" data-tab="hw" onclick="switchTab('hw')">
-                <span class="tab-icon">🔧</span> Hardware Generator
-            </button>
-            <button class="tab" data-tab="bdd" onclick="switchTab('bdd')">
-                <span class="tab-icon">🧪</span> BDD Generator
-            </button>
+            <h1>🤖 <span class="blue">LLM</span> Hardware <span class="accent">Verification</span></h1>
+            <p>Generate hardware designs and verification tests using AI</p>
         </div>
 
-        <!-- Hardware Generator Tab -->
-        <div class="tab-content active" id="tab-hw">
-            <div class="card">
-                <div class="card-title">⚡ Quick Select</div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="hw-module">Module Type</label>
-                        <select id="hw-module" onchange="onModuleChange()">
-                            <option value="alu">ALU - Arithmetic Logic Unit</option>
-                            <option value="counter">Counter - Up/Down Counter</option>
-                            <option value="regfile">Register File - Register Bank</option>
-                            <option value="cpu">CPU - RISC-V Processor</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="hw-bitwidth-group">
-                        <label for="hw-bitwidth">Bitwidth</label>
-                        <select id="hw-bitwidth">
-                            <option value="8">8-bit</option>
-                            <option value="16">16-bit</option>
-                            <option value="32" selected>32-bit</option>
-                            <option value="64">64-bit</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="hw-depth-group" style="display: none;">
-                        <label for="hw-depth">Registers</label>
-                        <select id="hw-depth">
-                            <option value="8">8 registers</option>
-                            <option value="16">16 registers</option>
-                            <option value="32" selected>32 registers</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="hw-pipeline-group" style="display: none;">
-                        <label for="hw-pipeline">Pipeline</label>
-                        <select id="hw-pipeline">
-                            <option value="5" selected>5-stage</option>
-                            <option value="3">3-stage</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="hw-llm">LLM Provider</label>
-                        <select id="hw-llm">
-                            <option value="groq">Groq (Fast & Free)</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="openai">OpenAI</option>
-                            <option value="claude">Claude</option>
-                            <option value="gemini">Gemini</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="hw-model-group" style="display: none;">
-                        <label for="hw-model">Model</label>
-                        <select id="hw-model">
-                            <option value="gpt-5-mini">GPT-5 Mini</option>
-                            <option value="gpt-5">GPT-5</option>
-                            <option value="gpt-5.1">GPT-5.1</option>
-                        </select>
-                    </div>
+        <!-- Pipeline Overview -->
+        <div class="pipeline-overview">
+            <div class="pipeline-step-indicator active" id="indicator-1">
+                <span class="num">1</span> Hardware
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step-indicator" id="indicator-2">
+                <span class="num">2</span> BDD Tests
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step-indicator" id="indicator-3">
+                <span class="num">3</span> Testbench
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step-indicator" id="indicator-4">
+                <span class="num">4</span> Simulation
+            </div>
+        </div>
+
+        <!-- Step 1: Hardware Generator -->
+        <div class="step-section" id="step-1">
+            <div class="step-header" onclick="toggleStep(1)">
+                <div class="step-number blue" id="step-1-num">1</div>
+                <div class="step-title-area">
+                    <div class="step-title">🔧 Generate Hardware Design (DUT)</div>
+                    <div class="step-subtitle">Create Verilog hardware using LLM</div>
                 </div>
-                <div class="divider"><span>or use natural language</span></div>
-                <div class="form-group">
-                    <label for="hw-input">Natural Language Input</label>
-                    <input type="text" id="hw-input" placeholder="e.g., 32-bit counter or 16-bit ALU">
-                    <div class="examples">
-                        <div class="examples-title">Examples:</div>
-                        <div class="example-chips">
-                            <span class="example-chip hw" onclick="setHwExample('16-bit ALU')">16-bit ALU</span>
-                            <span class="example-chip hw" onclick="setHwExample('32-bit counter')">32-bit Counter</span>
-                            <span class="example-chip hw" onclick="setHwExample('32x32 register file')">32x32 RegFile</span>
-                            <span class="example-chip hw" onclick="setHwExample('5-stage RISC-V CPU')">RISC-V CPU</span>
+                <div class="step-status pending" id="step-1-status">Pending</div>
+                <div class="step-toggle">▼</div>
+            </div>
+            <div class="step-content">
+                <div class="card">
+                    <div class="card-title">⚡ Configuration</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Module Type</label>
+                            <select id="hw-module" onchange="onModuleChange()">
+                                <option value="alu">ALU - Arithmetic Logic Unit</option>
+                                <option value="counter">Counter - Up/Down Counter</option>
+                                <option value="regfile">Register File</option>
+                                <option value="cpu">CPU - RISC-V Processor</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="hw-bitwidth-group">
+                            <label>Bitwidth</label>
+                            <select id="hw-bitwidth">
+                                <option value="8">8-bit</option>
+                                <option value="16">16-bit</option>
+                                <option value="32" selected>32-bit</option>
+                                <option value="64">64-bit</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="hw-depth-group" style="display: none;">
+                            <label>Registers</label>
+                            <select id="hw-depth">
+                                <option value="8">8 registers</option>
+                                <option value="16">16 registers</option>
+                                <option value="32" selected>32 registers</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="hw-pipeline-group" style="display: none;">
+                            <label>Pipeline</label>
+                            <select id="hw-pipeline">
+                                <option value="5" selected>5-stage</option>
+                                <option value="3">3-stage</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>LLM Provider</label>
+                            <select id="hw-llm" onchange="onHwLlmChange()">
+                                <option value="groq">Groq</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="claude">Claude</option>
+                                <option value="gemini">Gemini</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="hw-model-group" style="display: none;">
+                            <label>Model</label>
+                            <select id="hw-model">
+                                <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                <option value="gpt-4o">GPT-4o</option>
+                            </select>
                         </div>
                     </div>
+                    <div class="divider"><span>or use natural language</span></div>
+                    <div class="form-group">
+                        <label>Natural Language Input</label>
+                        <input type="text" id="hw-input" placeholder="e.g., 32-bit counter or 16-bit ALU">
+                        <div class="examples">
+                            <div class="examples-title">Examples:</div>
+                            <div class="example-chips">
+                                <span class="example-chip" onclick="setHwExample('16-bit ALU')">16-bit ALU</span>
+                                <span class="example-chip" onclick="setHwExample('32-bit counter')">32-bit Counter</span>
+                                <span class="example-chip" onclick="setHwExample('32x32 register file')">32x32 RegFile</span>
+                                <span class="example-chip" onclick="setHwExample('5-stage RISC-V CPU')">RISC-V CPU</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="toggle-row">
+                        <span class="toggle-label">⚡ Stream output</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="hw-stream" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="toggle-row">
-                    <span class="toggle-label">⚡ Stream output</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="hw-stream" checked>
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
+
                 <div class="error-message" id="hw-error"></div>
                 <div class="stream-status" id="hw-status">
-                    <div class="dot blue"></div>
+                    <div class="dot"></div>
                     <span id="hw-status-text">Generating...</span>
                 </div>
-                <button class="btn btn-primary hw" id="hw-btn" onclick="generateHardware()">
+
+                <button class="btn btn-primary" id="hw-btn" onclick="generateHardware()">
                     <span id="hw-btn-text">🔧 Generate Hardware</span>
                     <div class="spinner" id="hw-spinner" style="display: none;"></div>
                 </button>
-            </div>
-            <div class="card result" id="hw-result">
-                <div class="result-header">
-                    <div class="icon hw">✅</div>
-                    <div class="info">
-                        <h3 id="hw-filename">alu_16bit.v</h3>
-                        <p id="hw-info">Generated with Groq</p>
+
+                <div class="card result" id="hw-result" style="margin-top: 16px;">
+                    <div class="result-header">
+                        <div class="icon">✅</div>
+                        <div class="info">
+                            <h3 id="hw-filename">Generating...</h3>
+                            <p id="hw-info">Ready to generate</p>
+                        </div>
+                        <div class="badge" id="hw-badge">LLM</div>
                     </div>
-                    <div class="badge hw" id="hw-badge">GROQ</div>
-                </div>
-                <div class="preview-label">Verilog Code Preview</div>
-                <div class="preview-box" id="hw-preview"></div>
-                <div class="action-buttons">
-                    <button class="btn btn-download hw" id="hw-download" onclick="downloadHardware()">📥 Download .v</button>
-                    <button class="btn btn-secondary" onclick="resetHardware()">🔄 Generate Another</button>
-                    <button class="btn btn-continue" onclick="continueToBDD()">📋 Continue to BDD →</button>
+                    <div class="preview-label">Verilog Code Preview</div>
+                    <div class="preview-box" id="hw-preview"></div>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary btn-sm" id="hw-download" onclick="downloadHardware()">📥 Download .v</button>
+                        <button class="btn btn-secondary btn-sm" onclick="resetHardware()">🔄 Reset</button>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- BDD Generator Tab -->
-        <div class="tab-content" id="tab-bdd">
-            <!-- DUT Status Banner -->
-            <div class="dut-status" id="dut-status">
-                <div class="dut-status-header">
-                    <div class="dut-status-icon">📋</div>
-                    <div class="dut-status-info">
-                        <h4>Current DUT (Design Under Test)</h4>
-                        <p><span class="filename" id="dut-filename">counter_16bit.v</span> • <span id="dut-type-display">Counter</span> • <span id="dut-bitwidth-display">16-bit</span></p>
-                    </div>
-                    <div class="dut-status-badge" id="dut-module-badge">COUNTER</div>
+        <!-- Step 2: BDD Generator -->
+        <div class="step-section" id="step-2">
+            <div class="step-header" onclick="toggleStep(2)">
+                <div class="step-number green" id="step-2-num">2</div>
+                <div class="step-title-area">
+                    <div class="step-title">🧪 Generate BDD Test Scenarios</div>
+                    <div class="step-subtitle">Create Gherkin test cases for the DUT</div>
                 </div>
+                <div class="step-status pending" id="step-2-status">Pending</div>
+                <div class="step-toggle">▼</div>
             </div>
+            <div class="step-content">
+                <!-- DUT Status -->
+                <div class="dut-status" id="dut-status">
+                    <div class="dut-status-header">
+                        <div class="dut-status-icon">📋</div>
+                        <div class="dut-status-info">
+                            <h4>Current DUT</h4>
+                            <p><span class="filename" id="dut-filename">-</span> • <span id="dut-type-display">-</span> • <span id="dut-bitwidth-display">-</span></p>
+                        </div>
+                        <div class="dut-status-badge" id="dut-module-badge">-</div>
+                    </div>
+                </div>
 
-            <!-- No DUT Warning -->
-            <div class="no-dut-warning visible" id="no-dut-warning">
-                <div class="no-dut-warning-content">
+                <!-- No DUT Warning -->
+                <div class="no-dut-warning visible" id="no-dut-warning">
                     <div class="no-dut-warning-icon">⚠️</div>
                     <div class="no-dut-warning-text">
-                        <h4>No Hardware Generated Yet</h4>
-                        <p>Please generate a hardware design first, then come back to create matching BDD test scenarios.</p>
+                        <h4>No Hardware Generated</h4>
+                        <p>Complete Step 1 first to generate hardware, then create matching tests.</p>
                     </div>
-                    <button class="btn btn-primary hw" onclick="switchTab('hw')">🔧 Go to Hardware Generator</button>
                 </div>
-            </div>
 
-            <div class="card" id="bdd-card">
-                <div class="card-title">⚡ Configuration</div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="bdd-llm">LLM Provider</label>
-                        <select id="bdd-llm">
-                            <option value="groq">Groq (Fast & Free)</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="openai">OpenAI</option>
-                            <option value="claude">Claude</option>
-                            <option value="gemini">Gemini</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="bdd-model-group" style="display: none;">
-                        <label for="bdd-model">Model</label>
-                        <select id="bdd-model">
-                            <option value="gpt-5-mini">GPT-5 Mini</option>
-                            <option value="gpt-5">GPT-5</option>
-                            <option value="gpt-5.1">GPT-5.1</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="bdd-input">Requirements (auto-filled based on DUT)</label>
-                    <textarea id="bdd-input" placeholder="Requirements will be auto-filled when you generate hardware..."></textarea>
-                    <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with generated DUT</div>
-                    <div class="examples">
-                        <div class="examples-title">Examples:</div>
-                        <div class="example-chips">
-                            <span class="example-chip" onclick="setBddExample('16-bit ALU with ADD, SUB, AND, OR')">16-bit ALU basic</span>
-                            <span class="example-chip" onclick="setBddExample('32-bit ALU: ADD, SUB with overflow tests')">32-bit overflow tests</span>
-                            <span class="example-chip" onclick="setBddExample('8-bit ALU with boundary values 0x00, 0xFF')">8-bit boundary</span>
-                            <span class="example-chip" onclick="setBddExample('16-bit ALU: 10 random test cases for each operation')">16-bit random tests</span>
+                <div class="card">
+                    <div class="card-title">⚡ Configuration</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>LLM Provider</label>
+                            <select id="bdd-llm" onchange="onBddLlmChange()">
+                                <option value="groq">Groq</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="claude">Claude</option>
+                                <option value="gemini">Gemini</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="bdd-model-group" style="display: none;">
+                            <label>Model</label>
+                            <select id="bdd-model">
+                                <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                <option value="gpt-4o">GPT-4o</option>
+                            </select>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label>Requirements (auto-filled based on DUT)</label>
+                        <textarea id="bdd-input" placeholder="Requirements will be auto-filled when you generate hardware..."></textarea>
+                        <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with generated DUT</div>
+                        <div class="examples">
+                            <div class="examples-title">Examples:</div>
+                            <div class="example-chips">
+                                <span class="example-chip" onclick="setBddExample('16-bit ALU with ADD, SUB, AND, OR')">ALU basic</span>
+                                <span class="example-chip" onclick="setBddExample('32-bit ALU with overflow tests')">Overflow tests</span>
+                                <span class="example-chip" onclick="setBddExample('Boundary values 0x00, 0xFF')">Boundary</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="toggle-row">
+                        <span class="toggle-label">⚡ Stream output</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="bdd-stream" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="toggle-row">
-                    <span class="toggle-label">⚡ Stream output</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="bdd-stream" checked>
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
+
                 <div class="error-message" id="bdd-error"></div>
                 <div class="stream-status" id="bdd-status">
                     <div class="dot"></div>
                     <span id="bdd-status-text">Generating...</span>
                 </div>
-                <button class="btn btn-primary" id="bdd-btn" onclick="generateBDD()">
-                    <span id="bdd-btn-text">🧪 Generate BDD</span>
+
+                <button class="btn btn-primary green" id="bdd-btn" onclick="generateBDD()">
+                    <span id="bdd-btn-text">🧪 Generate BDD Tests</span>
                     <div class="spinner" id="bdd-spinner" style="display: none;"></div>
                 </button>
-            </div>
-            <div class="card result" id="bdd-result">
-                <div class="result-header">
-                    <div class="icon">✅</div>
-                    <div class="info">
-                        <h3 id="bdd-filename">alu_16bit.feature</h3>
-                        <p id="bdd-info">Generated with Groq</p>
+
+                <div class="card result" id="bdd-result" style="margin-top: 16px;">
+                    <div class="result-header">
+                        <div class="icon">✅</div>
+                        <div class="info">
+                            <h3 id="bdd-filename">Generating...</h3>
+                            <p id="bdd-info">Ready to generate</p>
+                        </div>
+                        <div class="badge" id="bdd-badge">LLM</div>
                     </div>
-                    <div class="badge" id="bdd-badge">GROQ</div>
-                </div>
-                <div class="preview-label">BDD Feature Preview</div>
-                <div class="preview-box" id="bdd-preview"></div>
-                <div class="action-buttons">
-                    <button class="btn btn-download" id="bdd-download" onclick="downloadBDD()">📥 Download .feature</button>
-                    <button class="btn btn-secondary" onclick="resetBDD()">🔄 Generate Another</button>
+                    <div class="preview-label">BDD Feature Preview</div>
+                    <div class="preview-box" id="bdd-preview"></div>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary btn-sm" id="bdd-download" onclick="downloadBDD()">📥 Download .feature</button>
+                        <button class="btn btn-secondary btn-sm" onclick="resetBDD()">🔄 Reset</button>
+                    </div>
                 </div>
             </div>
         </div>
+
+        <!-- Step 3: Testbench Generator (Coming Soon) -->
+        <div class="step-section collapsed" id="step-3">
+            <div class="step-header" onclick="toggleStep(3)">
+                <div class="step-number orange" id="step-3-num">3</div>
+                <div class="step-title-area">
+                    <div class="step-title">⚙️ Generate Verilog Testbench</div>
+                    <div class="step-subtitle">Convert BDD to Verilog testbench</div>
+                </div>
+                <div class="step-status pending" id="step-3-status">Coming Soon</div>
+                <div class="step-toggle">▼</div>
+            </div>
+            <div class="step-content">
+                <div class="coming-soon">
+                    <div class="coming-soon-icon">🚧</div>
+                    <h3>Coming Soon</h3>
+                    <p>Testbench generation will be available in the next update</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Simulation (Coming Soon) -->
+        <div class="step-section collapsed" id="step-4">
+            <div class="step-header" onclick="toggleStep(4)">
+                <div class="step-number purple" id="step-4-num">4</div>
+                <div class="step-title-area">
+                    <div class="step-title">🚀 Run Simulation</div>
+                    <div class="step-subtitle">Execute tests and view results</div>
+                </div>
+                <div class="step-status pending" id="step-4-status">Coming Soon</div>
+                <div class="step-toggle">▼</div>
+            </div>
+            <div class="step-content">
+                <div class="coming-soon">
+                    <div class="coming-soon-icon">🚧</div>
+                    <h3>Coming Soon</h3>
+                    <p>Simulation will be available in the next update</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
         <div class="footer">
             <p><strong>LLM-based Hardware Verification Pipeline</strong></p>
             <p>Authors: Rolf Drechsler, Qian Liu</p>
@@ -385,9 +691,9 @@
         // ============================================================
         let currentHwFilename = null;
         let currentBddFilename = null;
-        let currentDUT = null; // Stores current DUT info
+        let currentDUT = null;
 
-        // BDD Templates for each hardware type
+        // BDD Templates
         const BDD_TEMPLATES = {
             alu: (bitwidth) => `${bitwidth}-bit ALU with:
 - ADD operation (A + B)
@@ -395,62 +701,44 @@
 - AND operation (A & B)
 - OR operation (A | B)
 - XOR operation (A ^ B)
-- Overflow detection for ADD/SUB
+- Overflow detection
 - Zero flag detection
-- Boundary value tests (0x${'0'.repeat(bitwidth/4)}, 0x${'F'.repeat(bitwidth/4)})
-- Random test cases for each operation`,
+- Boundary value tests`,
 
             counter: (bitwidth) => `${bitwidth}-bit Counter with:
-- UP mode (increment from 0 to MAX)
-- DOWN mode (decrement from MAX to 0)
-- UP-DOWN mode (ping-pong counting)
-- Load preset value functionality
-- Enable/disable control
-- Overflow flag detection
-- Zero flag detection
-- Boundary tests at 0x${'0'.repeat(bitwidth/4)} and 0x${'F'.repeat(bitwidth/4)}`,
+- UP mode (increment)
+- DOWN mode (decrement)
+- UP-DOWN mode (ping-pong)
+- Load preset value
+- Enable control
+- Overflow flag
+- Zero flag`,
 
             regfile: (bitwidth, depth) => `${depth}x${bitwidth}-bit Register File with:
-- Dual read port verification (simultaneous reads)
-- Single write port verification
-- x0/R0 always returns 0 (RISC-V convention)
-- Write then read same register
-- Concurrent read and write to same address
-- All registers write/read test
-- Reset clears all registers to 0`,
+- Dual read ports
+- Single write port
+- x0 always returns 0
+- Concurrent read/write test`,
 
-            cpu: (pipelineStages) => `${pipelineStages}-stage RISC-V CPU (RV32I) with:
-- R-type instructions: ADD, SUB, AND, OR, XOR, SLT
-- I-type instructions: ADDI, ANDI, ORI, XORI, SLTI, LW
-- S-type instructions: SW
-- B-type instructions: BEQ, BNE, BLT, BGE
-- J-type instructions: JAL, JALR
-- Data hazard detection (RAW hazards)
-- Forwarding/bypass verification
-- Load-use stall verification
-- Branch prediction and flush
-- Register x0 always zero`
+            cpu: (pipelineStages) => `${pipelineStages}-stage RISC-V CPU with:
+- R-type: ADD, SUB, AND, OR, XOR
+- I-type: ADDI, LW
+- S-type: SW
+- B-type: BEQ, BNE
+- Forwarding tests
+- Hazard tests`
         };
 
         // ============================================================
-        // Tab Switching
+        // Step Toggle
         // ============================================================
-        function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => { t.classList.remove('active', 'hw'); });
-            const activeTab = document.querySelector(`.tab[data-tab="${tab}"]`);
-            activeTab.classList.add('active');
-            if (tab === 'hw') activeTab.classList.add('hw');
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.getElementById(`tab-${tab}`).classList.add('active');
-
-            // Update BDD tab state when switching to it
-            if (tab === 'bdd') {
-                updateBddTabState();
-            }
+        function toggleStep(stepNum) {
+            const section = document.getElementById(`step-${stepNum}`);
+            section.classList.toggle('collapsed');
         }
 
         // ============================================================
-        // Module Type Change Handler
+        // Module Type Change
         // ============================================================
         function onModuleChange() {
             const moduleType = document.getElementById('hw-module').value;
@@ -460,18 +748,20 @@
         }
 
         // ============================================================
-        // LLM Change Handlers
+        // LLM Change
         // ============================================================
-        document.getElementById('hw-llm').addEventListener('change', function() {
-            document.getElementById('hw-model-group').style.display = this.value === 'openai' ? 'block' : 'none';
-        });
+        function onHwLlmChange() {
+            const llm = document.getElementById('hw-llm').value;
+            document.getElementById('hw-model-group').style.display = llm === 'openai' ? 'block' : 'none';
+        }
 
-        document.getElementById('bdd-llm').addEventListener('change', function() {
-            document.getElementById('bdd-model-group').style.display = this.value === 'openai' ? 'block' : 'none';
-        });
+        function onBddLlmChange() {
+            const llm = document.getElementById('bdd-llm').value;
+            document.getElementById('bdd-model-group').style.display = llm === 'openai' ? 'block' : 'none';
+        }
 
         // ============================================================
-        // Example Handlers
+        // Examples
         // ============================================================
         function setHwExample(text) {
             document.getElementById('hw-input').value = text;
@@ -479,44 +769,24 @@
 
             if (lower.includes('cpu') || lower.includes('risc')) {
                 document.getElementById('hw-module').value = 'cpu';
-                onModuleChange();
             } else if (lower.includes('counter')) {
                 document.getElementById('hw-module').value = 'counter';
-                onModuleChange();
             } else if (lower.includes('regfile') || lower.includes('register')) {
                 document.getElementById('hw-module').value = 'regfile';
-                onModuleChange();
             } else if (lower.includes('alu')) {
                 document.getElementById('hw-module').value = 'alu';
-                onModuleChange();
             }
+            onModuleChange();
 
             const bwMatch = text.match(/(\d+)-?bit/i);
-            if (bwMatch) {
-                const bw = bwMatch[1];
-                if (['8', '16', '32', '64'].includes(bw)) {
-                    document.getElementById('hw-bitwidth').value = bw;
-                }
+            if (bwMatch && ['8', '16', '32', '64'].includes(bwMatch[1])) {
+                document.getElementById('hw-bitwidth').value = bwMatch[1];
             }
 
             const depthMatch = text.match(/(\d+)x(\d+)/i);
             if (depthMatch) {
-                const depth = depthMatch[1];
-                const bits = depthMatch[2];
-                if (['8', '16', '32'].includes(depth)) {
-                    document.getElementById('hw-depth').value = depth;
-                }
-                if (['8', '16', '32', '64'].includes(bits)) {
-                    document.getElementById('hw-bitwidth').value = bits;
-                }
-            }
-
-            const pipeMatch = text.match(/(\d+)-?stage/i);
-            if (pipeMatch) {
-                const stages = pipeMatch[1];
-                if (['3', '5'].includes(stages)) {
-                    document.getElementById('hw-pipeline').value = stages;
-                }
+                if (['8', '16', '32'].includes(depthMatch[1])) document.getElementById('hw-depth').value = depthMatch[1];
+                if (['8', '16', '32', '64'].includes(depthMatch[2])) document.getElementById('hw-bitwidth').value = depthMatch[2];
             }
         }
 
@@ -540,6 +810,7 @@
 
             hideError('hw');
             setLoading('hw', true);
+            updateStepStatus(1, 'in-progress');
 
             const payload = {
                 module_type: moduleType,
@@ -566,10 +837,11 @@
 
             resultSection.classList.add('visible');
             statusDiv.classList.add('visible');
-            preview.innerHTML = '<span class="cursor blue"></span>';
+            preview.innerHTML = '<span class="cursor"></span>';
             document.getElementById('hw-filename').textContent = 'Generating...';
+            document.getElementById('hw-info').textContent = `Generating with ${payload.llm.toUpperCase()}...`;
+            document.getElementById('hw-badge').textContent = payload.llm.toUpperCase();
             document.getElementById('hw-download').style.display = 'none';
-            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             let fullContent = '';
 
@@ -594,40 +866,26 @@
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
-
                                 if (data.type === 'start') {
                                     statusText.textContent = `Connected to ${data.llm.toUpperCase()}...`;
-                                    if (data.llm) {
-                                        document.getElementById('hw-llm').value = data.llm;
-                                        document.getElementById('hw-model-group').style.display = data.llm === 'openai' ? 'block' : 'none';
-                                        document.getElementById('hw-badge').textContent = data.llm.toUpperCase();
-                                    }
-                                    if (data.bitwidth) {
-                                        document.getElementById('hw-bitwidth').value = data.bitwidth;
-                                    }
-                                    if (data.module_type) {
-                                        document.getElementById('hw-module').value = data.module_type;
-                                    }
-                                }
-                                else if (data.type === 'info') {
+                                } else if (data.type === 'info') {
                                     statusText.textContent = data.message;
-                                }
-                                else if (data.type === 'chunk') {
+                                } else if (data.type === 'chunk') {
                                     fullContent += data.content;
-                                    preview.innerHTML = escapeHtml(fullContent) + '<span class="cursor blue"></span>';
+                                    preview.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
                                     preview.scrollTop = preview.scrollHeight;
-                                }
-                                else if (data.type === 'complete') {
+                                } else if (data.type === 'complete') {
                                     currentHwFilename = data.filename;
                                     document.getElementById('hw-filename').textContent = data.filename;
-                                    document.getElementById('hw-info').textContent = 'Generated successfully';
+                                    document.getElementById('hw-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
                                     document.getElementById('hw-download').style.display = 'flex';
-
-                                    // Save DUT info and sync to BDD
                                     saveDUTInfo(payload, data.filename);
-                                }
-                                else if (data.type === 'error') {
+                                    updateStepStatus(1, 'completed');
+                                    updatePipelineIndicator(1, 'completed');
+                                    updatePipelineIndicator(2, 'active');
+                                } else if (data.type === 'error') {
                                     showError('hw', data.message);
+                                    updateStepStatus(1, 'pending');
                                 }
                             } catch (e) {}
                         }
@@ -635,6 +893,7 @@
                 }
             } catch (error) {
                 showError('hw', error.message);
+                updateStepStatus(1, 'pending');
             } finally {
                 setLoading('hw', false);
                 statusDiv.classList.remove('visible');
@@ -651,39 +910,32 @@
                 });
 
                 const data = await response.json();
-
-                if (!data.success) {
-                    throw new Error(data.error || 'Generation failed');
-                }
+                if (!data.success) throw new Error(data.error || 'Generation failed');
 
                 currentHwFilename = data.filename;
                 document.getElementById('hw-filename').textContent = data.filename;
-                document.getElementById('hw-info').textContent = `Generated with ${data.llm}`;
+                document.getElementById('hw-info').textContent = `Generated with ${data.llm.toUpperCase()}`;
                 document.getElementById('hw-badge').textContent = data.llm.toUpperCase();
                 document.getElementById('hw-preview').textContent = data.full_content;
                 document.getElementById('hw-download').style.display = 'flex';
                 document.getElementById('hw-result').classList.add('visible');
-
-                // Save DUT info and sync to BDD
                 saveDUTInfo(payload, data.filename);
-
+                updateStepStatus(1, 'completed');
+                updatePipelineIndicator(1, 'completed');
+                updatePipelineIndicator(2, 'active');
             } catch (error) {
                 showError('hw', error.message);
+                updateStepStatus(1, 'pending');
             } finally {
                 setLoading('hw', false);
             }
         }
 
         // ============================================================
-        // DUT Info Management
+        // DUT Info
         // ============================================================
         function saveDUTInfo(payload, filename) {
-            const moduleNames = {
-                'alu': 'ALU',
-                'counter': 'Counter',
-                'regfile': 'Register File',
-                'cpu': 'RISC-V CPU'
-            };
+            const moduleNames = { 'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'RISC-V CPU' };
 
             currentDUT = {
                 moduleType: payload.module_type,
@@ -691,30 +943,21 @@
                 bitwidth: payload.bitwidth,
                 depth: payload.depth,
                 pipelineStages: payload.pipeline_stages,
-                filename: filename,
-                timestamp: new Date().toISOString()
+                filename: filename
             };
 
-            // Generate BDD requirements based on DUT
             const bddRequirements = generateBDDRequirements(currentDUT);
             document.getElementById('bdd-input').value = bddRequirements;
-
-            // Update BDD tab state
             updateBddTabState();
         }
 
         function generateBDDRequirements(dut) {
             switch (dut.moduleType) {
-                case 'alu':
-                    return BDD_TEMPLATES.alu(dut.bitwidth);
-                case 'counter':
-                    return BDD_TEMPLATES.counter(dut.bitwidth);
-                case 'regfile':
-                    return BDD_TEMPLATES.regfile(dut.bitwidth, dut.depth);
-                case 'cpu':
-                    return BDD_TEMPLATES.cpu(dut.pipelineStages);
-                default:
-                    return '';
+                case 'alu': return BDD_TEMPLATES.alu(dut.bitwidth);
+                case 'counter': return BDD_TEMPLATES.counter(dut.bitwidth);
+                case 'regfile': return BDD_TEMPLATES.regfile(dut.bitwidth, dut.depth);
+                case 'cpu': return BDD_TEMPLATES.cpu(dut.pipelineStages);
+                default: return '';
             }
         }
 
@@ -724,51 +967,19 @@
             const syncedIndicator = document.getElementById('synced-indicator');
 
             if (currentDUT) {
-                // Show DUT status
                 dutStatus.classList.add('visible');
                 noDutWarning.classList.remove('visible');
-
-                // Update DUT info display
                 document.getElementById('dut-filename').textContent = currentDUT.filename;
                 document.getElementById('dut-type-display').textContent = currentDUT.moduleName;
                 document.getElementById('dut-bitwidth-display').textContent =
                     currentDUT.moduleType === 'cpu' ? `${currentDUT.pipelineStages}-stage` : `${currentDUT.bitwidth}-bit`;
                 document.getElementById('dut-module-badge').textContent = currentDUT.moduleType.toUpperCase();
-
-                // Show synced indicator
                 syncedIndicator.style.display = 'flex';
-
             } else {
-                // Show warning
                 dutStatus.classList.remove('visible');
                 noDutWarning.classList.add('visible');
                 syncedIndicator.style.display = 'none';
             }
-        }
-
-        // ============================================================
-        // Continue to BDD
-        // ============================================================
-        function continueToBDD() {
-            switchTab('bdd');
-            // Scroll to top
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        // ============================================================
-        // Hardware Actions
-        // ============================================================
-        function downloadHardware() {
-            if (currentHwFilename) {
-                window.location.href = `/api/download-hardware/${encodeURIComponent(currentHwFilename)}`;
-            }
-        }
-
-        function resetHardware() {
-            document.getElementById('hw-result').classList.remove('visible');
-            document.getElementById('hw-input').value = '';
-            document.getElementById('hw-preview').textContent = '';
-            currentHwFilename = null;
         }
 
         // ============================================================
@@ -781,12 +992,13 @@
             const useStreaming = document.getElementById('bdd-stream').checked;
 
             if (!input) {
-                showError('bdd', 'Please enter your requirements');
+                showError('bdd', 'Please enter requirements');
                 return;
             }
 
             hideError('bdd');
             setLoading('bdd', true);
+            updateStepStatus(2, 'in-progress');
 
             const payload = { llm, model, input };
 
@@ -807,8 +1019,9 @@
             statusDiv.classList.add('visible');
             preview.innerHTML = '<span class="cursor"></span>';
             document.getElementById('bdd-filename').textContent = 'Generating...';
+            document.getElementById('bdd-info').textContent = `Generating with ${payload.llm.toUpperCase()}...`;
+            document.getElementById('bdd-badge').textContent = payload.llm.toUpperCase();
             document.getElementById('bdd-download').style.display = 'none';
-            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             let fullContent = '';
 
@@ -833,26 +1046,25 @@
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
-
                                 if (data.type === 'start') {
                                     statusText.textContent = `Connected to ${data.llm.toUpperCase()}...`;
-                                }
-                                else if (data.type === 'info') {
+                                } else if (data.type === 'info') {
                                     statusText.textContent = data.message;
-                                }
-                                else if (data.type === 'chunk') {
+                                } else if (data.type === 'chunk') {
                                     fullContent += data.content;
                                     preview.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
                                     preview.scrollTop = preview.scrollHeight;
-                                }
-                                else if (data.type === 'complete') {
+                                } else if (data.type === 'complete') {
                                     currentBddFilename = data.filename;
                                     document.getElementById('bdd-filename').textContent = data.filename;
-                                    document.getElementById('bdd-info').textContent = 'Generated successfully';
+                                    document.getElementById('bdd-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
                                     document.getElementById('bdd-download').style.display = 'flex';
-                                }
-                                else if (data.type === 'error') {
+                                    updateStepStatus(2, 'completed');
+                                    updatePipelineIndicator(2, 'completed');
+                                    updatePipelineIndicator(3, 'active');
+                                } else if (data.type === 'error') {
                                     showError('bdd', data.message);
+                                    updateStepStatus(2, 'pending');
                                 }
                             } catch (e) {}
                         }
@@ -860,6 +1072,7 @@
                 }
             } catch (error) {
                 showError('bdd', error.message);
+                updateStepStatus(2, 'pending');
             } finally {
                 setLoading('bdd', false);
                 statusDiv.classList.remove('visible');
@@ -876,44 +1089,88 @@
                 });
 
                 const data = await response.json();
-
-                if (!data.success) {
-                    throw new Error(data.error || 'Generation failed');
-                }
+                if (!data.success) throw new Error(data.error || 'Generation failed');
 
                 currentBddFilename = data.filename;
                 document.getElementById('bdd-filename').textContent = data.filename;
-                document.getElementById('bdd-info').textContent = `Generated with ${data.llm}`;
+                document.getElementById('bdd-info').textContent = `Generated with ${data.llm.toUpperCase()}`;
                 document.getElementById('bdd-badge').textContent = data.llm.toUpperCase();
                 document.getElementById('bdd-preview').textContent = data.full_content;
                 document.getElementById('bdd-download').style.display = 'flex';
                 document.getElementById('bdd-result').classList.add('visible');
-
+                updateStepStatus(2, 'completed');
+                updatePipelineIndicator(2, 'completed');
+                updatePipelineIndicator(3, 'active');
             } catch (error) {
                 showError('bdd', error.message);
+                updateStepStatus(2, 'pending');
             } finally {
                 setLoading('bdd', false);
             }
         }
 
         // ============================================================
-        // BDD Actions
+        // Status Updates
         // ============================================================
-        function downloadBDD() {
-            if (currentBddFilename) {
-                window.location.href = `/api/download/${encodeURIComponent(currentBddFilename)}`;
+        function updateStepStatus(stepNum, status) {
+            const statusEl = document.getElementById(`step-${stepNum}-status`);
+            const numEl = document.getElementById(`step-${stepNum}-num`);
+
+            statusEl.className = 'step-status ' + status;
+
+            if (status === 'pending') statusEl.textContent = 'Pending';
+            else if (status === 'in-progress') statusEl.textContent = 'In Progress';
+            else if (status === 'completed') {
+                statusEl.textContent = 'Completed';
+                numEl.classList.add('completed');
             }
+        }
+
+        function updatePipelineIndicator(stepNum, status) {
+            const indicator = document.getElementById(`indicator-${stepNum}`);
+            indicator.className = 'pipeline-step-indicator';
+            if (status === 'active') indicator.classList.add('active');
+            else if (status === 'completed') indicator.classList.add('completed');
+        }
+
+        // ============================================================
+        // Actions
+        // ============================================================
+        function downloadHardware() {
+            if (currentHwFilename) window.location.href = `/api/download-hardware/${encodeURIComponent(currentHwFilename)}`;
+        }
+
+        function downloadBDD() {
+            if (currentBddFilename) window.location.href = `/api/download/${encodeURIComponent(currentBddFilename)}`;
+        }
+
+        function resetHardware() {
+            document.getElementById('hw-result').classList.remove('visible');
+            document.getElementById('hw-input').value = '';
+            document.getElementById('hw-preview').textContent = '';
+            currentHwFilename = null;
+            currentDUT = null;
+            updateBddTabState();
+            updateStepStatus(1, 'pending');
+            document.getElementById('step-1-num').classList.remove('completed');
+            updatePipelineIndicator(1, 'active');
+            updatePipelineIndicator(2, '');
         }
 
         function resetBDD() {
             document.getElementById('bdd-result').classList.remove('visible');
             document.getElementById('bdd-preview').textContent = '';
             currentBddFilename = null;
-            // Don't clear the input - keep the synced requirements
+            updateStepStatus(2, 'pending');
+            document.getElementById('step-2-num').classList.remove('completed');
+            if (currentDUT) {
+                updatePipelineIndicator(2, 'active');
+            }
+            updatePipelineIndicator(3, '');
         }
 
         // ============================================================
-        // Utility Functions
+        // Utilities
         // ============================================================
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -925,15 +1182,9 @@
             const btn = document.getElementById(`${type}-btn`);
             const btnText = document.getElementById(`${type}-btn-text`);
             const spinner = document.getElementById(`${type}-spinner`);
-
             btn.disabled = loading;
             spinner.style.display = loading ? 'inline-block' : 'none';
-
-            if (type === 'hw') {
-                btnText.textContent = loading ? 'Generating...' : '🔧 Generate Hardware';
-            } else {
-                btnText.textContent = loading ? 'Generating...' : '🧪 Generate BDD';
-            }
+            btnText.textContent = loading ? 'Generating...' : (type === 'hw' ? '🔧 Generate Hardware' : '🧪 Generate BDD Tests');
         }
 
         function showError(type, message) {
@@ -946,23 +1197,7 @@
             document.getElementById(`${type}-error`).classList.remove('visible');
         }
 
-        // ============================================================
-        // Keyboard Shortcuts
-        // ============================================================
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && e.ctrlKey) {
-                const activeTab = document.querySelector('.tab-content.active').id;
-                if (activeTab === 'tab-hw') {
-                    generateHardware();
-                } else {
-                    generateBDD();
-                }
-            }
-        });
-
-        // ============================================================
         // Initialize
-        // ============================================================
         updateBddTabState();
     </script>
 </body>
