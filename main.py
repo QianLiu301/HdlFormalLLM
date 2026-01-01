@@ -22,6 +22,8 @@ from datetime import datetime
 # ============================================================================
 # Path Setup
 # ============================================================================
+from werkzeug.utils import secure_filename
+
 PROJECT_ROOT = Path(__file__).parent.absolute()
 SRC_DIR = PROJECT_ROOT / 'src'
 sys.path.insert(0, str(SRC_DIR))
@@ -175,7 +177,71 @@ last_generated_hw = {'filename': None, 'filepath': None, 'llm': None, 'module_ty
 (PROJECT_ROOT / 'output' / 'bdd').mkdir(parents=True, exist_ok=True)
 (PROJECT_ROOT / 'output' / 'dut').mkdir(parents=True, exist_ok=True)
 
+# ============================================================================
+# Upload Configuration
+# ============================================================================
+UPLOAD_FOLDER = PROJECT_ROOT / 'output' / 'dut' / 'uploaded'
+ALLOWED_EXTENSIONS = {'v', 'sv', 'vh'}
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB
 
+# Ensure upload directory exists
+UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
+# Initialize parser
+try:
+    from verilog_parser import VerilogParser
+
+    verilog_parser = VerilogParser(upload_dir=str(UPLOAD_FOLDER))
+    HAS_PARSER = True
+    print("✅ Verilog Parser loaded")
+except ImportError:
+    verilog_parser = None
+    HAS_PARSER = False
+    print("⚠️ Verilog Parser not available")
+
+
+def allowed_file(filename):
+    """Check if file extension is allowed."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+# ============================================================================
+# Upload DUT API
+# ============================================================================
+@app.route('/api/upload-dut', methods=['POST'])
+def upload_dut():
+    """Handle Verilog file upload and parsing."""
+
+    if not HAS_PARSER:
+        return jsonify({'success': False, 'error': 'Verilog parser not available'}), 500
+
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({'success': False, 'error': 'Invalid file type. Allowed: .v, .sv, .vh'}), 400
+
+    try:
+        file_content = file.read()
+        filename = secure_filename(file.filename)
+        result = verilog_parser.parse_file(filename, file_content)
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({'success': False, 'error': 'File too large. Maximum: 1MB'}), 413
 def make_sse_message(msg_type, **kwargs):
     """Helper to create SSE message"""
     data = {"type": msg_type}

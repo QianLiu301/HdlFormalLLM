@@ -35,86 +35,19 @@
         .header p { color: var(--text-secondary); font-size: 15px; }
 
         /* Pipeline Overview */
-        .pipeline-overview {
-            display: flex;
-            justify-content: center;
-            gap: 8px;
-            margin-bottom: 40px;
-            flex-wrap: wrap;
-        }
-        .pipeline-step-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: var(--bg-secondary);
-            border-radius: 20px;
-            font-size: 13px;
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-        }
-        .pipeline-step-indicator.active {
-            background: var(--accent-blue);
-            color: white;
-            border-color: var(--accent-blue);
-        }
-        .pipeline-step-indicator.completed {
-            background: var(--accent);
-            color: white;
-            border-color: var(--accent);
-        }
-        .pipeline-step-indicator .num {
-            width: 20px;
-            height: 20px;
-            background: rgba(255,255,255,0.2);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            font-size: 11px;
-        }
-        .pipeline-step-indicator.active .num,
-        .pipeline-step-indicator.completed .num {
-            background: rgba(255,255,255,0.3);
-        }
-        .pipeline-arrow {
-            color: var(--border-color);
-            font-size: 18px;
-            display: flex;
-            align-items: center;
-        }
+        .pipeline-overview { display: flex; justify-content: center; gap: 8px; margin-bottom: 40px; flex-wrap: wrap; }
+        .pipeline-step-indicator { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--bg-secondary); border-radius: 20px; font-size: 13px; color: var(--text-secondary); border: 1px solid var(--border-color); }
+        .pipeline-step-indicator.active { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
+        .pipeline-step-indicator.completed { background: var(--accent); color: white; border-color: var(--accent); }
+        .pipeline-step-indicator .num { width: 20px; height: 20px; background: rgba(255,255,255,0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 11px; }
+        .pipeline-step-indicator.active .num, .pipeline-step-indicator.completed .num { background: rgba(255,255,255,0.3); }
+        .pipeline-arrow { color: var(--border-color); font-size: 18px; display: flex; align-items: center; }
 
         /* Step Section */
-        .step-section {
-            margin-bottom: 32px;
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            overflow: hidden;
-            background: var(--bg-primary);
-        }
-        .step-header {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            padding: 20px 24px;
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
-            cursor: pointer;
-            user-select: none;
-        }
+        .step-section { margin-bottom: 32px; border: 1px solid var(--border-color); border-radius: 16px; overflow: hidden; background: var(--bg-primary); }
+        .step-header { display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); cursor: pointer; user-select: none; }
         .step-header:hover { background: var(--bg-tertiary); }
-        .step-number {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 16px;
-            flex-shrink: 0;
-        }
+        .step-number { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; flex-shrink: 0; }
         .step-number.blue { background: rgba(37, 99, 235, 0.15); color: var(--accent-blue); }
         .step-number.green { background: rgba(0, 168, 132, 0.15); color: var(--accent); }
         .step-number.orange { background: rgba(245, 158, 11, 0.15); color: var(--accent-orange); }
@@ -123,83 +56,78 @@
         .step-title-area { flex: 1; }
         .step-title { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
         .step-subtitle { font-size: 13px; color: var(--text-secondary); }
-        .step-status {
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 500;
-        }
+        .step-status { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 500; }
         .step-status.pending { background: var(--bg-tertiary); color: var(--text-secondary); }
         .step-status.in-progress { background: rgba(37, 99, 235, 0.15); color: var(--accent-blue); }
         .step-status.completed { background: rgba(0, 168, 132, 0.15); color: var(--accent); }
-        .step-toggle {
-            font-size: 20px;
-            color: var(--text-secondary);
-            transition: transform 0.3s;
-        }
+        .step-toggle { font-size: 20px; color: var(--text-secondary); transition: transform 0.3s; }
         .step-section.collapsed .step-toggle { transform: rotate(-90deg); }
         .step-section.collapsed .step-content { display: none; }
-
         .step-content { padding: 24px; }
 
-        /* Form Elements */
-        .card {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 16px;
-        }
+        /* Mode Switcher */
+        .mode-switcher { display: flex; gap: 8px; margin-bottom: 20px; background: var(--bg-tertiary); padding: 4px; border-radius: 10px; }
+        .mode-btn { flex: 1; padding: 12px 16px; background: transparent; border: none; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .mode-btn:hover { color: var(--text-primary); }
+        .mode-btn.active { background: var(--bg-primary); color: var(--accent-blue); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .mode-content { display: none; }
+        .mode-content.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Upload Area */
+        .upload-area { border: 2px dashed var(--border-color); border-radius: 12px; padding: 40px 24px; text-align: center; transition: all 0.2s; cursor: pointer; background: var(--bg-secondary); }
+        .upload-area:hover, .upload-area.dragover { border-color: var(--accent-blue); background: rgba(37, 99, 235, 0.05); }
+        .upload-area.dragover { transform: scale(1.01); }
+        .upload-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.6; }
+        .upload-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+        .upload-subtitle { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+        .upload-info { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+        .upload-info-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); background: var(--bg-primary); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .upload-input { display: none; }
+
+        /* Upload Result */
+        .upload-result { display: none; margin-top: 20px; }
+        .upload-result.visible { display: block; }
+        .file-info-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .file-info-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .file-info-icon { width: 40px; height: 40px; background: rgba(37, 99, 235, 0.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .file-info-details h4 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+        .file-info-details p { font-size: 12px; color: var(--text-secondary); }
+        .file-info-actions { margin-left: auto; }
+
+        /* Module Selector */
+        .module-selector { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .module-selector-title { font-size: 13px; font-weight: 600; color: var(--accent-orange); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+        .module-selector select { width: 100%; padding: 10px 14px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; }
+
+        /* Detected Info */
+        .detected-info { background: var(--bg-tertiary); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+        .detected-info-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+        .detected-info-row:not(:last-child) { border-bottom: 1px solid var(--border-color); }
+        .detected-info-label { color: var(--text-secondary); }
+        .detected-info-value { font-weight: 500; font-family: 'JetBrains Mono', monospace; }
+        .confidence-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+        .confidence-badge.high { background: rgba(0, 168, 132, 0.15); color: var(--accent); }
+        .confidence-badge.medium { background: rgba(245, 158, 11, 0.15); color: var(--accent-orange); }
+        .confidence-badge.low { background: rgba(220, 38, 38, 0.15); color: var(--error); }
+
+        /* Card & Form */
+        .card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; margin-bottom: 16px; }
         .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
         .form-group { margin-bottom: 16px; }
         .form-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
         .form-row .form-group { flex: 1; min-width: 140px; margin-bottom: 0; }
         label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-        select, textarea, input[type="text"] {
-            width: 100%;
-            padding: 10px 14px;
-            background: var(--bg-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-family: inherit;
-            font-size: 14px;
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-        select:focus, textarea:focus, input[type="text"]:focus {
-            outline: none;
-            border-color: var(--accent-blue);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-        select {
-            cursor: pointer;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23666' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 12px center;
-            padding-right: 36px;
-        }
+        select, textarea, input[type="text"] { width: 100%; padding: 10px 14px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); font-family: inherit; font-size: 14px; transition: border-color 0.2s, box-shadow 0.2s; }
+        select:focus, textarea:focus, input[type="text"]:focus { outline: none; border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23666' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
         textarea { min-height: 100px; resize: vertical; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
-
         .divider { display: flex; align-items: center; margin: 16px 0; color: var(--text-secondary); font-size: 12px; }
         .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border-color); }
         .divider span { padding: 0 12px; }
 
         /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 12px 24px;
-            font-family: inherit;
-            font-size: 14px;
-            font-weight: 600;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 24px; font-family: inherit; font-size: 14px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
         .btn-primary { background: var(--accent-blue); color: #ffffff; width: 100%; }
         .btn-primary.green { background: var(--accent); }
         .btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.1); }
@@ -207,21 +135,14 @@
         .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); }
         .btn-secondary:hover { background: var(--border-color); }
         .btn-sm { padding: 8px 16px; font-size: 13px; }
+        .btn-danger { background: rgba(220, 38, 38, 0.1); color: var(--error); border: 1px solid rgba(220, 38, 38, 0.3); }
+        .btn-danger:hover { background: rgba(220, 38, 38, 0.2); }
 
         .spinner { width: 16px; height: 16px; border: 2px solid transparent; border-top-color: currentColor; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
         /* Stream Status */
-        .stream-status {
-            display: none;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 14px;
-            background: var(--bg-tertiary);
-            border-radius: 8px;
-            margin-bottom: 12px;
-            font-size: 13px;
-        }
+        .stream-status { display: none; align-items: center; gap: 10px; padding: 12px 14px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
         .stream-status.visible { display: flex; }
         .stream-status .dot { width: 8px; height: 8px; background: var(--accent-blue); border-radius: 50%; animation: pulse 1s ease-in-out infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -229,86 +150,31 @@
         /* Result */
         .result { display: none; }
         .result.visible { display: block; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .result-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 12px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .result-header .icon {
-            width: 36px;
-            height: 36px;
-            background: rgba(0, 168, 132, 0.1);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-        }
+        .result-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
+        .result-header .icon { width: 36px; height: 36px; background: rgba(0, 168, 132, 0.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
         .result-header .info h3 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
         .result-header .info p { font-size: 12px; color: var(--text-secondary); }
-        .result-header .badge {
-            margin-left: auto;
-            padding: 4px 10px;
-            background: var(--bg-tertiary);
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--accent-blue);
-            text-transform: uppercase;
-        }
+        .result-header .badge { margin-left: auto; padding: 4px 10px; background: var(--bg-tertiary); border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--accent-blue); text-transform: uppercase; }
         .preview-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-        .preview-box {
-            background: var(--bg-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 14px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            min-height: 150px;
-            max-height: 300px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-word;
-            color: #333;
-        }
+        .preview-box { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; min-height: 150px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: #333; }
         .preview-box .cursor { display: inline-block; width: 2px; height: 1.1em; background: var(--accent-blue); animation: blink 0.8s step-end infinite; vertical-align: text-bottom; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         .action-buttons { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
         .action-buttons .btn { flex: 1; min-width: 120px; }
 
         /* Error */
-        .error-message {
-            background: rgba(220, 38, 38, 0.1);
-            border: 1px solid rgba(220, 38, 38, 0.3);
-            border-radius: 8px;
-            padding: 12px 14px;
-            color: var(--error);
-            font-size: 13px;
-            display: none;
-            margin-bottom: 12px;
-        }
+        .error-message { background: rgba(220, 38, 38, 0.1); border: 1px solid rgba(220, 38, 38, 0.3); border-radius: 8px; padding: 12px 14px; color: var(--error); font-size: 13px; display: none; margin-bottom: 12px; }
         .error-message.visible { display: block; }
+
+        /* Success Message */
+        .success-message { background: rgba(0, 168, 132, 0.1); border: 1px solid rgba(0, 168, 132, 0.3); border-radius: 8px; padding: 12px 14px; color: var(--accent); font-size: 13px; display: none; margin-bottom: 12px; }
+        .success-message.visible { display: block; }
 
         /* Examples */
         .examples { margin-top: 8px; }
         .examples-title { font-size: 11px; color: var(--text-secondary); margin-bottom: 6px; }
         .example-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-        .example-chip {
-            padding: 5px 10px;
-            background: var(--bg-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            font-size: 11px;
-            font-family: 'JetBrains Mono', monospace;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
+        .example-chip { padding: 5px 10px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; }
         .example-chip:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
 
         /* Toggle */
@@ -322,14 +188,7 @@
         .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: #ffffff; }
 
         /* DUT Status */
-        .dut-status {
-            display: none;
-            background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0.03));
-            border: 1px solid rgba(37, 99, 235, 0.2);
-            border-radius: 10px;
-            padding: 14px 16px;
-            margin-bottom: 16px;
-        }
+        .dut-status { display: none; background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0.03)); border: 1px solid rgba(37, 99, 235, 0.2); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
         .dut-status.visible { display: block; }
         .dut-status-header { display: flex; align-items: center; gap: 10px; }
         .dut-status-icon { font-size: 18px; }
@@ -338,16 +197,10 @@
         .dut-status-info p { font-size: 12px; color: var(--text-secondary); }
         .dut-status-info .filename { font-family: 'JetBrains Mono', monospace; color: var(--text-primary); font-weight: 500; }
         .dut-status-badge { padding: 3px 8px; background: rgba(37, 99, 235, 0.15); border-radius: 4px; font-size: 10px; font-weight: 600; color: var(--accent-blue); text-transform: uppercase; }
+        .dut-status .source-badge { background: rgba(124, 58, 237, 0.15); color: var(--accent-purple); margin-left: 6px; }
 
         /* No DUT Warning */
-        .no-dut-warning {
-            display: none;
-            background: rgba(245, 158, 11, 0.08);
-            border: 1px solid rgba(245, 158, 11, 0.2);
-            border-radius: 10px;
-            padding: 14px 16px;
-            margin-bottom: 16px;
-        }
+        .no-dut-warning { display: none; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
         .no-dut-warning.visible { display: flex; align-items: center; gap: 12px; }
         .no-dut-warning-icon { font-size: 18px; }
         .no-dut-warning-text { flex: 1; }
@@ -359,11 +212,7 @@
         .synced-indicator::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
 
         /* Coming Soon */
-        .coming-soon {
-            padding: 40px 24px;
-            text-align: center;
-            color: var(--text-secondary);
-        }
+        .coming-soon { padding: 40px 24px; text-align: center; color: var(--text-secondary); }
         .coming-soon-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
         .coming-soon h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--text-primary); }
         .coming-soon p { font-size: 13px; }
@@ -379,6 +228,7 @@
             .form-row .form-group { min-width: 100%; }
             .pipeline-overview { gap: 4px; }
             .pipeline-step-indicator { padding: 6px 10px; font-size: 11px; }
+            .mode-switcher { flex-direction: column; }
         }
     </style>
 </head>
@@ -414,115 +264,227 @@
             <div class="step-header" onclick="toggleStep(1)">
                 <div class="step-number blue" id="step-1-num">1</div>
                 <div class="step-title-area">
-                    <div class="step-title">🔧 Generate Hardware Design (DUT)</div>
-                    <div class="step-subtitle">Create Verilog hardware using LLM</div>
+                    <div class="step-title">🔧 Hardware Design (DUT)</div>
+                    <div class="step-subtitle">Generate with LLM or upload existing Verilog file</div>
                 </div>
                 <div class="step-status pending" id="step-1-status">Pending</div>
                 <div class="step-toggle">▼</div>
             </div>
             <div class="step-content">
-                <div class="card">
-                    <div class="card-title">⚡ Configuration</div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Module Type</label>
-                            <select id="hw-module" onchange="onModuleChange()">
-                                <option value="alu">ALU - Arithmetic Logic Unit</option>
-                                <option value="counter">Counter - Up/Down Counter</option>
-                                <option value="regfile">Register File</option>
-                                <option value="cpu">CPU - RISC-V Processor</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="hw-bitwidth-group">
-                            <label>Bitwidth</label>
-                            <select id="hw-bitwidth">
-                                <option value="8">8-bit</option>
-                                <option value="16">16-bit</option>
-                                <option value="32" selected>32-bit</option>
-                                <option value="64">64-bit</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="hw-depth-group" style="display: none;">
-                            <label>Registers</label>
-                            <select id="hw-depth">
-                                <option value="8">8 registers</option>
-                                <option value="16">16 registers</option>
-                                <option value="32" selected>32 registers</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="hw-pipeline-group" style="display: none;">
-                            <label>Pipeline</label>
-                            <select id="hw-pipeline">
-                                <option value="5" selected>5-stage</option>
-                                <option value="3">3-stage</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>LLM Provider</label>
-                            <select id="hw-llm" onchange="onHwLlmChange()">
-                                <option value="groq">Groq</option>
-                                <option value="deepseek">DeepSeek</option>
-                                <option value="openai">OpenAI</option>
-                                <option value="claude">Claude</option>
-                                <option value="gemini">Gemini</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="hw-model-group" style="display: none;">
-                            <label>Model</label>
-                            <select id="hw-model">
-                                <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                <option value="gpt-4o">GPT-4o</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="divider"><span>or use natural language</span></div>
-                    <div class="form-group">
-                        <label>Natural Language Input</label>
-                        <input type="text" id="hw-input" placeholder="e.g., 32-bit counter or 16-bit ALU">
-                        <div class="examples">
-                            <div class="examples-title">Examples:</div>
-                            <div class="example-chips">
-                                <span class="example-chip" onclick="setHwExample('16-bit ALU')">16-bit ALU</span>
-                                <span class="example-chip" onclick="setHwExample('32-bit counter')">32-bit Counter</span>
-                                <span class="example-chip" onclick="setHwExample('32x32 register file')">32x32 RegFile</span>
-                                <span class="example-chip" onclick="setHwExample('5-stage RISC-V CPU')">RISC-V CPU</span>
+                <!-- Mode Switcher -->
+                <div class="mode-switcher">
+                    <button class="mode-btn active" onclick="switchMode('generate')" id="mode-generate-btn">
+                        🤖 Generate with LLM
+                    </button>
+                    <button class="mode-btn" onclick="switchMode('upload')" id="mode-upload-btn">
+                        📤 Upload Existing File
+                    </button>
+                </div>
+
+                <!-- Generate Mode -->
+                <div class="mode-content active" id="mode-generate">
+                    <div class="card">
+                        <div class="card-title">⚡ Configuration</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Module Type</label>
+                                <select id="hw-module" onchange="onModuleChange()">
+                                    <option value="alu">ALU - Arithmetic Logic Unit</option>
+                                    <option value="counter">Counter - Up/Down Counter</option>
+                                    <option value="regfile">Register File</option>
+                                    <option value="cpu">CPU - RISC-V Processor</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="hw-bitwidth-group">
+                                <label>Bitwidth</label>
+                                <select id="hw-bitwidth">
+                                    <option value="8">8-bit</option>
+                                    <option value="16">16-bit</option>
+                                    <option value="32" selected>32-bit</option>
+                                    <option value="64">64-bit</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="hw-depth-group" style="display: none;">
+                                <label>Registers</label>
+                                <select id="hw-depth">
+                                    <option value="8">8 registers</option>
+                                    <option value="16">16 registers</option>
+                                    <option value="32" selected>32 registers</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="hw-pipeline-group" style="display: none;">
+                                <label>Pipeline</label>
+                                <select id="hw-pipeline">
+                                    <option value="5" selected>5-stage</option>
+                                    <option value="3">3-stage</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>LLM Provider</label>
+                                <select id="hw-llm" onchange="onHwLlmChange()">
+                                    <option value="groq">Groq</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="gemini">Gemini</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="hw-model-group" style="display: none;">
+                                <label>Model</label>
+                                <select id="hw-model">
+                                    <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                    <option value="gpt-4o">GPT-4o</option>
+                                </select>
                             </div>
                         </div>
-                    </div>
-                    <div class="toggle-row">
-                        <span class="toggle-label">⚡ Stream output</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="hw-stream" checked>
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="error-message" id="hw-error"></div>
-                <div class="stream-status" id="hw-status">
-                    <div class="dot"></div>
-                    <span id="hw-status-text">Generating...</span>
-                </div>
-
-                <button class="btn btn-primary" id="hw-btn" onclick="generateHardware()">
-                    <span id="hw-btn-text">🔧 Generate Hardware</span>
-                    <div class="spinner" id="hw-spinner" style="display: none;"></div>
-                </button>
-
-                <div class="card result" id="hw-result" style="margin-top: 16px;">
-                    <div class="result-header">
-                        <div class="icon">✅</div>
-                        <div class="info">
-                            <h3 id="hw-filename">Generating...</h3>
-                            <p id="hw-info">Ready to generate</p>
+                        <div class="divider"><span>or use natural language</span></div>
+                        <div class="form-group">
+                            <label>Natural Language Input</label>
+                            <input type="text" id="hw-input" placeholder="e.g., 32-bit counter or 16-bit ALU">
+                            <div class="examples">
+                                <div class="examples-title">Examples:</div>
+                                <div class="example-chips">
+                                    <span class="example-chip" onclick="setHwExample('16-bit ALU')">16-bit ALU</span>
+                                    <span class="example-chip" onclick="setHwExample('32-bit counter')">32-bit Counter</span>
+                                    <span class="example-chip" onclick="setHwExample('32x32 register file')">32x32 RegFile</span>
+                                    <span class="example-chip" onclick="setHwExample('5-stage RISC-V CPU')">RISC-V CPU</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="badge" id="hw-badge">LLM</div>
+                        <div class="toggle-row">
+                            <span class="toggle-label">⚡ Stream output</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="hw-stream" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
                     </div>
-                    <div class="preview-label">Verilog Code Preview</div>
-                    <div class="preview-box" id="hw-preview"></div>
-                    <div class="action-buttons">
-                        <button class="btn btn-secondary btn-sm" id="hw-download" onclick="downloadHardware()">📥 Download .v</button>
-                        <button class="btn btn-secondary btn-sm" onclick="resetHardware()">🔄 Reset</button>
+
+                    <div class="error-message" id="hw-error"></div>
+                    <div class="stream-status" id="hw-status">
+                        <div class="dot"></div>
+                        <span id="hw-status-text">Generating...</span>
+                    </div>
+
+                    <button class="btn btn-primary" id="hw-btn" onclick="generateHardware()">
+                        <span id="hw-btn-text">🔧 Generate Hardware</span>
+                        <div class="spinner" id="hw-spinner" style="display: none;"></div>
+                    </button>
+
+                    <div class="card result" id="hw-result" style="margin-top: 16px;">
+                        <div class="result-header">
+                            <div class="icon">✅</div>
+                            <div class="info">
+                                <h3 id="hw-filename">Generating...</h3>
+                                <p id="hw-info">Ready to generate</p>
+                            </div>
+                            <div class="badge" id="hw-badge">LLM</div>
+                        </div>
+                        <div class="preview-label">Verilog Code Preview</div>
+                        <div class="preview-box" id="hw-preview"></div>
+                        <div class="action-buttons">
+                            <button class="btn btn-secondary btn-sm" id="hw-download" onclick="downloadHardware()">📥 Download .v</button>
+                            <button class="btn btn-secondary btn-sm" onclick="resetHardware()">🔄 Reset</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload Mode -->
+                <div class="mode-content" id="mode-upload">
+                    <div class="upload-area" id="upload-area" onclick="document.getElementById('upload-input').click()">
+                        <div class="upload-icon">📁</div>
+                        <div class="upload-title">Drag & drop your Verilog file here</div>
+                        <div class="upload-subtitle">or click to browse</div>
+                        <div class="upload-info">
+                            <div class="upload-info-item">📄 .v, .sv files</div>
+                            <div class="upload-info-item">📏 Max 1MB</div>
+                            <div class="upload-info-item">🔒 Secure upload</div>
+                        </div>
+                        <input type="file" id="upload-input" class="upload-input" accept=".v,.sv,.vh" onchange="handleFileSelect(event)">
+                    </div>
+
+                    <div class="error-message" id="upload-error"></div>
+                    <div class="success-message" id="upload-success"></div>
+
+                    <!-- Upload Result -->
+                    <div class="upload-result" id="upload-result">
+                        <div class="file-info-card">
+                            <div class="file-info-header">
+                                <div class="file-info-icon">📄</div>
+                                <div class="file-info-details">
+                                    <h4 id="uploaded-filename">alu_16bit.v</h4>
+                                    <p id="uploaded-filesize">2.3 KB • Uploaded successfully</p>
+                                </div>
+                                <div class="file-info-actions">
+                                    <button class="btn btn-danger btn-sm" onclick="removeUploadedFile()">✕ Remove</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Module Selector (for multi-module files) -->
+                        <div class="module-selector" id="module-selector" style="display: none;">
+                            <div class="module-selector-title">⚠️ Multiple modules found - Please select one:</div>
+                            <select id="module-select" onchange="onModuleSelect()">
+                            </select>
+                        </div>
+
+                        <!-- Detected Info -->
+                        <div class="detected-info" id="detected-info">
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Module Name</span>
+                                <span class="detected-info-value" id="detected-module-name">alu_16bit</span>
+                            </div>
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Detected Type</span>
+                                <span>
+                                    <span class="detected-info-value" id="detected-type">ALU</span>
+                                    <span class="confidence-badge high" id="confidence-badge">High</span>
+                                </span>
+                            </div>
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Bitwidth</span>
+                                <span class="detected-info-value" id="detected-bitwidth">16-bit</span>
+                            </div>
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Inputs</span>
+                                <span class="detected-info-value" id="detected-inputs">clk, rst_n, A, B, opcode</span>
+                            </div>
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Outputs</span>
+                                <span class="detected-info-value" id="detected-outputs">result, zero, overflow</span>
+                            </div>
+                        </div>
+
+                        <!-- Override Type -->
+                        <div class="card">
+                            <div class="card-title">🔧 Adjust Detection (Optional)</div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Module Type</label>
+                                    <select id="override-type">
+                                        <option value="alu">ALU - Arithmetic Logic Unit</option>
+                                        <option value="counter">Counter - Up/Down Counter</option>
+                                        <option value="regfile">Register File</option>
+                                        <option value="cpu">CPU - Processor</option>
+                                        <option value="other">Other - Custom Module</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Bitwidth Override</label>
+                                    <select id="override-bitwidth">
+                                        <option value="auto">Auto-detected</option>
+                                        <option value="8">8-bit</option>
+                                        <option value="16">16-bit</option>
+                                        <option value="32">32-bit</option>
+                                        <option value="64">64-bit</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-primary" onclick="confirmUpload()">
+                            ✅ Use This File as DUT
+                        </button>
                     </div>
                 </div>
             </div>
@@ -549,6 +511,7 @@
                             <p><span class="filename" id="dut-filename">-</span> • <span id="dut-type-display">-</span> • <span id="dut-bitwidth-display">-</span></p>
                         </div>
                         <div class="dut-status-badge" id="dut-module-badge">-</div>
+                        <div class="dut-status-badge source-badge" id="dut-source-badge">LLM</div>
                     </div>
                 </div>
 
@@ -557,7 +520,7 @@
                     <div class="no-dut-warning-icon">⚠️</div>
                     <div class="no-dut-warning-text">
                         <h4>No Hardware Generated</h4>
-                        <p>Complete Step 1 first to generate hardware, then create matching tests.</p>
+                        <p>Complete Step 1 first to generate or upload hardware.</p>
                     </div>
                 </div>
 
@@ -584,8 +547,8 @@
                     </div>
                     <div class="form-group">
                         <label>Requirements (auto-filled based on DUT)</label>
-                        <textarea id="bdd-input" placeholder="Requirements will be auto-filled when you generate hardware..."></textarea>
-                        <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with generated DUT</div>
+                        <textarea id="bdd-input" placeholder="Requirements will be auto-filled when you generate or upload hardware..."></textarea>
+                        <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with DUT</div>
                         <div class="examples">
                             <div class="examples-title">Examples:</div>
                             <div class="example-chips">
@@ -692,10 +655,13 @@
         let currentHwFilename = null;
         let currentBddFilename = null;
         let currentDUT = null;
+        let uploadedFileData = null;
+        let parsedModules = [];
+        let selectedModuleIndex = 0;
 
         // BDD Templates
         const BDD_TEMPLATES = {
-            alu: (bitwidth) => `${bitwidth}-bit ALU with:
+            alu: (bw) => `${bw}-bit ALU with:
 - ADD operation (A + B)
 - SUB operation (A - B)
 - AND operation (A & B)
@@ -704,8 +670,7 @@
 - Overflow detection
 - Zero flag detection
 - Boundary value tests`,
-
-            counter: (bitwidth) => `${bitwidth}-bit Counter with:
+            counter: (bw) => `${bw}-bit Counter with:
 - UP mode (increment)
 - DOWN mode (decrement)
 - UP-DOWN mode (ping-pong)
@@ -713,21 +678,34 @@
 - Enable control
 - Overflow flag
 - Zero flag`,
-
-            regfile: (bitwidth, depth) => `${depth}x${bitwidth}-bit Register File with:
+            regfile: (bw, depth) => `${depth || 32}x${bw}-bit Register File with:
 - Dual read ports
 - Single write port
 - x0 always returns 0
 - Concurrent read/write test`,
-
-            cpu: (pipelineStages) => `${pipelineStages}-stage RISC-V CPU with:
+            cpu: (stages) => `${stages || 5}-stage RISC-V CPU with:
 - R-type: ADD, SUB, AND, OR, XOR
 - I-type: ADDI, LW
 - S-type: SW
 - B-type: BEQ, BNE
 - Forwarding tests
-- Hazard tests`
+- Hazard tests`,
+            other: (bw) => `${bw}-bit module with:
+- Basic functionality tests
+- Boundary value tests
+- Reset behavior tests`
         };
+
+        // ============================================================
+        // Mode Switching
+        // ============================================================
+        function switchMode(mode) {
+            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.mode-content').forEach(content => content.classList.remove('active'));
+
+            document.getElementById(`mode-${mode}-btn`).classList.add('active');
+            document.getElementById(`mode-${mode}`).classList.add('active');
+        }
 
         // ============================================================
         // Step Toggle
@@ -738,7 +716,189 @@
         }
 
         // ============================================================
-        // Module Type Change
+        // File Upload Handling
+        // ============================================================
+        const uploadArea = document.getElementById('upload-area');
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFile(files[0]);
+            }
+        });
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processFile(file);
+            }
+        }
+
+        function processFile(file) {
+            hideError('upload');
+            hideSuccess('upload');
+
+            // Validate extension
+            const validExtensions = ['.v', '.sv', '.vh'];
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            if (!validExtensions.includes(ext)) {
+                showError('upload', `Unsupported file type: ${ext}. Please upload .v or .sv files.`);
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            // Read and upload file
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const content = e.target.result;
+                await uploadFile(file, content);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        async function uploadFile(file, content) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-dut', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store parsed data
+                uploadedFileData = data;
+                parsedModules = data.modules || [];
+                selectedModuleIndex = 0;
+
+                // Update UI
+                document.getElementById('uploaded-filename').textContent = data.filename;
+                document.getElementById('uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+
+                // Show module selector if multiple modules
+                if (parsedModules.length > 1) {
+                    const selector = document.getElementById('module-selector');
+                    const select = document.getElementById('module-select');
+                    select.innerHTML = parsedModules.map((m, i) =>
+                        `<option value="${i}">${m.name} (${m.detected_type}, ${m.bitwidth}-bit)</option>`
+                    ).join('');
+                    selector.style.display = 'block';
+                } else {
+                    document.getElementById('module-selector').style.display = 'none';
+                }
+
+                // Display detected info
+                updateDetectedInfo(parsedModules[0]);
+
+                // Show result
+                document.getElementById('upload-result').classList.add('visible');
+                showSuccess('upload', 'File parsed successfully!');
+
+            } catch (error) {
+                showError('upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function onModuleSelect() {
+            selectedModuleIndex = parseInt(document.getElementById('module-select').value);
+            updateDetectedInfo(parsedModules[selectedModuleIndex]);
+        }
+
+        function updateDetectedInfo(module) {
+            document.getElementById('detected-module-name').textContent = module.name;
+            document.getElementById('detected-type').textContent = module.detected_type.toUpperCase();
+            document.getElementById('detected-bitwidth').textContent = module.bitwidth + '-bit';
+            document.getElementById('detected-inputs').textContent =
+                module.ports.input_names.slice(0, 6).join(', ') +
+                (module.ports.input_names.length > 6 ? '...' : '');
+            document.getElementById('detected-outputs').textContent =
+                module.ports.output_names.slice(0, 6).join(', ') +
+                (module.ports.output_names.length > 6 ? '...' : '');
+
+            // Update confidence badge
+            const badge = document.getElementById('confidence-badge');
+            badge.textContent = module.type_confidence.charAt(0).toUpperCase() + module.type_confidence.slice(1);
+            badge.className = 'confidence-badge ' + module.type_confidence;
+
+            // Update override dropdown
+            document.getElementById('override-type').value = module.detected_type;
+            document.getElementById('override-bitwidth').value = 'auto';
+        }
+
+        function removeUploadedFile() {
+            uploadedFileData = null;
+            parsedModules = [];
+            document.getElementById('upload-result').classList.remove('visible');
+            document.getElementById('upload-input').value = '';
+            hideSuccess('upload');
+        }
+
+        function confirmUpload() {
+            if (!uploadedFileData || parsedModules.length === 0) {
+                showError('upload', 'No file uploaded');
+                return;
+            }
+
+            const selectedModule = parsedModules[selectedModuleIndex];
+            const overrideType = document.getElementById('override-type').value;
+            const overrideBitwidth = document.getElementById('override-bitwidth').value;
+
+            // Create DUT info
+            const moduleNames = { 'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'CPU', 'other': 'Custom' };
+
+            currentDUT = {
+                moduleType: overrideType,
+                moduleName: moduleNames[overrideType] || overrideType,
+                bitwidth: overrideBitwidth === 'auto' ? selectedModule.bitwidth : parseInt(overrideBitwidth),
+                filename: uploadedFileData.filename,
+                savedPath: uploadedFileData.saved_path,
+                source: 'upload',
+                moduleName_verilog: selectedModule.name,
+                ports: selectedModule.ports
+            };
+
+            currentHwFilename = uploadedFileData.filename;
+
+            // Generate BDD requirements
+            const bddTemplate = BDD_TEMPLATES[overrideType] || BDD_TEMPLATES.other;
+            const bddRequirements = selectedModule.suggested_bdd || bddTemplate(currentDUT.bitwidth);
+            document.getElementById('bdd-input').value = bddRequirements;
+
+            // Update UI
+            updateBddTabState();
+            updateStepStatus(1, 'completed');
+            updatePipelineIndicator(1, 'completed');
+            updatePipelineIndicator(2, 'active');
+
+            showSuccess('upload', '✅ DUT configured! Proceed to Step 2 to generate tests.');
+        }
+
+        // ============================================================
+        // Module Type Change (Generate mode)
         // ============================================================
         function onModuleChange() {
             const moduleType = document.getElementById('hw-module').value;
@@ -781,12 +941,6 @@
             const bwMatch = text.match(/(\d+)-?bit/i);
             if (bwMatch && ['8', '16', '32', '64'].includes(bwMatch[1])) {
                 document.getElementById('hw-bitwidth').value = bwMatch[1];
-            }
-
-            const depthMatch = text.match(/(\d+)x(\d+)/i);
-            if (depthMatch) {
-                if (['8', '16', '32'].includes(depthMatch[1])) document.getElementById('hw-depth').value = depthMatch[1];
-                if (['8', '16', '32', '64'].includes(depthMatch[2])) document.getElementById('hw-bitwidth').value = depthMatch[2];
             }
         }
 
@@ -879,7 +1033,7 @@
                                     document.getElementById('hw-filename').textContent = data.filename;
                                     document.getElementById('hw-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
                                     document.getElementById('hw-download').style.display = 'flex';
-                                    saveDUTInfo(payload, data.filename);
+                                    saveDUTInfo(payload, data.filename, 'llm');
                                     updateStepStatus(1, 'completed');
                                     updatePipelineIndicator(1, 'completed');
                                     updatePipelineIndicator(2, 'active');
@@ -919,7 +1073,7 @@
                 document.getElementById('hw-preview').textContent = data.full_content;
                 document.getElementById('hw-download').style.display = 'flex';
                 document.getElementById('hw-result').classList.add('visible');
-                saveDUTInfo(payload, data.filename);
+                saveDUTInfo(payload, data.filename, 'llm');
                 updateStepStatus(1, 'completed');
                 updatePipelineIndicator(1, 'completed');
                 updatePipelineIndicator(2, 'active');
@@ -934,7 +1088,7 @@
         // ============================================================
         // DUT Info
         // ============================================================
-        function saveDUTInfo(payload, filename) {
+        function saveDUTInfo(payload, filename, source) {
             const moduleNames = { 'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'RISC-V CPU' };
 
             currentDUT = {
@@ -943,22 +1097,13 @@
                 bitwidth: payload.bitwidth,
                 depth: payload.depth,
                 pipelineStages: payload.pipeline_stages,
-                filename: filename
+                filename: filename,
+                source: source
             };
 
-            const bddRequirements = generateBDDRequirements(currentDUT);
-            document.getElementById('bdd-input').value = bddRequirements;
+            const bddTemplate = BDD_TEMPLATES[payload.module_type] || BDD_TEMPLATES.other;
+            document.getElementById('bdd-input').value = bddTemplate(currentDUT.bitwidth, currentDUT.depth);
             updateBddTabState();
-        }
-
-        function generateBDDRequirements(dut) {
-            switch (dut.moduleType) {
-                case 'alu': return BDD_TEMPLATES.alu(dut.bitwidth);
-                case 'counter': return BDD_TEMPLATES.counter(dut.bitwidth);
-                case 'regfile': return BDD_TEMPLATES.regfile(dut.bitwidth, dut.depth);
-                case 'cpu': return BDD_TEMPLATES.cpu(dut.pipelineStages);
-                default: return '';
-            }
         }
 
         function updateBddTabState() {
@@ -974,6 +1119,7 @@
                 document.getElementById('dut-bitwidth-display').textContent =
                     currentDUT.moduleType === 'cpu' ? `${currentDUT.pipelineStages}-stage` : `${currentDUT.bitwidth}-bit`;
                 document.getElementById('dut-module-badge').textContent = currentDUT.moduleType.toUpperCase();
+                document.getElementById('dut-source-badge').textContent = currentDUT.source === 'upload' ? 'UPLOADED' : 'LLM';
                 syncedIndicator.style.display = 'flex';
             } else {
                 dutStatus.classList.remove('visible');
@@ -1195,6 +1341,21 @@
 
         function hideError(type) {
             document.getElementById(`${type}-error`).classList.remove('visible');
+        }
+
+        function showSuccess(type, message) {
+            const successDiv = document.getElementById(`${type}-success`);
+            if (successDiv) {
+                successDiv.textContent = message;
+                successDiv.classList.add('visible');
+            }
+        }
+
+        function hideSuccess(type) {
+            const successDiv = document.getElementById(`${type}-success`);
+            if (successDiv) {
+                successDiv.classList.remove('visible');
+            }
         }
 
         // Initialize
