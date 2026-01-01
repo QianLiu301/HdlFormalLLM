@@ -551,10 +551,10 @@
                         <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with DUT</div>
                         <div class="examples">
                             <div class="examples-title">Examples:</div>
-                            <div class="example-chips">
-                                <span class="example-chip" onclick="setBddExample('16-bit ALU with ADD, SUB, AND, OR')">ALU basic</span>
-                                <span class="example-chip" onclick="setBddExample('32-bit ALU with overflow tests')">Overflow tests</span>
-                                <span class="example-chip" onclick="setBddExample('Boundary values 0x00, 0xFF')">Boundary</span>
+                            <div class="example-chips" id="bdd-examples">
+                                <span class="example-chip" onclick="setBddExample('Basic functionality verification')">Basic test</span>
+                                <span class="example-chip" onclick="setBddExample('Test boundary values and edge cases')">Boundary</span>
+                                <span class="example-chip" onclick="setBddExample('Reset behavior and initialization tests')">Reset</span>
                             </div>
                         </div>
                     </div>
@@ -695,6 +695,56 @@
 - Boundary value tests
 - Reset behavior tests`
         };
+
+        // ✅ 新增: BDD Examples for different module types
+        const BDD_EXAMPLES = {
+            alu: [
+                { label: 'ADD/SUB basic', text: '8-bit ALU with ADD, SUB operations' },
+                { label: 'Overflow tests', text: '32-bit ALU with overflow detection for ADD/SUB' },
+                { label: 'Boundary values', text: 'Test boundary values 0x00, 0xFF, 0x7F, 0x80' },
+                { label: 'All operations', text: '16-bit ALU with ADD, SUB, AND, OR, XOR, NOT operations' }
+            ],
+            counter: [
+                { label: 'Up counting', text: '8-bit counter UP mode from 0 to MAX' },
+                { label: 'Down counting', text: '8-bit counter DOWN mode from MAX to 0' },
+                { label: 'Up-Down mode', text: '16-bit counter ping-pong mode' },
+                { label: 'Load & Reset', text: 'Counter with load preset value and reset tests' }
+            ],
+            regfile: [
+                { label: 'Read/Write', text: 'Basic read and write to registers' },
+                { label: 'Dual port', text: 'Simultaneous read from two ports' },
+                { label: 'x0 zero', text: 'Register x0 always returns 0 (RISC-V)' },
+                { label: 'All registers', text: 'Write and read all 32 registers' }
+            ],
+            cpu: [
+                { label: 'R-type', text: 'ADD, SUB, AND, OR, XOR instructions' },
+                { label: 'Load/Store', text: 'LW, SW memory operations' },
+                { label: 'Branch', text: 'BEQ, BNE, BLT conditional branches' },
+                { label: 'Hazards', text: 'RAW hazards and forwarding tests' }
+            ],
+            other: [
+                { label: 'Basic test', text: 'Basic functionality verification' },
+                { label: 'Boundary', text: 'Test boundary values and edge cases' },
+                { label: 'Reset', text: 'Reset behavior and initialization tests' }
+            ],
+            default: [
+                { label: 'Basic test', text: 'Basic functionality verification' },
+                { label: 'Boundary', text: 'Test boundary values and edge cases' },
+                { label: 'Reset', text: 'Reset behavior and initialization tests' }
+            ]
+        };
+
+        // ✅ 新增: Update BDD Examples based on module type
+        function updateBddExamples(moduleType) {
+            const examples = BDD_EXAMPLES[moduleType] || BDD_EXAMPLES.default;
+            const container = document.getElementById('bdd-examples');
+
+            if (!container) return;
+
+            container.innerHTML = examples.map(ex =>
+                `<span class="example-chip" onclick="setBddExample('${ex.text.replace(/'/g, "\\'")}')">${ex.label}</span>`
+            ).join('');
+        }
 
         // ============================================================
         // Mode Switching
@@ -1121,10 +1171,16 @@
                 document.getElementById('dut-module-badge').textContent = currentDUT.moduleType.toUpperCase();
                 document.getElementById('dut-source-badge').textContent = currentDUT.source === 'upload' ? 'UPLOADED' : 'LLM';
                 syncedIndicator.style.display = 'flex';
+
+                // ✅ 新增: 更新 Examples
+                updateBddExamples(currentDUT.moduleType);
             } else {
                 dutStatus.classList.remove('visible');
                 noDutWarning.classList.add('visible');
                 syncedIndicator.style.display = 'none';
+
+                // ✅ 新增: 显示默认 Examples
+                updateBddExamples('default');
             }
         }
 
@@ -1296,11 +1352,19 @@
             document.getElementById('hw-preview').textContent = '';
             currentHwFilename = null;
             currentDUT = null;
+            uploadedFileData = null;
+            parsedModules = [];
+            document.getElementById('upload-result').classList.remove('visible');
+            document.getElementById('upload-input').value = '';
+            hideSuccess('upload');
             updateBddTabState();
             updateStepStatus(1, 'pending');
             document.getElementById('step-1-num').classList.remove('completed');
             updatePipelineIndicator(1, 'active');
             updatePipelineIndicator(2, '');
+
+            // ✅ 新增: 重置 Examples 为默认
+            updateBddExamples('default');
         }
 
         function resetBDD() {
