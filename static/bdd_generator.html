@@ -364,9 +364,243 @@
             font-weight: 600;
             min-width: 60px;
         }
+        /* Welcome Page */
+        .welcome-page {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 40px 24px;
+        }
+        .welcome-logo {
+            font-size: 64px;
+            margin-bottom: 24px;
+        }
+        .welcome-title {
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .welcome-title .accent { color: var(--accent); }
+        .welcome-title .blue { color: var(--accent-blue); }
+        .welcome-subtitle {
+            font-size: 18px;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin-bottom: 32px;
+            line-height: 1.7;
+        }
+        .welcome-paper {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .welcome-paper:hover {
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+        .welcome-btn {
+            padding: 16px 48px;
+            font-size: 18px;
+            font-weight: 600;
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .welcome-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.3);
+        }
+        .welcome-features {
+            display: flex;
+            gap: 32px;
+            margin-top: 60px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .welcome-feature {
+            text-align: center;
+            max-width: 200px;
+        }
+        .welcome-feature-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+        .welcome-feature-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .welcome-feature-desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Main App (hidden by default) */
+        .main-app {
+            display: none;
+        }
+        .main-app.visible {
+            display: block;
+        }
+
+        /* Footer Links */
+        .footer-links {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-top: 8px;
+        }
+        .footer-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 12px;
+            transition: color 0.2s;
+        }
+        .footer-link:hover {
+            color: var(--accent);
+        }
+        .footer-separator {
+            color: var(--border-color);
+        }
+
+        /* Legal Notice Modal */
+        .legal-content {
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .legal-content h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 20px 0 12px 0;
+            color: var(--text-primary);
+        }
+        .legal-content h3:first-child {
+            margin-top: 0;
+        }
+        .legal-content p {
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+        .legal-content a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+        .legal-content a:hover {
+            text-decoration: underline;
+        }
+
+        /* Developer Modal */
+        .dev-input-group {
+            margin-bottom: 20px;
+        }
+        .dev-input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        .dev-input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .dev-input-group input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        .dev-error {
+            color: var(--error);
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+        .dev-error.visible {
+            display: block;
+        }
+        .dev-links {
+            display: none;
+            padding: 20px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            text-align: center;
+        }
+        .dev-links.visible {
+            display: block;
+        }
+        .dev-links a {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: var(--text-primary);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .dev-links a:hover {
+            transform: translateY(-2px);
+        }
     </style>
 </head>
 <body>
+ <!-- ========== Welcome Page ========== -->
+    <div class="welcome-page" id="welcome-page">
+        <div class="welcome-logo">🔬</div>
+        <h1 class="welcome-title">
+            <span class="blue">LLM</span>-based Hardware <span class="accent">Verification</span>
+        </h1>
+        <p class="welcome-subtitle">
+            An automated pipeline for generating hardware designs and verification tests using Large Language Models.
+            Transform natural language specifications into Verilog code and BDD test scenarios.
+        </p>
+        <a href="https://arxiv.org/abs/2512.17814" target="_blank" class="welcome-paper">
+            📄 Read the Paper: arXiv:2512.17814
+        </a>
+        <button class="welcome-btn" onclick="enterApp()">
+            🚀 Start Using Tool
+        </button>
+        <div class="welcome-features">
+            <div class="welcome-feature">
+                <div class="welcome-feature-icon">🤖</div>
+                <div class="welcome-feature-title">Multi-LLM Support</div>
+                <div class="welcome-feature-desc">GPT, Claude, Gemini, Groq, DeepSeek</div>
+            </div>
+            <div class="welcome-feature">
+                <div class="welcome-feature-icon">⚡</div>
+                <div class="welcome-feature-title">Automated Pipeline</div>
+                <div class="welcome-feature-desc">DUT → BDD → Testbench</div>
+            </div>
+            <div class="welcome-feature">
+                <div class="welcome-feature-icon">📊</div>
+                <div class="welcome-feature-title">Quality Analysis</div>
+                <div class="welcome-feature-desc">Coverage & comparison reports</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== Main Application ========== -->
+<div class="main-app" id="main-app">
 <div class="container">
     <!-- Header -->
     <div class="header">
@@ -941,12 +1175,17 @@
     <!-- Footer -->
     <div class="footer">
         <p><strong>LLM-based Hardware Verification Pipeline</strong></p>
-        <p>Authors: Rolf Drechsler, Qian Liu</p>
-        <p>
-            <a href="https://arxiv.org/abs/2512.17814" target="_blank">arXiv:2512.17814</a> •
-            <a href="https://github.com/QianLiu301/HdlFormalLLM" target="_blank">GitHub</a>
-        </p>
+        <p>University of Bremen • Group of Computer Architecture (AGRA)</p>
+        <div class="footer-links">
+            <a href="#" class="footer-link" onclick="showLegalModal(); return false;">Imprint / Legal Notice</a>
+            <span class="footer-separator">•</span>
+            <a href="#" class="footer-link" onclick="showDevModal(); return false;">Developer</a>
+            <span class="footer-separator">•</span>
+            <a href="#" class="footer-link" onclick="backToWelcome(); return false;">← Back to Home</a>
+        </div>
     </div>
+</div>
+
 </div>
 
 <script>
@@ -2059,7 +2298,76 @@
                 successDiv.classList.remove('visible');
             }
         }
+        // ============================================================
+        // Welcome Page & Navigation
+        // ============================================================
+        function enterApp() {
+            document.getElementById('welcome-page').style.display = 'none';
+            document.getElementById('main-app').classList.add('visible');
+        }
 
+        function backToWelcome() {
+            document.getElementById('welcome-page').style.display = 'flex';
+            document.getElementById('main-app').classList.remove('visible');
+        }
+
+        // ============================================================
+        // Legal Notice Modal
+        // ============================================================
+        function showLegalModal() {
+            document.getElementById('legal-modal').classList.add('visible');
+        }
+
+        function closeLegalModal() {
+            document.getElementById('legal-modal').classList.remove('visible');
+        }
+
+        // ============================================================
+        // Developer Access Modal
+        // ============================================================
+        const DEV_PASSWORD = 'agra2025';  // 你可以修改这个密码
+
+        function showDevModal() {
+            document.getElementById('dev-modal').classList.add('visible');
+            document.getElementById('dev-password').value = '';
+            document.getElementById('dev-error').classList.remove('visible');
+            document.getElementById('dev-login').style.display = 'block';
+            document.getElementById('dev-links').classList.remove('visible');
+        }
+
+        function closeDevModal() {
+            document.getElementById('dev-modal').classList.remove('visible');
+        }
+
+        function verifyDevPassword() {
+            const password = document.getElementById('dev-password').value;
+
+            if (password === DEV_PASSWORD) {
+                document.getElementById('dev-login').style.display = 'none';
+                document.getElementById('dev-links').classList.add('visible');
+            } else {
+                document.getElementById('dev-error').classList.add('visible');
+                document.getElementById('dev-password').value = '';
+                document.getElementById('dev-password').focus();
+            }
+        }
+
+        function handleDevKeyPress(event) {
+            if (event.key === 'Enter') {
+                verifyDevPassword();
+            }
+        }
+
+        // Close modals when clicking outside
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('legal-modal')?.addEventListener('click', function(e) {
+                if (e.target === this) closeLegalModal();
+            });
+
+            document.getElementById('dev-modal')?.addEventListener('click', function(e) {
+                if (e.target === this) closeDevModal();
+            });
+        });
         // Initialize
         updateBddTabState();
 </script>
@@ -2114,6 +2422,89 @@
             <button class="btn btn-primary btn-sm" onclick="closeComparisonModal()">
                 Close
             </button>
+        </div>
+    </div>
+</div>
+<!-- Legal Notice Modal -->
+<div class="modal-overlay" id="legal-modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h2>📜 Imprint / Legal Notice</h2>
+            <button class="modal-close" onclick="closeLegalModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="legal-content">
+                <h3>Institution</h3>
+                <p>
+                    <strong>University of Bremen</strong><br>
+                    Group of Computer Architecture (AGRA)<br>
+                    Faculty 3<br>
+                    Bibliothekstr. 5<br>
+                    28359 Bremen<br>
+                    Germany
+                </p>
+
+                <h3>Contact</h3>
+                <p>
+                    📧 Email: <a href="mailto:your-email@uni-bremen.de">your-email@uni-bremen.de</a><br>
+                    📧 Email: <a href="mailto:your-email2@uni-bremen.de">your-email2@uni-bremen.de</a>
+                </p>
+
+                <h3>Responsible for Content</h3>
+                <p>
+                    Prof. Dr. Rolf Drechsler<br>
+                    Qian Liu
+                </p>
+
+                <h3>Copyright</h3>
+                <p>
+                    © 2025 University of Bremen, AGRA Group.<br>
+                    All rights reserved.
+                </p>
+
+                <h3>Disclaimer</h3>
+                <p>
+                    This tool is provided for research and educational purposes.
+                    The generated code should be reviewed and verified before use in production environments.
+                </p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary btn-sm" onclick="closeLegalModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Developer Access Modal -->
+<div class="modal-overlay" id="dev-modal">
+    <div class="modal-content" style="max-width: 450px;">
+        <div class="modal-header">
+            <h2>🔐 Developer Access</h2>
+            <button class="modal-close" onclick="closeDevModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="dev-login">
+                <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                    Enter the developer password to access the source code repository.
+                </p>
+                <div class="dev-input-group">
+                    <label for="dev-password">Password</label>
+                    <input type="password" id="dev-password" placeholder="Enter password" onkeypress="handleDevKeyPress(event)">
+                    <div class="dev-error" id="dev-error">❌ Incorrect password</div>
+                </div>
+                <button class="btn btn-primary" style="width: 100%;" onclick="verifyDevPassword()">
+                    🔓 Unlock
+                </button>
+            </div>
+            <div class="dev-links" id="dev-links">
+                <p style="color: var(--accent); margin-bottom: 16px;">✅ Access granted!</p>
+                <a href="https://github.com/QianLiu301/HdlFormalLLM" target="_blank">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                    </svg>
+                    View on GitHub
+                </a>
+            </div>
         </div>
     </div>
 </div>
