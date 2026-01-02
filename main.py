@@ -18,6 +18,9 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
+from flask import send_file
+import zipfile
+import io
 
 # ============================================================================
 # Path Setup
@@ -1100,6 +1103,131 @@ def generate_testbench_batch():
             'results': results,
             'output_dir': str(PROJECT_ROOT / 'output' / 'testbench'),
             'quality_report_dir': str(PROJECT_ROOT / 'output' / 'quality_reports')
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/download-testbench-zip')
+def download_testbench_zip():
+    """Download all testbench files as ZIP"""
+    try:
+        testbench_dir = PROJECT_ROOT / 'output' / 'testbench'
+
+        if not testbench_dir.exists():
+            return jsonify({'error': 'Testbench directory not found'}), 404
+
+        # Create ZIP in memory
+        memory_file = io.BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for file_path in testbench_dir.rglob('*.v'):
+                # Get relative path for ZIP structure
+                arcname = file_path.relative_to(testbench_dir)
+                zf.write(file_path, arcname)
+
+        memory_file.seek(0)
+
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'testbenches_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/download-quality-zip')
+def download_quality_zip():
+    """Download all quality reports as ZIP"""
+    try:
+        quality_dir = PROJECT_ROOT / 'output' / 'quality_reports'
+
+        if not quality_dir.exists():
+            return jsonify({'error': 'Quality reports directory not found'}), 404
+
+        # Create ZIP in memory
+        memory_file = io.BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for file_path in quality_dir.rglob('*'):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(quality_dir)
+                    zf.write(file_path, arcname)
+
+        memory_file.seek(0)
+
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'quality_reports_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/quality-comparison')
+def get_quality_comparison():
+    """Get quality comparison data for display"""
+    try:
+        quality_dir = PROJECT_ROOT / 'output' / 'quality_reports'
+        comparison_file = quality_dir / 'quality_comparison.txt'
+
+        if not comparison_file.exists():
+            return jsonify({'success': False, 'error': 'No comparison report found'}), 404
+
+        # Parse comparison file
+        with open(comparison_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Extract data from the report
+        results = []
+        lines = content.split('\n')
+
+        in_scores_section = False
+        for line in lines:
+            if 'Overall Quality Scores' in line:
+                in_scores_section = True
+                continue
+            if in_scores_section and line.startswith('-'):
+                continue
+            if in_scores_section and line.strip() == '':
+                in_scores_section = False
+                continue
+
+            if in_scores_section and line.strip():
+                # Parse line: "groq           4            79.8%   85.0%  72.0%"
+                parts = line.split()
+                if len(parts) >= 5 and parts[0] not in ['LLM', '=']:
+                    try:
+                        llm_name = parts[0]
+                        count = int(parts[1])
+                        avg_score = float(parts[2].replace('%', ''))
+                        best_score = float(parts[3].replace('%', ''))
+                        worst_score = float(parts[4].replace('%', ''))
+
+                        results.append({
+                            'llm': llm_name,
+                            'count': count,
+                            'avg_score': avg_score,
+                            'best_score': best_score,
+                            'worst_score': worst_score
+                        })
+                    except (ValueError, IndexError):
+                        continue
+
+        # Sort by average score (descending)
+        results.sort(key=lambda x: x['avg_score'], reverse=True)
+
+        # Add rank
+        for i, result in enumerate(results):
+            result['rank'] = i + 1
+
+        return jsonify({
+            'success': True,
+            'results': results,
+            'raw_content': content
         })
 
     except Exception as e:

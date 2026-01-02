@@ -231,15 +231,139 @@
             .pipeline-step-indicator { padding: 6px 10px; font-size: 11px; }
             .mode-switcher { flex-direction: column; }
         }
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.visible {
+            display: flex;
+        }
+        .modal-content {
+            background: var(--bg-primary);
+            border-radius: 16px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 85vh;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+        }
+        .modal-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+        .modal-close:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .modal-body {
+            padding: 24px;
+            overflow-y: auto;
+            max-height: calc(85vh - 140px);
+        }
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
 
+        /* Comparison Table */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+        .comparison-table th {
+            background: var(--bg-secondary);
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color);
+        }
+        .comparison-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .comparison-table tr:hover {
+            background: var(--bg-secondary);
+        }
+        .rank-medal {
+            font-size: 18px;
+        }
 
-
-
-
-
-
-
-
+        /* Bar Chart */
+        .chart-container {
+            margin-top: 20px;
+        }
+        .chart-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .chart-bar-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .chart-bar-label {
+            width: 100px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .chart-bar-container {
+            flex: 1;
+            height: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0 12px;
+        }
+        .chart-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .chart-bar.rank-1 { background: linear-gradient(90deg, #ffd700, #ffec80); }
+        .chart-bar.rank-2 { background: linear-gradient(90deg, #c0c0c0, #e0e0e0); }
+        .chart-bar.rank-3 { background: linear-gradient(90deg, #cd7f32, #daa06d); }
+        .chart-bar.rank-other { background: linear-gradient(90deg, var(--accent-blue), #60a5fa); }
+        .chart-bar-value {
+            font-size: 13px;
+            font-weight: 600;
+            min-width: 60px;
+        }
     </style>
 </head>
 <body>
@@ -784,11 +908,9 @@
             <div class="preview-box" id="tb-batch-details" style="min-height: 100px; max-height: 200px;"></div>
 
             <div class="action-buttons">
-                <button class="btn btn-secondary btn-sm" onclick="openOutputFolder('testbench')">📂 Open Testbench
-                    Folder
+                <button class="btn btn-secondary btn-sm" onclick="downloadTestbenchZip()">📦 Download All (.zip)
                 </button>
-                <button class="btn btn-secondary btn-sm" onclick="openOutputFolder('quality')">📊 Open Quality Reports
-                </button>
+                <button class="btn btn-secondary btn-sm" onclick="showComparisonModal()">📊 View Comparison</button>
                 <button class="btn btn-secondary btn-sm" onclick="resetBatchTestbench()">🔄 Reset</button>
             </div>
         </div>
@@ -1675,17 +1797,110 @@
             updatePipelineIndicator(4, '');
         }
 
-        function openOutputFolder(type) {
-            // 这个功能在浏览器中无法直接打开文件夹
-            // 显示路径让用户手动打开
-            let path = '';
-            if (type === 'testbench') {
-                path = 'output/testbench/';
-            } else if (type === 'quality') {
-                path = 'output/quality_reports/';
-            }
-            alert(`📂 Please open this folder manually:\n\n${path}\n\nThe files have been generated successfully.`);
+       // ============================================================
+       // Download & Comparison Functions
+       // ============================================================
+        function downloadTestbenchZip() {
+            window.location.href = '/api/download-testbench-zip';
         }
+
+        function downloadQualityZip() {
+            window.location.href = '/api/download-quality-zip';
+        }
+
+        function showComparisonModal() {
+            const modal = document.getElementById('comparison-modal');
+            const loading = document.getElementById('comparison-loading');
+            const content = document.getElementById('comparison-content');
+            const error = document.getElementById('comparison-error');
+
+            // Show modal with loading state
+            modal.classList.add('visible');
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            error.style.display = 'none';
+
+            // Fetch comparison data
+            fetch('/api/quality-comparison')
+                .then(response => response.json())
+                .then(data => {
+                    loading.style.display = 'none';
+
+                    if (!data.success) {
+                        error.style.display = 'block';
+                        error.querySelector('p').textContent = '❌ ' + (data.error || 'Failed to load data');
+                        return;
+                    }
+
+                    // Render table
+                    renderComparisonTable(data.results);
+
+                    // Render chart
+                    renderComparisonChart(data.results);
+
+                    content.style.display = 'block';
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    error.style.display = 'block';
+                    error.querySelector('p').textContent = '❌ Network error: ' + err.message;
+                });
+        }
+
+        function closeComparisonModal() {
+            document.getElementById('comparison-modal').classList.remove('visible');
+        }
+
+        function renderComparisonTable(results) {
+            const tbody = document.getElementById('comparison-table-body');
+
+            const getMedal = (rank) => {
+                if (rank === 1) return '🥇';
+                if (rank === 2) return '🥈';
+                if (rank === 3) return '🥉';
+                return rank;
+            };
+
+            tbody.innerHTML = results.map(r => `
+                <tr>
+                    <td><span class="rank-medal">${getMedal(r.rank)}</span></td>
+                    <td><strong>${r.llm.toUpperCase()}</strong></td>
+                    <td>${r.count}</td>
+                    <td><strong>${r.avg_score.toFixed(1)}%</strong></td>
+                    <td style="color: var(--accent);">${r.best_score.toFixed(1)}%</td>
+                    <td style="color: var(--text-secondary);">${r.worst_score.toFixed(1)}%</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderComparisonChart(results) {
+            const container = document.getElementById('comparison-chart');
+
+            // Find max score for scaling
+            const maxScore = Math.max(...results.map(r => r.avg_score), 100);
+
+            container.innerHTML = results.map(r => {
+                const barWidth = (r.avg_score / maxScore) * 100;
+                const rankClass = r.rank <= 3 ? `rank-${r.rank}` : 'rank-other';
+
+                return `
+                    <div class="chart-bar-row">
+                        <div class="chart-bar-label">${r.llm.toUpperCase()}</div>
+                        <div class="chart-bar-container">
+                            <div class="chart-bar ${rankClass}" style="width: ${barWidth}%;"></div>
+                        </div>
+                        <div class="chart-bar-value">${r.avg_score.toFixed(1)}%</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('comparison-modal')?.addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeComparisonModal();
+            }
+        });
 
         function updateTbTabState() {
             const bddStatus = document.getElementById('bdd-source-status');
@@ -1847,15 +2062,60 @@
 
         // Initialize
         updateBddTabState();
-
-
-
-
-
-
-
-
-
 </script>
+<!-- Quality Comparison Modal -->
+<div class="modal-overlay" id="comparison-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📊 Quality Comparison Report</h2>
+            <button class="modal-close" onclick="closeComparisonModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <!-- Loading -->
+            <div id="comparison-loading" style="text-align: center; padding: 40px;">
+                <div class="spinner" style="margin: 0 auto 16px;"></div>
+                <p>Loading comparison data...</p>
+            </div>
+
+            <!-- Content -->
+            <div id="comparison-content" style="display: none;">
+                <!-- Table -->
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>LLM Provider</th>
+                            <th>Files</th>
+                            <th>Avg Score</th>
+                            <th>Best</th>
+                            <th>Worst</th>
+                        </tr>
+                    </thead>
+                    <tbody id="comparison-table-body">
+                    </tbody>
+                </table>
+
+                <!-- Chart -->
+                <div class="chart-container">
+                    <div class="chart-title">Average Quality Score by LLM</div>
+                    <div id="comparison-chart"></div>
+                </div>
+            </div>
+
+            <!-- Error -->
+            <div id="comparison-error" style="display: none; text-align: center; padding: 40px; color: var(--error);">
+                <p>❌ Failed to load comparison data</p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary btn-sm" onclick="downloadQualityZip()">
+                📥 Download Full Reports (.zip)
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="closeComparisonModal()">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
 </body>
 </html>
