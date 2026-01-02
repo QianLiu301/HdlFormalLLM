@@ -161,6 +161,15 @@ try:
 except ImportError as e:
     print(f"⚠️ CPU module not available: {e}")
 
+# 在其他模块导入之后添加
+HAS_TESTBENCH_MODULE = False
+
+try:
+    from testbench_generator import TestbenchGenerator
+    HAS_TESTBENCH_MODULE = True
+    print("✅ Testbench Generator module loaded")
+except ImportError as e:
+    print(f"⚠️ Testbench Generator not available: {e}")
 # ============================================================================
 # Flask App
 # ============================================================================
@@ -172,10 +181,12 @@ CORS(app)
 # Store last generated files
 last_generated_bdd = {'filename': None, 'filepath': None, 'llm': None}
 last_generated_hw = {'filename': None, 'filepath': None, 'llm': None, 'module_type': None}
+last_generated_tb = {'filename': None, 'filepath': None, 'bdd_source': None}
 
 # Ensure output directories exist
 (PROJECT_ROOT / 'output' / 'bdd').mkdir(parents=True, exist_ok=True)
 (PROJECT_ROOT / 'output' / 'dut').mkdir(parents=True, exist_ok=True)
+(PROJECT_ROOT / 'output' / 'testbench').mkdir(parents=True, exist_ok=True)
 
 # ============================================================================
 # Upload Configuration
@@ -263,6 +274,7 @@ def health_check():
         'counter_module': HAS_COUNTER_MODULE,
         'regfile_module': HAS_REGFILE_MODULE,
         'cpu_module': HAS_CPU_MODULE,
+        'testbench_module': HAS_TESTBENCH_MODULE,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -984,6 +996,97 @@ def get_llm_list():
         ]
     })
 
+# ============================================================================
+# Testbench Generator API
+# ============================================================================
+@app.route('/api/generate-testbench', methods=['POST'])
+def generate_testbench():
+    """Generate Verilog testbench from BDD file"""
+    if not HAS_TESTBENCH_MODULE:
+        return jsonify({'success': False, 'error': 'Testbench Generator module not available'}), 500
+
+    try:
+        data = request.json
+        bdd_filepath = data.get('bdd_filepath')
+        dut_info = data.get('dut_info', {})
+
+        if not bdd_filepath:
+            return jsonify({'success': False, 'error': 'No BDD file specified'}), 400
+
+        # Verify BDD file exists
+        bdd_path = Path(bdd_filepath)
+        if not bdd_path.is_absolute():
+            bdd_path = PROJECT_ROOT / bdd_filepath
+
+        if not bdd_path.exists():
+            return jsonify({'success': False, 'error': f'BDD file not found: {bdd_filepath}'}), 404
+
+        # Initialize generator
+        generator = TestbenchGenerator(
+            project_root=str(PROJECT_ROOT),
+            debug=True
+        )
+
+        # Generate testbench
+        result = generator.generate_single(
+            bdd_filepath=str(bdd_path),
+            dut_info=dut_info
+        )
+
+        if not result['success']:
+            return jsonify(result), 500
+
+        # Store last generated info
+        last_generated_tb['filename'] = result['filename']
+        last_generated_tb['filepath'] = result['filepath']
+        last_generated_tb['bdd_source'] = bdd_filepath
+
+        return jsonify({
+            'success': True,
+            'filename': result['filename'],
+            'filepath': result['filepath'],
+            'content': result['content'],
+            'full_content': result['full_content'],
+            'quality_summary': result['quality_summary'],
+            'test_count': result['test_count'],
+            'llm': result['llm']
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/download-testbench/<filename>')
+def download_testbench(filename):
+    """Download generated testbench file"""
+    file_path = None
+
+    if last_generated_tb['filepath']:
+        candidate = Path(last_generated_tb['filepath'])
+        if candidate.exists() and candidate.name == filename:
+            file_path = candidate
+
+    if not file_path:
+        base_dir = PROJECT_ROOT / 'output' / 'testbench'
+        if base_dir.exists():
+            for llm_dir in base_dir.iterdir():
+                if llm_dir.is_dir():
+                    candidate = llm_dir / filename
+                    if candidate.exists():
+                        file_path = candidate
+                        break
+
+    if not file_path:
+        return jsonify({'error': 'File not found'}), 404
+
+    return send_from_directory(
+        str(file_path.parent.absolute()),
+        file_path.name,
+        as_attachment=True,
+        download_name=filename
+    )
 
 # ============================================================================
 # Main
@@ -1005,6 +1108,7 @@ if __name__ == '__main__':
     print(f"   {'✅' if HAS_REGFILE_MODULE else '❌'} Register File Generator")
     print(f"   {'✅' if HAS_CPU_MODULE else '❌'} RISC-V CPU Generator")
     print(f"   {'✅' if HAS_BDD_MODULE else '❌'} BDD Generator")
+    print(f"   {'✅' if HAS_TESTBENCH_MODULE else '❌'} Testbench Generator")
     print()
     print("=" * 60)
     print()

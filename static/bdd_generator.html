@@ -620,25 +620,104 @@
         </div>
     </div>
 
-    <!-- Step 3: Testbench Generator (Coming Soon) -->
-    <div class="step-section collapsed" id="step-3">
-        <div class="step-header" onclick="toggleStep(3)">
-            <div class="step-number orange" id="step-3-num">3</div>
-            <div class="step-title-area">
-                <div class="step-title">⚙️ Generate Verilog Testbench</div>
-                <div class="step-subtitle">Convert BDD to Verilog testbench</div>
-            </div>
-            <div class="step-status pending" id="step-3-status">Coming Soon</div>
-            <div class="step-toggle">▼</div>
+    <!-- Step 3: Testbench Generator -->
+<div class="step-section collapsed" id="step-3">
+    <div class="step-header" onclick="toggleStep(3)">
+        <div class="step-number orange" id="step-3-num">3</div>
+        <div class="step-title-area">
+            <div class="step-title">⚙️ Generate Verilog Testbench</div>
+            <div class="step-subtitle">Convert BDD to Verilog testbench</div>
         </div>
-        <div class="step-content">
-            <div class="coming-soon">
-                <div class="coming-soon-icon">🚧</div>
-                <h3>Coming Soon</h3>
-                <p>Testbench generation will be available in the next update</p>
+        <div class="step-status pending" id="step-3-status">Pending</div>
+        <div class="step-toggle">▼</div>
+    </div>
+    <div class="step-content">
+        <!-- BDD Source Status -->
+        <div class="dut-status" id="bdd-source-status">
+            <div class="dut-status-header">
+                <div class="dut-status-icon">📄</div>
+                <div class="dut-status-info">
+                    <h4>Source BDD</h4>
+                    <p><span class="filename" id="tb-bdd-filename">-</span> • <span id="tb-bdd-llm">-</span></p>
+                </div>
+                <div class="dut-status-badge" id="tb-module-badge">-</div>
+            </div>
+        </div>
+
+        <!-- No BDD Warning -->
+        <div class="no-dut-warning visible" id="no-bdd-warning">
+            <div class="no-dut-warning-icon">⚠️</div>
+            <div class="no-dut-warning-text">
+                <h4>No BDD File Generated</h4>
+                <p>Complete Step 2 first to generate BDD test scenarios.</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">⚡ Configuration</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>DUT Module Name</label>
+                    <input type="text" id="tb-module-name" placeholder="e.g., alu_16bit" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Bitwidth</label>
+                    <input type="text" id="tb-bitwidth" placeholder="e.g., 16" readonly>
+                </div>
+            </div>
+        </div>
+
+        <div class="error-message" id="tb-error"></div>
+
+        <button class="btn btn-primary" style="background: var(--accent-orange);" id="tb-btn" onclick="generateTestbench()">
+            <span id="tb-btn-text">⚙️ Generate Testbench</span>
+            <div class="spinner" id="tb-spinner" style="display: none;"></div>
+        </button>
+
+        <!-- Testbench Result -->
+        <div class="card result" id="tb-result" style="margin-top: 16px;">
+            <div class="result-header">
+                <div class="icon">✅</div>
+                <div class="info">
+                    <h3 id="tb-filename">Generating...</h3>
+                    <p id="tb-info">Ready to generate</p>
+                </div>
+                <div class="badge" id="tb-badge">TB</div>
+            </div>
+
+            <!-- Quality Summary -->
+            <div class="detected-info" id="tb-quality-summary">
+                <div class="detected-info-row">
+                    <span class="detected-info-label">Quality Score</span>
+                    <span>
+                        <span class="detected-info-value" id="tb-quality-score">-</span>
+                        <span class="confidence-badge high" id="tb-quality-grade">-</span>
+                    </span>
+                </div>
+                <div class="detected-info-row">
+                    <span class="detected-info-label">Test Cases</span>
+                    <span class="detected-info-value" id="tb-test-count">-</span>
+                </div>
+                <div class="detected-info-row">
+                    <span class="detected-info-label">Operations Covered</span>
+                    <span class="detected-info-value" id="tb-ops-covered">-</span>
+                </div>
+                <div class="detected-info-row">
+                    <span class="detected-info-label">Corner Cases</span>
+                    <span class="detected-info-value" id="tb-corner-cases">-</span>
+                </div>
+            </div>
+
+            <div class="preview-label">Testbench Preview</div>
+            <div class="preview-box" id="tb-preview"></div>
+            <div class="action-buttons">
+                <button class="btn btn-secondary btn-sm" id="tb-download" onclick="downloadTestbench()">📥 Download .v</button>
+                <button class="btn btn-secondary btn-sm" onclick="resetTestbench()">🔄 Reset</button>
             </div>
         </div>
     </div>
+</div>
+
 
     <!-- Step 4: Simulation (Coming Soon) -->
     <div class="step-section collapsed" id="step-4">
@@ -1281,6 +1360,8 @@
                                     preview.scrollTop = preview.scrollHeight;
                                 } else if (data.type === 'complete') {
                                     currentBddFilename = data.filename;
+                                    currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
+                                    updateTbTabState();
                                     document.getElementById('bdd-filename').textContent = data.filename;
                                     document.getElementById('bdd-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
                                     document.getElementById('bdd-download').style.display = 'flex';
@@ -1317,6 +1398,8 @@
                 if (!data.success) throw new Error(data.error || 'Generation failed');
 
                 currentBddFilename = data.filename;
+                currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
+                updateTbTabState();
                 document.getElementById('bdd-filename').textContent = data.filename;
                 document.getElementById('bdd-info').textContent = `Generated with ${data.llm.toUpperCase()}`;
                 document.getElementById('bdd-badge').textContent = data.llm.toUpperCase();
@@ -1394,12 +1477,127 @@
             document.getElementById('bdd-result').classList.remove('visible');
             document.getElementById('bdd-preview').textContent = '';
             currentBddFilename = null;
+            currentBDD = null;
+            updateTbTabState();
             updateStepStatus(2, 'pending');
             document.getElementById('step-2-num').classList.remove('completed');
             if (currentDUT) {
                 updatePipelineIndicator(2, 'active');
             }
             updatePipelineIndicator(3, '');
+        }
+        // ============================================================
+        // Testbench Generation
+        // ============================================================
+        let currentTbFilename = null;
+        let currentBDD = null;
+
+        function updateTbTabState() {
+            const bddStatus = document.getElementById('bdd-source-status');
+            const noBddWarning = document.getElementById('no-bdd-warning');
+
+            if (currentBDD) {
+                bddStatus.classList.add('visible');
+                noBddWarning.classList.remove('visible');
+                document.getElementById('tb-bdd-filename').textContent = currentBDD.filename;
+                document.getElementById('tb-bdd-llm').textContent = currentBDD.llm.toUpperCase();
+                document.getElementById('tb-module-badge').textContent = currentDUT ? currentDUT.moduleType.toUpperCase() : 'BDD';
+
+                // Auto-fill DUT info
+                if (currentDUT) {
+                    document.getElementById('tb-module-name').value = `${currentDUT.moduleType}_${currentDUT.bitwidth}bit`;
+                    document.getElementById('tb-bitwidth').value = currentDUT.bitwidth + '-bit';
+                }
+            } else {
+                bddStatus.classList.remove('visible');
+                noBddWarning.classList.add('visible');
+            }
+        }
+
+        async function generateTestbench() {
+            if (!currentBDD) {
+                showError('tb', 'Please generate BDD test scenarios first (Step 2)');
+                return;
+            }
+
+            hideError('tb');
+            setTbLoading(true);
+            updateStepStatus(3, 'in-progress');
+
+            const payload = {
+                bdd_filepath: currentBDD.filepath,
+                dut_info: currentDUT ? {
+                    module_type: currentDUT.moduleType,
+                    module_name: `${currentDUT.moduleType}_${currentDUT.bitwidth}bit`,
+                    bitwidth: currentDUT.bitwidth
+                } : {}
+            };
+
+            try {
+                const response = await fetch('/api/generate-testbench', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error || 'Generation failed');
+
+                currentTbFilename = data.filename;
+                document.getElementById('tb-filename').textContent = data.filename;
+                document.getElementById('tb-info').textContent = `Generated from ${currentBDD.filename}`;
+                document.getElementById('tb-badge').textContent = data.llm.toUpperCase();
+                document.getElementById('tb-preview').textContent = data.full_content;
+
+                // Update quality summary
+                const qs = data.quality_summary;
+                document.getElementById('tb-quality-score').textContent = `${qs.score}/100`;
+                document.getElementById('tb-quality-grade').textContent = qs.grade;
+                document.getElementById('tb-quality-grade').className = 'confidence-badge ' +
+                    (qs.score >= 80 ? 'high' : qs.score >= 60 ? 'medium' : 'low');
+                document.getElementById('tb-test-count').textContent = qs.total_tests;
+                document.getElementById('tb-ops-covered').textContent = `${qs.operations_covered} (${qs.operations_percentage.toFixed(0)}%)`;
+                document.getElementById('tb-corner-cases').textContent = `${qs.corner_cases_covered} (${qs.corner_cases_percentage.toFixed(0)}%)`;
+
+                document.getElementById('tb-download').style.display = 'flex';
+                document.getElementById('tb-result').classList.add('visible');
+                updateStepStatus(3, 'completed');
+                updatePipelineIndicator(3, 'completed');
+                updatePipelineIndicator(4, 'active');
+
+            } catch (error) {
+                showError('tb', error.message);
+                updateStepStatus(3, 'pending');
+            } finally {
+                setTbLoading(false);
+            }
+        }
+
+        function setTbLoading(loading) {
+            const btn = document.getElementById('tb-btn');
+            const btnText = document.getElementById('tb-btn-text');
+            const spinner = document.getElementById('tb-spinner');
+            btn.disabled = loading;
+            spinner.style.display = loading ? 'inline-block' : 'none';
+            btnText.textContent = loading ? 'Generating...' : '⚙️ Generate Testbench';
+        }
+
+        function downloadTestbench() {
+            if (currentTbFilename) {
+                window.location.href = `/api/download-testbench/${encodeURIComponent(currentTbFilename)}`;
+            }
+        }
+
+        function resetTestbench() {
+            document.getElementById('tb-result').classList.remove('visible');
+            document.getElementById('tb-preview').textContent = '';
+            currentTbFilename = null;
+            updateStepStatus(3, 'pending');
+            document.getElementById('step-3-num').classList.remove('completed');
+            if (currentBDD) {
+                updatePipelineIndicator(3, 'active');
+            }
+            updatePipelineIndicator(4, '');
         }
 
         // ============================================================
