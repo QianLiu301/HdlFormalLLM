@@ -655,21 +655,61 @@
 
         <div class="card">
             <div class="card-title">⚡ Configuration</div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>DUT Module Name</label>
-                    <input type="text" id="tb-module-name" placeholder="e.g., alu_16bit" readonly>
+
+            <!-- Mode Switcher -->
+            <div class="form-group">
+                <label>Generation Mode</label>
+                <div class="mode-switcher" style="margin-top: 8px;">
+                    <button class="mode-btn active" onclick="switchTbMode('single')" id="tb-mode-single-btn">
+                        📄 Single File
+                    </button>
+                    <button class="mode-btn" onclick="switchTbMode('batch')" id="tb-mode-batch-btn">
+                        📚 Batch (All BDD Files)
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label>Bitwidth</label>
-                    <input type="text" id="tb-bitwidth" placeholder="e.g., 16" readonly>
+            </div>
+
+            <!-- Single Mode Options -->
+            <div id="tb-single-options">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>DUT Module Name</label>
+                        <input type="text" id="tb-module-name" placeholder="e.g., alu_16bit" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Bitwidth</label>
+                        <input type="text" id="tb-bitwidth" placeholder="e.g., 16" readonly>
+                    </div>
                 </div>
+            </div>
+
+            <!-- Batch Mode Options -->
+            <div id="tb-batch-options" style="display: none;">
+                <div class="detected-info">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Source Directory</span>
+                        <span class="detected-info-value">output/bdd/</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Output Directory</span>
+                        <span class="detected-info-value">output/testbench/</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Quality Reports</span>
+                        <span class="detected-info-value">output/quality_reports/</span>
+                    </div>
+                </div>
+                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                    ℹ️ Batch mode will generate testbenches for all .feature files and create a quality comparison
+                    report.
+                </p>
             </div>
         </div>
 
         <div class="error-message" id="tb-error"></div>
 
-        <button class="btn btn-primary" style="background: var(--accent-orange);" id="tb-btn" onclick="generateTestbench()">
+        <button class="btn btn-primary" style="background: var(--accent-orange);" id="tb-btn"
+                onclick="generateTestbenchByMode()">
             <span id="tb-btn-text">⚙️ Generate Testbench</span>
             <div class="spinner" id="tb-spinner" style="display: none;"></div>
         </button>
@@ -713,6 +753,43 @@
             <div class="action-buttons">
                 <button class="btn btn-secondary btn-sm" id="tb-download" onclick="downloadTestbench()">📥 Download .v</button>
                 <button class="btn btn-secondary btn-sm" onclick="resetTestbench()">🔄 Reset</button>
+            </div>
+        </div>
+
+        <!-- Batch Result -->
+        <div class="card result" id="tb-batch-result" style="margin-top: 16px;">
+            <div class="result-header">
+                <div class="icon">✅</div>
+                <div class="info">
+                    <h3 id="tb-batch-title">Batch Generation Complete</h3>
+                    <p id="tb-batch-info">-</p>
+                </div>
+                <div class="badge" id="tb-batch-badge">BATCH</div>
+            </div>
+
+            <!-- Batch Summary -->
+            <div class="detected-info" id="tb-batch-summary">
+                <div class="detected-info-row">
+                    <span class="detected-info-label">Total Testbenches</span>
+                    <span class="detected-info-value" id="tb-batch-total">-</span>
+                </div>
+                <div class="detected-info-row">
+                    <span class="detected-info-label">LLM Providers</span>
+                    <span class="detected-info-value" id="tb-batch-llms">-</span>
+                </div>
+            </div>
+
+            <!-- LLM Results -->
+            <div class="preview-label">Results by LLM</div>
+            <div class="preview-box" id="tb-batch-details" style="min-height: 100px; max-height: 200px;"></div>
+
+            <div class="action-buttons">
+                <button class="btn btn-secondary btn-sm" onclick="openOutputFolder('testbench')">📂 Open Testbench
+                    Folder
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="openOutputFolder('quality')">📊 Open Quality Reports
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="resetBatchTestbench()">🔄 Reset</button>
             </div>
         </div>
     </div>
@@ -1492,6 +1569,124 @@
         let currentTbFilename = null;
         let currentBDD = null;
 
+        // ============================================================
+        // Testbench Mode Switching
+        // ============================================================
+        let tbMode = 'single';  // 'single' or 'batch'
+
+        function switchTbMode(mode) {
+            tbMode = mode;
+
+            // Update buttons
+            document.getElementById('tb-mode-single-btn').classList.toggle('active', mode === 'single');
+            document.getElementById('tb-mode-batch-btn').classList.toggle('active', mode === 'batch');
+
+            // Update options visibility
+            document.getElementById('tb-single-options').style.display = mode === 'single' ? 'block' : 'none';
+            document.getElementById('tb-batch-options').style.display = mode === 'batch' ? 'block' : 'none';
+
+            // Update button text
+            document.getElementById('tb-btn-text').textContent = mode === 'single'
+                ? '⚙️ Generate Testbench'
+                : '📚 Generate All Testbenches';
+
+            // Update warnings visibility
+            if (mode === 'batch') {
+                document.getElementById('no-bdd-warning').classList.remove('visible');
+            } else {
+                if (!currentBDD) {
+                    document.getElementById('no-bdd-warning').classList.add('visible');
+                }
+            }
+        }
+
+        function generateTestbenchByMode() {
+            if (tbMode === 'single') {
+                generateTestbench();
+            } else {
+                generateTestbenchBatch();
+            }
+        }
+
+        async function generateTestbenchBatch() {
+            hideError('tb');
+            setTbLoading(true);
+            updateStepStatus(3, 'in-progress');
+
+            // Hide single result, prepare for batch result
+            document.getElementById('tb-result').classList.remove('visible');
+            document.getElementById('tb-batch-result').classList.remove('visible');
+
+            const payload = {
+                dut_info: currentDUT ? {
+                    module_type: currentDUT.moduleType,
+                    bitwidth: currentDUT.bitwidth
+                } : {}
+            };
+
+            try {
+                const response = await fetch('/api/generate-testbench-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error || 'Batch generation failed');
+
+                // Update batch result UI
+                document.getElementById('tb-batch-title').textContent = 'Batch Generation Complete';
+                document.getElementById('tb-batch-info').textContent = `Generated ${data.total_files} testbench(es) from ${data.llm_count} LLM provider(s)`;
+                document.getElementById('tb-batch-total').textContent = data.total_files;
+                document.getElementById('tb-batch-llms').textContent = data.llm_count;
+
+                // Build details
+                let details = '';
+                for (const result of data.results) {
+                    details += `📂 ${result.llm.toUpperCase()} (${result.count} files)\n`;
+                    for (const file of result.files) {
+                        details += `   └─ ${file}\n`;
+                    }
+                    details += '\n';
+                }
+                details += `📊 Quality comparison report generated\n`;
+                details += `   └─ quality_comparison.txt`;
+
+                document.getElementById('tb-batch-details').textContent = details;
+                document.getElementById('tb-batch-result').classList.add('visible');
+
+                updateStepStatus(3, 'completed');
+                updatePipelineIndicator(3, 'completed');
+                updatePipelineIndicator(4, 'active');
+
+            } catch (error) {
+                showError('tb', error.message);
+                updateStepStatus(3, 'pending');
+            } finally {
+                setTbLoading(false);
+            }
+        }
+
+        function resetBatchTestbench() {
+            document.getElementById('tb-batch-result').classList.remove('visible');
+            updateStepStatus(3, 'pending');
+            document.getElementById('step-3-num').classList.remove('completed');
+            updatePipelineIndicator(3, currentBDD ? 'active' : '');
+            updatePipelineIndicator(4, '');
+        }
+
+        function openOutputFolder(type) {
+            // 这个功能在浏览器中无法直接打开文件夹
+            // 显示路径让用户手动打开
+            let path = '';
+            if (type === 'testbench') {
+                path = 'output/testbench/';
+            } else if (type === 'quality') {
+                path = 'output/quality_reports/';
+            }
+            alert(`📂 Please open this folder manually:\n\n${path}\n\nThe files have been generated successfully.`);
+        }
+
         function updateTbTabState() {
             const bddStatus = document.getElementById('bdd-source-status');
             const noBddWarning = document.getElementById('no-bdd-warning');
@@ -1573,13 +1768,20 @@
             }
         }
 
-        function setTbLoading(loading) {
+            function setTbLoading(loading) {
             const btn = document.getElementById('tb-btn');
             const btnText = document.getElementById('tb-btn-text');
             const spinner = document.getElementById('tb-spinner');
             btn.disabled = loading;
             spinner.style.display = loading ? 'inline-block' : 'none';
-            btnText.textContent = loading ? 'Generating...' : '⚙️ Generate Testbench';
+
+            if (loading) {
+                btnText.textContent = 'Generating...';
+            } else {
+                btnText.textContent = tbMode === 'single'
+                    ? '⚙️ Generate Testbench'
+                    : '📚 Generate All Testbenches';
+            }
         }
 
         function downloadTestbench() {

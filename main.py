@@ -1057,6 +1057,55 @@ def generate_testbench():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/generate-testbench-batch', methods=['POST'])
+def generate_testbench_batch():
+    """Batch generate testbenches for all BDD files"""
+    if not HAS_TESTBENCH_MODULE:
+        return jsonify({'success': False, 'error': 'Testbench Generator module not available'}), 500
+
+    try:
+        data = request.json
+        dut_info = data.get('dut_info', {})
+
+        # Initialize generator
+        generator = TestbenchGenerator(
+            project_root=str(PROJECT_ROOT),
+            debug=True
+        )
+
+        # Batch generate
+        generated_by_llm = generator.generate_all()
+
+        if not generated_by_llm:
+            return jsonify({
+                'success': False,
+                'error': 'No .feature files found in output/bdd/'
+            }), 404
+
+        # Prepare response
+        results = []
+        total_files = 0
+        for llm_name, files in generated_by_llm.items():
+            total_files += len(files)
+            results.append({
+                'llm': llm_name,
+                'count': len(files),
+                'files': [f.name for f in files]
+            })
+
+        return jsonify({
+            'success': True,
+            'total_files': total_files,
+            'llm_count': len(generated_by_llm),
+            'results': results,
+            'output_dir': str(PROJECT_ROOT / 'output' / 'testbench'),
+            'quality_report_dir': str(PROJECT_ROOT / 'output' / 'quality_reports')
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/download-testbench/<filename>')
 def download_testbench(filename):
