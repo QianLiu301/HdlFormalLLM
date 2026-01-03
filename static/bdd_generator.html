@@ -561,6 +561,10 @@
         .dev-links a:hover {
             transform: translateY(-2px);
         }
+        /* Waveform Canvas */
+        #waveform-canvas {
+            image-rendering: pixelated;
+        }
     </style>
 </head>
 <body>
@@ -1167,22 +1171,237 @@
 </div>
 
 
-    <!-- Step 4: Simulation (Coming Soon) -->
+    <!-- Step 4: Run Simulation -->
     <div class="step-section collapsed" id="step-4">
         <div class="step-header" onclick="toggleStep(4)">
-            <div class="step-number purple" id="step-4-num">4</div>
+            <div class="step-number red" id="step-4-num">4</div>
             <div class="step-title-area">
                 <div class="step-title">🚀 Run Simulation</div>
-                <div class="step-subtitle">Execute tests and view results</div>
+                <div class="step-subtitle">Execute testbench and view results</div>
             </div>
-            <div class="step-status pending" id="step-4-status">Coming Soon</div>
+            <div class="step-status pending" id="step-4-status">Pending</div>
             <div class="step-toggle">▼</div>
         </div>
         <div class="step-content">
-            <div class="coming-soon">
-                <div class="coming-soon-icon">🚧</div>
-                <h3>Coming Soon</h3>
-                <p>Simulation will be available in the next update</p>
+            <!-- Tools Status -->
+            <div class="dut-status" id="sim-tools-status">
+                <div class="dut-status-header">
+                    <div class="dut-status-icon">🔧</div>
+                    <div class="dut-status-info">
+                        <h4>Simulation Tools</h4>
+                        <p id="sim-tools-info">Checking...</p>
+                    </div>
+                    <div class="dut-status-badge" id="sim-tools-badge">...</div>
+                </div>
+            </div>
+
+            <!-- No Testbench Warning -->
+            <div class="no-dut-warning" id="no-tb-warning">
+                <div class="no-dut-warning-icon">⚠️</div>
+                <div class="no-dut-warning-text">
+                    <h4>No Testbench Available</h4>
+                    <p>Complete Step 3 first to generate a testbench.</p>
+                </div>
+            </div>
+
+            <!-- Tools Not Available Warning -->
+            <div class="no-dut-warning" id="sim-tools-unavailable" style="display: none;">
+                <div class="no-dut-warning-icon">⚠️</div>
+                <div class="no-dut-warning-text">
+                    <h4>Simulation Tools Not Available</h4>
+                    <p>iverilog/vvp not installed on server. Please download files and run locally.</p>
+                </div>
+            </div>
+
+            <!-- Configuration -->
+            <div class="card" id="sim-config-card">
+                <div class="card-title">⚡ Configuration</div>
+
+                <!-- Mode Switcher -->
+                <div class="form-group">
+                    <label>Simulation Mode</label>
+                    <div class="mode-switcher" style="margin-top: 8px;">
+                        <button class="mode-btn active" onclick="switchSimMode('single')" id="sim-mode-single-btn">
+                            📄 Single Testbench
+                        </button>
+                        <button class="mode-btn" onclick="switchSimMode('batch')" id="sim-mode-batch-btn">
+                            📚 Batch (All Testbenches)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Single Mode Info -->
+                <div id="sim-single-options">
+                    <div class="detected-info">
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Testbench</span>
+                            <span class="detected-info-value" id="sim-tb-name">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">DUT</span>
+                            <span class="detected-info-value" id="sim-dut-name">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Batch Mode Info -->
+                <div id="sim-batch-options" style="display: none;">
+                    <div class="detected-info">
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Source Directory</span>
+                            <span class="detected-info-value">output/testbench/</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Results Directory</span>
+                            <span class="detected-info-value">output/results/</span>
+                        </div>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                        ℹ️ Batch mode will run simulations for all testbenches and generate a comparison report.
+                    </p>
+                </div>
+            </div>
+
+            <div class="error-message" id="sim-error"></div>
+
+            <button class="btn btn-primary" style="background: var(--error);" id="sim-btn"
+                    onclick="runSimulationByMode()">
+                <span id="sim-btn-text">🚀 Run Simulation</span>
+                <div class="spinner" id="sim-spinner" style="display: none;"></div>
+            </button>
+
+            <!-- Single Simulation Result -->
+            <div class="card result" id="sim-result" style="margin-top: 16px;">
+                <div class="result-header">
+                    <div class="icon" id="sim-result-icon">✅</div>
+                    <div class="info">
+                        <h3 id="sim-result-title">Simulation Complete</h3>
+                        <p id="sim-result-info">-</p>
+                    </div>
+                    <div class="badge" id="sim-result-badge">SIM</div>
+                </div>
+
+                <!-- Statistics -->
+                <div class="detected-info" id="sim-stats">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Total Tests</span>
+                        <span class="detected-info-value" id="sim-total-tests">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Passed</span>
+                        <span class="detected-info-value" style="color: var(--success);" id="sim-passed-tests">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Failed</span>
+                        <span class="detected-info-value" style="color: var(--error);" id="sim-failed-tests">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Pass Rate</span>
+                        <span>
+                        <span class="detected-info-value" id="sim-pass-rate">-</span>
+                        <span class="confidence-badge" id="sim-pass-badge">-</span>
+                    </span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Compile Time</span>
+                        <span class="detected-info-value" id="sim-compile-time">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Simulation Time</span>
+                        <span class="detected-info-value" id="sim-sim-time">-</span>
+                    </div>
+                </div>
+
+                <!-- Waveform Preview -->
+                <div id="sim-waveform-container" style="display: none;">
+                    <div class="preview-label">📊 Waveform Preview</div>
+                    <div style="background: var(--bg-tertiary); border-radius: 8px; padding: 16px; overflow-x: auto;">
+                        <canvas id="waveform-canvas" width="600" height="200"
+                                style="width: 100%; background: #1a1a2e; border-radius: 4px;"></canvas>
+                    </div>
+                    <p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">
+                        ℹ️ Simplified preview. Download VCD for full waveform analysis with GTKWave.
+                    </p>
+                </div>
+
+                <!-- Log Preview -->
+                <div class="preview-label">📋 Simulation Log</div>
+                <div class="preview-box" id="sim-log-preview" style="max-height: 200px;"></div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-secondary btn-sm" id="sim-download-vcd" onclick="downloadSimVcd()"
+                            style="display: none;">📥 Download VCD
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="sim-download-log" onclick="downloadSimLog()">📥
+                        Download Log
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="resetSimulation()">🔄 Reset</button>
+                </div>
+            </div>
+
+            <!-- Batch Simulation Result -->
+            <div class="card result" id="sim-batch-result" style="margin-top: 16px;">
+                <div class="result-header">
+                    <div class="icon">✅</div>
+                    <div class="info">
+                        <h3 id="sim-batch-title">Batch Simulation Complete</h3>
+                        <p id="sim-batch-info">-</p>
+                    </div>
+                    <div class="badge">BATCH</div>
+                </div>
+
+                <!-- Batch Summary -->
+                <div class="detected-info">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Total Simulations</span>
+                        <span class="detected-info-value" id="sim-batch-total">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Successful</span>
+                        <span class="detected-info-value" style="color: var(--success);"
+                              id="sim-batch-successful">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Overall Pass Rate</span>
+                        <span class="detected-info-value" id="sim-batch-pass-rate">-</span>
+                    </div>
+                </div>
+
+                <!-- LLM Comparison -->
+                <div class="preview-label">Results by LLM</div>
+                <div class="preview-box" id="sim-batch-details" style="min-height: 100px; max-height: 200px;"></div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-secondary btn-sm" onclick="showSimComparisonModal()">📊 View Comparison
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="resetBatchSimulation()">🔄 Reset</button>
+                </div>
+            </div>
+
+            <!-- Local Run Instructions (when tools not available) -->
+            <div class="card" id="sim-local-instructions" style="display: none; margin-top: 16px;">
+                <div class="card-title">💻 Run Locally</div>
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+                    Simulation tools are not available on the server. Please run locally:
+                </p>
+                <div class="preview-box" style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+                    # 1. Install Icarus Verilog
+                    # Windows: Download from https://bleyer.org/icarus/
+                    # Mac: brew install icarus-verilog
+                    # Linux: sudo apt-get install iverilog
+
+                    # 2. Download your files and run:
+                    iverilog -g2012 -o sim.vvp alu_16bit.v alu_16bit_tb.v
+                    vvp sim.vvp
+
+                    # 3. View waveform (optional):
+                    gtkwave waveform.vcd
+                </div>
+                <div class="action-buttons" style="margin-top: 12px;">
+                    <button class="btn btn-primary btn-sm" onclick="downloadAllSimFiles()">📦 Download All Files
+                        (.zip)
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -2226,6 +2445,7 @@
                 document.getElementById('tb-download').style.display = 'flex';
                 document.getElementById('tb-result').classList.add('visible');
                 updateStepStatus(3, 'completed');
+                updateSimTabState();
                 updatePipelineIndicator(3, 'completed');
                 updatePipelineIndicator(4, 'active');
 
@@ -2269,6 +2489,7 @@
                 updatePipelineIndicator(3, 'active');
             }
             updatePipelineIndicator(4, '');
+            updateSimTabState();
         }
 
         // ============================================================
@@ -2383,8 +2604,420 @@
                 if (e.target === this) closeDevModal();
             });
         });
+        // ============================================================
+        // Simulation
+        // ============================================================
+        let simMode = 'single';
+        let currentSimResult = null;
+        let simToolsAvailable = false;
+
+        // Check simulation tools on page load
+        async function checkSimulationTools() {
+            try {
+                const response = await fetch('/api/check-simulation-tools');
+                const data = await response.json();
+
+                simToolsAvailable = data.can_simulate;
+
+                const statusInfo = document.getElementById('sim-tools-info');
+                const statusBadge = document.getElementById('sim-tools-badge');
+                const toolsUnavailable = document.getElementById('sim-tools-unavailable');
+                const localInstructions = document.getElementById('sim-local-instructions');
+                const configCard = document.getElementById('sim-config-card');
+                const simBtn = document.getElementById('sim-btn');
+
+                if (data.can_simulate) {
+                    statusInfo.textContent = 'iverilog & vvp available';
+                    statusBadge.textContent = 'Ready';
+                    statusBadge.className = 'dut-status-badge';
+                    statusBadge.style.background = 'var(--success)';
+                    statusBadge.style.color = 'white';
+                    toolsUnavailable.style.display = 'none';
+                    localInstructions.style.display = 'none';
+                    configCard.style.display = 'block';
+                    simBtn.style.display = 'flex';
+                } else {
+                    statusInfo.textContent = 'Tools not installed on server';
+                    statusBadge.textContent = 'Unavailable';
+                    statusBadge.className = 'dut-status-badge';
+                    statusBadge.style.background = 'var(--warning)';
+                    statusBadge.style.color = 'white';
+                    toolsUnavailable.style.display = 'flex';
+                    localInstructions.style.display = 'block';
+                    configCard.style.display = 'none';
+                    simBtn.style.display = 'none';
+                }
+
+                document.getElementById('sim-tools-status').classList.add('visible');
+
+            } catch (error) {
+                console.error('Failed to check simulation tools:', error);
+            }
+        }
+
+        function switchSimMode(mode) {
+            simMode = mode;
+
+            document.getElementById('sim-mode-single-btn').classList.toggle('active', mode === 'single');
+            document.getElementById('sim-mode-batch-btn').classList.toggle('active', mode === 'batch');
+
+            document.getElementById('sim-single-options').style.display = mode === 'single' ? 'block' : 'none';
+            document.getElementById('sim-batch-options').style.display = mode === 'batch' ? 'block' : 'none';
+
+            document.getElementById('sim-btn-text').textContent = mode === 'single'
+                ? '🚀 Run Simulation'
+                : '🚀 Run All Simulations';
+        }
+
+        function updateSimTabState() {
+            const noTbWarning = document.getElementById('no-tb-warning');
+
+            if (currentTbFilename && currentDUT) {
+                noTbWarning.classList.remove('visible');
+                document.getElementById('sim-tb-name').textContent = currentTbFilename;
+                document.getElementById('sim-dut-name').textContent = currentDUT.filename || `${currentDUT.moduleType}_${currentDUT.bitwidth}bit.v`;
+            } else {
+                noTbWarning.classList.add('visible');
+            }
+        }
+
+        function runSimulationByMode() {
+            if (simMode === 'single') {
+                runSimulation();
+            } else {
+                runSimulationBatch();
+            }
+        }
+
+        async function runSimulation() {
+            if (!currentTbFilename || !currentDUT) {
+                showError('sim', 'Please generate a testbench first (Step 3)');
+                return;
+            }
+
+            if (!simToolsAvailable) {
+                showError('sim', 'Simulation tools not available on server');
+                return;
+            }
+
+            hideError('sim');
+            setSimLoading(true);
+            updateStepStatus(4, 'in-progress');
+
+            document.getElementById('sim-result').classList.remove('visible');
+            document.getElementById('sim-batch-result').classList.remove('visible');
+
+            // Construct paths
+            const tbPath = `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}`;
+            const dutPath = `output/dut/${currentDUT.filename || currentDUT.moduleType + '_' + currentDUT.bitwidth + 'bit.v'}`;
+
+            try {
+                const response = await fetch('/api/run-simulation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        testbench_path: tbPath,
+                        dut_path: dutPath
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || data.errors?.join(', ') || 'Simulation failed');
+                }
+
+                currentSimResult = data;
+                displaySimulationResult(data);
+                updateStepStatus(4, 'completed');
+
+            } catch (error) {
+                showError('sim', error.message);
+                updateStepStatus(4, 'pending');
+            } finally {
+                setSimLoading(false);
+            }
+        }
+
+        function displaySimulationResult(data) {
+            // Update header
+            const passRate = data.pass_rate || 0;
+            document.getElementById('sim-result-icon').textContent = passRate >= 80 ? '✅' : passRate >= 50 ? '⚠️' : '❌';
+            document.getElementById('sim-result-title').textContent = data.success ? 'Simulation Complete' : 'Simulation Failed';
+            document.getElementById('sim-result-info').textContent = `${data.testbench} • ${data.compile_time + data.sim_time}s total`;
+
+            // Update statistics
+            document.getElementById('sim-total-tests').textContent = data.total_tests;
+            document.getElementById('sim-passed-tests').textContent = data.passed_tests;
+            document.getElementById('sim-failed-tests').textContent = data.failed_tests;
+            document.getElementById('sim-pass-rate').textContent = `${passRate}%`;
+
+            const passBadge = document.getElementById('sim-pass-badge');
+            passBadge.textContent = passRate >= 80 ? 'Excellent' : passRate >= 60 ? 'Good' : passRate >= 40 ? 'Fair' : 'Poor';
+            passBadge.className = 'confidence-badge ' + (passRate >= 80 ? 'high' : passRate >= 50 ? 'medium' : 'low');
+
+            document.getElementById('sim-compile-time').textContent = `${data.compile_time}s`;
+            document.getElementById('sim-sim-time').textContent = `${data.sim_time}s`;
+
+            // Log preview
+            document.getElementById('sim-log-preview').textContent = data.log_preview || data.full_log || 'No log available';
+
+            // VCD download button
+            if (data.vcd_file) {
+                document.getElementById('sim-download-vcd').style.display = 'flex';
+            }
+
+            // Waveform preview
+            if (data.waveform_data && data.waveform_data.signals) {
+                document.getElementById('sim-waveform-container').style.display = 'block';
+                drawWaveform(data.waveform_data);
+            } else {
+                document.getElementById('sim-waveform-container').style.display = 'none';
+            }
+
+            document.getElementById('sim-result').classList.add('visible');
+        }
+
+        function drawWaveform(waveformData) {
+            const canvas = document.getElementById('waveform-canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Set canvas size
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+
+            const width = rect.width;
+            const height = rect.height;
+
+            // Clear canvas
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, width, height);
+
+            const signals = waveformData.signal_names || [];
+            const maxTime = waveformData.max_time || 1000;
+
+            if (signals.length === 0) return;
+
+            const marginLeft = 80;
+            const marginRight = 20;
+            const marginTop = 20;
+            const signalHeight = 30;
+            const signalGap = 5;
+
+            const plotWidth = width - marginLeft - marginRight;
+            const timeScale = plotWidth / maxTime;
+
+            // Draw signals
+            signals.forEach((signalName, index) => {
+                const signalData = waveformData.signals[signalName];
+                if (!signalData) return;
+
+                const y = marginTop + index * (signalHeight + signalGap);
+
+                // Draw signal name
+                ctx.fillStyle = '#8888ff';
+                ctx.font = '11px JetBrains Mono, monospace';
+                ctx.textAlign = 'right';
+                ctx.fillText(signalName.substring(0, 10), marginLeft - 5, y + signalHeight / 2 + 4);
+
+                // Draw signal waveform
+                const changes = signalData.changes || [];
+                const isBit = signalData.width === 1;
+
+                ctx.strokeStyle = '#00ff88';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+
+                let lastX = marginLeft;
+                let lastValue = 0;
+
+                changes.forEach((change, i) => {
+                    const x = marginLeft + change.time * timeScale;
+                    const value = change.value;
+
+                    if (isBit) {
+                        // Single bit: draw as square wave
+                        const highY = y + 5;
+                        const lowY = y + signalHeight - 5;
+
+                        if (i === 0) {
+                            ctx.moveTo(x, value ? highY : lowY);
+                        } else {
+                            // Horizontal line to current time
+                            ctx.lineTo(x, lastValue ? highY : lowY);
+                            // Vertical transition
+                            ctx.lineTo(x, value ? highY : lowY);
+                        }
+                        lastValue = value;
+                    } else {
+                        // Multi-bit: draw as bus
+                        const midY = y + signalHeight / 2;
+
+                        if (i === 0) {
+                            ctx.moveTo(x, midY);
+                        } else {
+                            ctx.lineTo(x - 2, midY - 8);
+                            ctx.lineTo(x + 2, midY + 8);
+                            ctx.lineTo(x + 2, midY - 8);
+                            ctx.moveTo(x, midY);
+                        }
+
+                        // Draw value text
+                        if (i < changes.length - 1) {
+                            const nextX = marginLeft + changes[i + 1].time * timeScale;
+                            if (nextX - x > 30) {
+                                ctx.fillStyle = '#ffff00';
+                                ctx.font = '9px JetBrains Mono, monospace';
+                                ctx.textAlign = 'center';
+                                ctx.fillText(value.toString(16).toUpperCase(), (x + nextX) / 2, midY + 3);
+                            }
+                        }
+                    }
+
+                    lastX = x;
+                });
+
+                // Extend to end
+                if (changes.length > 0 && isBit) {
+                    const highY = y + 5;
+                    const lowY = y + signalHeight - 5;
+                    ctx.lineTo(marginLeft + plotWidth, lastValue ? highY : lowY);
+                }
+
+                ctx.stroke();
+            });
+
+            // Draw time axis
+            ctx.strokeStyle = '#444';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(marginLeft, height - 15);
+            ctx.lineTo(width - marginRight, height - 15);
+            ctx.stroke();
+
+            // Time labels
+            ctx.fillStyle = '#888';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            for (let t = 0; t <= maxTime; t += maxTime / 5) {
+                const x = marginLeft + t * timeScale;
+                ctx.fillText(Math.round(t) + 'ns', x, height - 3);
+            }
+        }
+
+        async function runSimulationBatch() {
+            if (!simToolsAvailable) {
+                showError('sim', 'Simulation tools not available on server');
+                return;
+            }
+
+            hideError('sim');
+            setSimLoading(true);
+            updateStepStatus(4, 'in-progress');
+
+            document.getElementById('sim-result').classList.remove('visible');
+            document.getElementById('sim-batch-result').classList.remove('visible');
+
+            try {
+                const response = await fetch('/api/run-simulation-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Batch simulation failed');
+                }
+
+                displayBatchSimulationResult(data);
+                updateStepStatus(4, 'completed');
+
+            } catch (error) {
+                showError('sim', error.message);
+                updateStepStatus(4, 'pending');
+            } finally {
+                setSimLoading(false);
+            }
+        }
+
+        function displayBatchSimulationResult(data) {
+            const summary = data.summary;
+
+            document.getElementById('sim-batch-title').textContent = 'Batch Simulation Complete';
+            document.getElementById('sim-batch-info').textContent = `${summary.total_simulations} simulation(s) from ${data.llm_count} LLM(s)`;
+
+            document.getElementById('sim-batch-total').textContent = summary.total_simulations;
+            document.getElementById('sim-batch-successful').textContent = summary.successful;
+            document.getElementById('sim-batch-pass-rate').textContent = `${summary.overall_pass_rate}%`;
+
+            // Build details
+            let details = '';
+            for (const [llm, stats] of Object.entries(summary.by_llm)) {
+                details += `📂 ${llm.toUpperCase()}\n`;
+                details += `   Simulations: ${stats.simulations} (${stats.successful} successful)\n`;
+                details += `   Tests: ${stats.passed_tests}/${stats.total_tests} passed (${stats.pass_rate}%)\n\n`;
+            }
+
+            document.getElementById('sim-batch-details').textContent = details;
+            document.getElementById('sim-batch-result').classList.add('visible');
+        }
+
+        function setSimLoading(loading) {
+            const btn = document.getElementById('sim-btn');
+            const btnText = document.getElementById('sim-btn-text');
+            const spinner = document.getElementById('sim-spinner');
+            btn.disabled = loading;
+            spinner.style.display = loading ? 'inline-block' : 'none';
+
+            if (loading) {
+                btnText.textContent = 'Running...';
+            } else {
+                btnText.textContent = simMode === 'single'
+                    ? '🚀 Run Simulation'
+                    : '🚀 Run All Simulations';
+            }
+        }
+
+        function downloadSimVcd() {
+            if (currentSimResult?.vcd_file) {
+                window.location.href = `/api/download-vcd/${encodeURIComponent(currentSimResult.vcd_file)}`;
+            }
+        }
+
+        function downloadSimLog() {
+            if (currentSimResult?.log_file) {
+                window.location.href = `/api/download-simulation-log/${encodeURIComponent(currentSimResult.log_file)}`;
+            }
+        }
+
+        function resetSimulation() {
+            document.getElementById('sim-result').classList.remove('visible');
+            currentSimResult = null;
+            updateStepStatus(4, 'pending');
+        }
+
+        function resetBatchSimulation() {
+            document.getElementById('sim-batch-result').classList.remove('visible');
+            updateStepStatus(4, 'pending');
+        }
+
+        function downloadAllSimFiles() {
+            // Download testbench zip (reuse existing function)
+            downloadTestbenchZip();
+        }
+
+        function showSimComparisonModal() {
+            // Reuse the quality comparison modal concept
+            alert('Batch simulation comparison details are shown above.\n\nFor detailed quality reports, check output/results/ directory.');
+        }
         // Initialize
         updateBddTabState();
+        checkSimulationTools();
 </script>
 <!-- Quality Comparison Modal -->
 <div class="modal-overlay" id="comparison-modal">
