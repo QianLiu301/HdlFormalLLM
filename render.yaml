@@ -1,14 +1,10 @@
-# render.yaml - Render deployment configuration
-# Docs: https://render.com/docs/blueprint-spec
-
 services:
   - type: web
     name: llm-bdd-generator
-    runtime: python
-    region: frankfurt  # 德国节点
+    env: docker
+    dockerfilePath: ./Dockerfile
+    region: frankfurt
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"

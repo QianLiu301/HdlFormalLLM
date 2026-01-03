@@ -173,6 +173,15 @@ try:
     print("✅ Testbench Generator module loaded")
 except ImportError as e:
     print(f"⚠️ Testbench Generator not available: {e}")
+
+# Simulation Runner
+HAS_SIMULATION_MODULE = False
+try:
+    from simulation_runner import WebSimulationRunner
+    HAS_SIMULATION_MODULE = True
+    print("✅ Simulation Runner module loaded")
+except ImportError as e:
+    print(f"⚠️ Simulation Runner not available: {e}")
 # ============================================================================
 # Flask App
 # ============================================================================
@@ -218,6 +227,11 @@ def allowed_file(filename):
     """Check if file extension is allowed."""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# Initialize simulation runner
+simulation_runner = None
+if HAS_SIMULATION_MODULE:
+    simulation_runner = WebSimulationRunner(project_root=str(PROJECT_ROOT))
+    print(f"🔧 Simulation tools: {simulation_runner.get_tools_status()}")
 
 
 # ============================================================================
@@ -270,6 +284,7 @@ def index():
 
 @app.route('/api/health')
 def health_check():
+    sim_tools = simulation_runner.get_tools_status() if simulation_runner else {'can_simulate': False}
     return jsonify({
         'status': 'healthy',
         'bdd_module': HAS_BDD_MODULE,
@@ -277,7 +292,10 @@ def health_check():
         'counter_module': HAS_COUNTER_MODULE,
         'regfile_module': HAS_REGFILE_MODULE,
         'cpu_module': HAS_CPU_MODULE,
+        'parser_module': HAS_PARSER_MODULE,
         'testbench_module': HAS_TESTBENCH_MODULE,
+        'simulation_module': HAS_SIMULATION_MODULE,
+        'simulation_tools': sim_tools,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -1265,6 +1283,99 @@ def download_testbench(filename):
         download_name=filename
     )
 
+
+# ============================================================================
+# Simulation API
+# ============================================================================
+@app.route('/api/check-simulation-tools')
+def check_simulation_tools():
+    """Check if simulation tools are available"""
+    if simulation_runner:
+        return jsonify(simulation_runner.get_tools_status())
+    return jsonify({
+        'can_simulate': False,
+        'tools': {'iverilog': False, 'vvp': False},
+        'error': 'Simulation module not loaded'
+    })
+
+
+@app.route('/api/run-simulation', methods=['POST'])
+def run_simulation():
+    """Run simulation for a single testbench"""
+    if not simulation_runner or not simulation_runner.can_run_simulation():
+        return jsonify({
+            'success': False,
+            'error': 'Simulation tools not available on server',
+            'tools_available': simulation_runner.get_tools_status() if simulation_runner else {}
+        }), 503
+
+    try:
+        data = request.json
+        testbench_path = data.get('testbench_path')
+        dut_path = data.get('dut_path')
+
+        if not testbench_path or not dut_path:
+            return jsonify({'success': False, 'error': 'Missing testbench_path or dut_path'}), 400
+
+        # Convert relative paths to absolute
+        tb_full = PROJECT_ROOT / testbench_path
+        dut_full = PROJECT_ROOT / dut_path
+
+        result = simulation_runner.run_single(str(tb_full), str(dut_full))
+
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/run-simulation-batch', methods=['POST'])
+def run_simulation_batch():
+    """Run simulations for all testbenches"""
+    if not simulation_runner or not simulation_runner.can_run_simulation():
+        return jsonify({
+            'success': False,
+            'error': 'Simulation tools not available on server'
+        }), 503
+
+    try:
+        result = simulation_runner.run_batch()
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/download-vcd/<path:filepath>')
+def download_vcd(filepath):
+    """Download VCD file"""
+    file_path = PROJECT_ROOT / filepath
+    if not file_path.exists():
+        return jsonify({'error': 'File not found'}), 404
+
+    return send_from_directory(
+        str(file_path.parent.absolute()),
+        file_path.name,
+        as_attachment=True
+    )
+
+
+@app.route('/api/download-simulation-log/<path:filepath>')
+def download_simulation_log(filepath):
+    """Download simulation log file"""
+    file_path = PROJECT_ROOT / filepath
+    if not file_path.exists():
+        return jsonify({'error': 'File not found'}), 404
+
+    return send_from_directory(
+        str(file_path.parent.absolute()),
+        file_path.name,
+        as_attachment=True
+    )
 # ============================================================================
 # Main
 # ============================================================================
