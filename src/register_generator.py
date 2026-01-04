@@ -349,7 +349,7 @@ Start with `module` and end with `endmodule`.
         """Save Register File to file"""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{module_name}_{depth}x{bitwidth}bit.v"
+        filename = f"{module_name}_{depth}x{timestamp}bit.v"
 
         header = f"""//==============================================================================
 // Register File Design - Design Under Test (DUT)

@@ -123,7 +123,9 @@ class WebSimulationRunner:
                 compile_cmd,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                encoding='utf-8',
+                errors='replace'
             )
 
             result['compile_time'] = round(time.time() - start_time, 2)
@@ -148,7 +150,9 @@ class WebSimulationRunner:
                 capture_output=True,
                 text=True,
                 timeout=60,
-                cwd=str(results_dir)
+                cwd=str(results_dir),
+                encoding='utf-8',
+                errors='replace'
             )
 
             result['sim_time'] = round(time.time() - start_time, 2)
@@ -333,6 +337,31 @@ class WebSimulationRunner:
                 results_by_llm[llm_name] = []
 
                 for tb_file in item.glob('*_tb.v'):
+                    # Extract bitwidth from filename
+                    match = re.search(r'(\d+)bit', tb_file.name)
+                    if match:
+                        bitwidth = match.group(1)
+
+                        # Look for DUT in LLM-specific directory first
+                        llm_dut_dir = dut_dir / llm_name
+                        dut_file = None
+
+                        if llm_dut_dir.exists():
+                            # Find DUT file with matching bitwidth (may have timestamp)
+                            dut_files = list(llm_dut_dir.glob(f'alu_{bitwidth}bit*.v'))
+                            if dut_files:
+                                dut_file = max(dut_files, key=lambda x: x.stat().st_mtime)
+
+                        # Fallback: check root dut directory
+                        if not dut_file:
+                            fallback_files = list(dut_dir.glob(f'alu_{bitwidth}bit*.v'))
+                            if fallback_files:
+                                dut_file = max(fallback_files, key=lambda x: x.stat().st_mtime)
+
+                        if dut_file and dut_file.exists():
+                            result = self.run_single(str(tb_file), str(dut_file))
+                            result['llm'] = llm_name
+                            results_by_llm[llm_name].append(result)
                     # Extract bitwidth from filename
                     match = re.search(r'(\d+)bit', tb_file.name)
                     if match:

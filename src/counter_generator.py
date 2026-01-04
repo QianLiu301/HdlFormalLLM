@@ -323,7 +323,7 @@ Start with `module` and end with `endmodule`.
         """Save Counter to file"""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{module_name}_{bitwidth}bit.v"
+        filename = f"{module_name}_{timestamp}.v"
 
         modes_str = ', '.join(modes).upper()
         header = f"""//==============================================================================

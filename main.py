@@ -292,7 +292,6 @@ def health_check():
         'counter_module': HAS_COUNTER_MODULE,
         'regfile_module': HAS_REGFILE_MODULE,
         'cpu_module': HAS_CPU_MODULE,
-        'parser_module': HAS_PARSER_MODULE,
         'testbench_module': HAS_TESTBENCH_MODULE,
         'simulation_module': HAS_SIMULATION_MODULE,
         'simulation_tools': sim_tools,
@@ -434,6 +433,9 @@ def generate_hardware_stream():
             yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth, module_type=module_type)
             yield make_sse_message("info", message=f"Initializing {bitwidth}-bit {module_type.upper()} generator...")
 
+            # Variable to store module name for later use
+            module_name = None
+
             # Select generator based on module type
             if module_type == 'alu':
                 if not HAS_ALU_MODULE:
@@ -450,7 +452,8 @@ def generate_hardware_stream():
                     "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
                     "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
                 }
-                prompt = generator._create_alu_prompt(bitwidth, operations, "alu")
+                module_name = f"alu_{bitwidth}bit"
+                prompt = generator._create_alu_prompt(bitwidth, operations, module_name)
 
             elif module_type == 'counter':
                 if not HAS_COUNTER_MODULE:
@@ -462,7 +465,8 @@ def generate_hardware_stream():
                     debug=False
                 )
                 modes = ['up', 'down', 'updown']
-                prompt = generator._create_counter_prompt(bitwidth, modes, "counter")
+                module_name = f"counter_{bitwidth}bit"
+                prompt = generator._create_counter_prompt(bitwidth, modes, module_name)
 
             elif module_type == 'regfile':
                 if not HAS_REGFILE_MODULE:
@@ -474,7 +478,8 @@ def generate_hardware_stream():
                     project_root=str(PROJECT_ROOT),
                     debug=False
                 )
-                prompt = generator._create_regfile_prompt(bitwidth, depth, "regfile")
+                module_name = f"regfile_{bitwidth}bit"
+                prompt = generator._create_regfile_prompt(bitwidth, depth, module_name)
 
             elif module_type == 'cpu':
                 if not HAS_CPU_MODULE:
@@ -486,7 +491,8 @@ def generate_hardware_stream():
                     project_root=str(PROJECT_ROOT),
                     debug=False
                 )
-                prompt = generator._create_cpu_prompt(32, pipeline_stages, "riscv_cpu")
+                module_name = "riscv_cpu"
+                prompt = generator._create_cpu_prompt(32, pipeline_stages, module_name)
 
             else:
                 yield make_sse_message("error", message=f"Unknown module type: {module_type}")
@@ -521,22 +527,29 @@ def generate_hardware_stream():
                 yield make_sse_message("error", message="LLM returned empty response")
                 return
 
-            # Extract and save
+            # Extract verilog code
             verilog_code = generator._extract_verilog(full_content)
             if not verilog_code:
                 verilog_code = full_content
 
-            # Save based on module type
+            # Fix module name and save based on module type
             if module_type == 'alu':
-                hw_path = generator._save_alu(verilog_code, "alu", bitwidth)
+                verilog_code = generator._fix_module_name(verilog_code, module_name)
+                hw_path = generator._save_alu(verilog_code, module_name, bitwidth)
             elif module_type == 'counter':
-                hw_path = generator._save_counter(verilog_code, "counter", bitwidth, ['up', 'down', 'updown'])
+                if hasattr(generator, '_fix_module_name'):
+                    verilog_code = generator._fix_module_name(verilog_code, module_name)
+                hw_path = generator._save_counter(verilog_code, module_name, bitwidth, ['up', 'down', 'updown'])
             elif module_type == 'regfile':
                 depth = data.get('depth', 32)
-                hw_path = generator._save_regfile(verilog_code, "regfile", bitwidth, depth)
+                if hasattr(generator, '_fix_module_name'):
+                    verilog_code = generator._fix_module_name(verilog_code, module_name)
+                hw_path = generator._save_regfile(verilog_code, module_name, bitwidth, depth)
             elif module_type == 'cpu':
                 pipeline_stages = data.get('pipeline_stages', 5)
-                hw_path = generator._save_cpu(verilog_code, "riscv_cpu", 32, pipeline_stages)
+                if hasattr(generator, '_fix_module_name'):
+                    verilog_code = generator._fix_module_name(verilog_code, module_name)
+                hw_path = generator._save_cpu(verilog_code, module_name, 32, pipeline_stages)
 
             filename = Path(hw_path).name
 

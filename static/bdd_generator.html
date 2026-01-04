@@ -1922,7 +1922,8 @@
                 depth: payload.depth,
                 pipelineStages: payload.pipeline_stages,
                 filename: filename,
-                source: source
+                source: source,
+                llm: payload.llm
             };
 
             const bddTemplate = BDD_TEMPLATES[payload.module_type] || BDD_TEMPLATES.other;
@@ -2709,7 +2710,10 @@
 
             // Construct paths
             const tbPath = `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}`;
-            const dutPath = `output/dut/${currentDUT.filename || currentDUT.moduleType + '_' + currentDUT.bitwidth + 'bit.v'}`;
+
+            // DUT path: check LLM-specific directory
+            const llmName = currentDUT?.llm || currentBDD?.llm || 'default';
+            const dutPath = `output/dut/${llmName}/${currentDUT.filename}`;
 
             try {
                 const response = await fetch('/api/run-simulation', {
