@@ -94,11 +94,11 @@ class RegFileGenerator:
             return None
 
     def _setup_output_dir(self, output_dir: Optional[str], project_root: Optional[str]) -> Path:
-        """Setup output directory for DUT"""
+        """Setup output directory for DUT, organized by LLM provider"""
         if output_dir:
-            dut_dir = Path(output_dir)
+            base_dir = Path(output_dir)
         elif project_root:
-            dut_dir = Path(project_root) / "output" / "dut"
+            base_dir = Path(project_root) / "output" / "dut"
         else:
             current = Path.cwd()
             possible_paths = [
@@ -106,16 +106,18 @@ class RegFileGenerator:
                 current / "outputs" / "dut",
                 current.parent / "output" / "dut",
             ]
-
             for path in possible_paths:
                 if path.parent.exists():
-                    dut_dir = path
+                    base_dir = path
                     break
             else:
-                dut_dir = current / "output" / "dut"
+                base_dir = current / "output" / "dut"
 
-        dut_dir.mkdir(parents=True, exist_ok=True)
-        return dut_dir
+        # Create LLM-specific subdirectory
+        llm_dir = base_dir / self.llm_provider
+        llm_dir.mkdir(parents=True, exist_ok=True)
+
+        return llm_dir
 
     def generate_regfile(
         self,
