@@ -228,6 +228,15 @@ class FeatureGeneratorLLM:
             print(f"⚠️  Invalid bitwidth: {bitwidth}, using 16")
             bitwidth = 16
 
+        # Extract module type
+        module_type = 'alu'  # default
+        if 'counter' in input_lower:
+            module_type = 'counter'
+        elif 'regfile' in input_lower or 'register' in input_lower:
+            module_type = 'regfile'
+        elif 'cpu' in input_lower or 'risc' in input_lower or 'riscv' in input_lower:
+            module_type = 'cpu'
+
         # Extract operations
         operations = []
         operation_names = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'NOT', 'SHL', 'SHR', 'NAND', 'NOR']
@@ -263,6 +272,7 @@ class FeatureGeneratorLLM:
 
         return {
             'bitwidth': bitwidth,
+            'module_type': module_type,
             'operations': operations,
             'opcodes': opcodes,
             'num_tests': num_tests,
@@ -543,7 +553,8 @@ Output ONLY the Feature file content, no explanations.
             Path to saved file
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"alu_{req['bitwidth']}bit_{timestamp}.feature"
+        module_type = req.get('module_type', 'alu')
+        filename = f"{module_type}_{req['bitwidth']}bit_{timestamp}.feature"
         filepath = self.output_dir / filename
 
         # Add header with author info
