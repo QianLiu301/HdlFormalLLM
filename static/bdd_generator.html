@@ -581,7 +581,10 @@
         <a href="https://arxiv.org/abs/2512.17814" target="_blank" class="welcome-paper">
             📄 Read the Paper: arXiv:2512.17814
         </a>
-        <button class="welcome-btn" onclick="enterApp()">
+<!--        <button class="welcome-btn" onclick="enterApp()">-->
+<!--            🚀 Start Using Tool-->
+<!--        </button>-->
+        <button class="welcome-btn" onclick="checkPassword()">
             🚀 Start Using Tool
         </button>
         <div class="welcome-features">
@@ -602,11 +605,36 @@
             </div>
         </div>
 
-        <!-- 添加作者和 Legal Notice -->
+    <!-- 添加作者和 Legal Notice -->
         <div style="margin-top: 48px; text-align: center;">
             <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
-                Authors: Rolf Drechsler, Qian Liu
+                Authors:
+                <a href="https://www.linkedin.com/in/rolf-drechsler-2304a98/"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   style="
+                         color: var(--accent);
+                         opacity: 0.85;
+                         text-decoration: none;
+                       "
+                   onmouseover="this.style.textDecoration='underline'; this.style.opacity='1';"
+                   onmouseout="this.style.textDecoration='none'; this.style.opacity='0.85';">
+                    Rolf Drechsler
+                </a>,
+                <a href="https://www.linkedin.com/in/qian-liu-0707482bb/"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   style="
+                         color: var(--accent);
+                         opacity: 0.85;
+                         text-decoration: none;
+                       "
+                   onmouseover="this.style.textDecoration='underline'; this.style.opacity='1';"
+                   onmouseout="this.style.textDecoration='none'; this.style.opacity='0.85';">
+                    Qian Liu
+                </a>
             </p>
+
             <p style="font-size: 12px;">
                 <a href="#" onclick="showLegalModal(); return false;"
                    style="color: var(--accent); text-decoration: none;">
@@ -614,6 +642,7 @@
                 </a>
             </p>
         </div>
+
     </div>
         </div>
     </div>
@@ -3022,6 +3051,23 @@
         // Initialize
         updateBddTabState();
         checkSimulationTools();
+        function checkPassword()
+        // 临时使用的门禁密码
+        {
+        const PASSWORD = "agra2025"; // ← 你自己改，短期用
+
+        const input = prompt("🔒 Please enter access password:");
+
+        if (input === null) {
+            return; // 用户点了取消
+        }
+
+        if (input === PASSWORD) {
+            enterApp(); // 原有逻辑
+        } else {
+            alert("❌ Incorrect password.");
+        }
+    }
 </script>
 <!-- Quality Comparison Modal -->
 <div class="modal-overlay" id="comparison-modal">
