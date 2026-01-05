@@ -323,14 +323,23 @@ class FeatureGeneratorLLM:
 
     def _create_prompt(self, req: Dict) -> str:
         """
-        Create prompt for LLM
+        Create prompt for LLM based on module type
 
-        Uses the design we discussed:
-        - System prompt: role and format
-        - Example: complete feature example
-        - Requirements: specific constraints
-        - User input: actual requirements
+        Supports: ALU, Counter, RegFile, CPU
         """
+        module_type = req.get('module_type', 'alu')
+
+        if module_type == 'counter':
+            return self._create_counter_prompt(req)
+        elif module_type == 'regfile':
+            return self._create_regfile_prompt(req)
+        elif module_type == 'cpu':
+            return self._create_cpu_prompt(req)
+        else:
+            return self._create_alu_prompt(req)
+
+    def _create_alu_prompt(self, req: Dict) -> str:
+        """Create prompt for ALU Feature file"""
         max_value = (1 << req['bitwidth']) - 1
 
         # Build operations string with opcodes
@@ -341,58 +350,284 @@ class FeatureGeneratorLLM:
         ops_str = '\n- '.join(ops_list)
 
         prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
-Generate a Gherkin-format Feature file for ALU testing.
+    Generate a Gherkin-format Feature file for ALU testing.
 
-CRITICAL FORMAT REQUIREMENTS:
-1. Use strict Gherkin syntax with Scenario Outline and Examples tables
-2. Examples table MUST use pipe (|) separators with consistent spacing
-3. Each operation MUST have at least {req['num_tests']} test cases
-4. MUST include these specific edge cases:
-   - Test with (0, 0)
-   - Test with ({max_value}, {max_value}) - maximum values
-   - Test cases that trigger overflow
-5. Follow the EXACT format shown below
+    CRITICAL FORMAT REQUIREMENTS:
+    1. Use strict Gherkin syntax with Scenario Outline and Examples tables
+    2. Examples table MUST use pipe (|) separators with consistent spacing
+    3. Each operation MUST have at least {req['num_tests']} test cases
+    4. MUST include these specific edge cases:
+       - Test with (0, 0)
+       - Test with ({max_value}, {max_value}) - maximum values
+       - Test cases that trigger overflow
+    5. Follow the EXACT format shown below
 
-EXAMPLE FORMAT (8-bit):
+    EXAMPLE FORMAT (8-bit):
 
-Feature: 8-bit ALU Verification
-  As a hardware verification engineer
-  I want to verify the ALU implementation
-  So that I can ensure correct operation
+    Feature: 8-bit ALU Verification
+      As a hardware verification engineer
+      I want to verify the ALU implementation
+      So that I can ensure correct operation
 
-  Background:
-    Given the ALU is initialized with 8-bit operands
+      Background:
+        Given the ALU is initialized with 8-bit operands
 
-  @add @arithmetic
-  Scenario Outline: Verify ADD operation
-    Given I have operand A = <A>
-    And I have operand B = <B>
-    When I perform the ADD operation with opcode 0000
-    Then the result should be <Expected_Result>
-    And the zero flag should be <Zero_Flag>
-    And the overflow flag should be <Overflow>
-    And the negative flag should be <Negative_Flag>
+      @add @arithmetic
+      Scenario Outline: Verify ADD operation
+        Given I have operand A = <A>
+        And I have operand B = <B>
+        When I perform the ADD operation with opcode 0000
+        Then the result should be <Expected_Result>
+        And the zero flag should be <Zero_Flag>
+        And the overflow flag should be <Overflow>
+        And the negative flag should be <Negative_Flag>
 
-    Examples:
-      | A   | B   | Opcode | Expected_Result | Zero_Flag | Overflow | Negative_Flag |
-      | 0   | 0   | 0000   | 0               | True      | False    | False         |
-      | 0   | 1   | 0000   | 1               | False     | False    | False         |
-      | 255 | 0   | 0000   | 255             | False     | False    | True          |
-      | 255 | 255 | 0000   | 254             | False     | True     | True          |
-      | 100 | 50  | 0000   | 150             | False     | False    | True          |
+        Examples:
+          | A   | B   | Opcode | Expected_Result | Zero_Flag | Overflow | Negative_Flag |
+          | 0   | 0   | 0000   | 0               | True      | False    | False         |
+          | 0   | 1   | 0000   | 1               | False     | False    | False         |
+          | 255 | 0   | 0000   | 255             | False     | False    | True          |
+          | 255 | 255 | 0000   | 254             | False     | True     | True          |
+          | 100 | 50  | 0000   | 150             | False     | False    | True          |
 
-NOW GENERATE:
-- Bitwidth: {req['bitwidth']}-bit
-- Operations to include:
-{ops_str}
-- Each operation needs {req['num_tests']} test cases minimum
-- Maximum value for {req['bitwidth']}-bit: {max_value}
-- MUST include edge cases: (0,0), ({max_value},{max_value}), and overflow tests
+    NOW GENERATE:
+    - Bitwidth: {req['bitwidth']}-bit
+    - Operations to include:
+    - {ops_str}
+    - Each operation needs {req['num_tests']} test cases minimum
+    - Maximum value for {req['bitwidth']}-bit: {max_value}
+    - MUST include edge cases: (0,0), ({max_value},{max_value}), and overflow tests
 
-Generate the complete Feature file following the exact format above.
-Output ONLY the Feature file content, no explanations.
-"""
+    Generate the complete Feature file following the exact format above.
+    Output ONLY the Feature file content, no explanations.
+    """
+        return prompt
 
+    def _create_counter_prompt(self, req: Dict) -> str:
+        """Create prompt for Counter Feature file"""
+        max_value = (1 << req['bitwidth']) - 1
+
+        prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
+    Generate a Gherkin-format Feature file for Counter testing.
+
+    CRITICAL FORMAT REQUIREMENTS:
+    1. Use strict Gherkin syntax with Scenario Outline and Examples tables
+    2. Examples table MUST use pipe (|) separators with consistent spacing
+    3. Test all counter modes: UP (00), DOWN (01), UP-DOWN (10)
+    4. Include edge cases: overflow, underflow, zero crossing
+
+    EXAMPLE FORMAT:
+
+    Feature: {req['bitwidth']}-bit Counter Verification
+      As a hardware verification engineer
+      I want to verify the Counter implementation
+      So that I can ensure correct counting behavior
+
+      Background:
+        Given the Counter is initialized with {req['bitwidth']}-bit width
+
+      @up_count
+      Scenario Outline: Verify UP counting mode
+        Given the counter is in UP mode (mode=00)
+        And the counter value is <Initial_Value>
+        When I enable counting for <Cycles> cycles
+        Then the counter value should be <Expected_Value>
+        And the overflow flag should be <Overflow>
+
+        Examples:
+          | Initial_Value | Cycles | Expected_Value | Overflow |
+          | 0             | 1      | 1              | False    |
+          | 0             | 5      | 5              | False    |
+          | {max_value - 1} | 1      | {max_value}    | False    |
+          | {max_value}   | 1      | 0              | True     |
+
+      @down_count
+      Scenario Outline: Verify DOWN counting mode
+        Given the counter is in DOWN mode (mode=01)
+        And the counter value is <Initial_Value>
+        When I enable counting for <Cycles> cycles
+        Then the counter value should be <Expected_Value>
+        And the underflow flag should be <Underflow>
+
+        Examples:
+          | Initial_Value | Cycles | Expected_Value | Underflow |
+          | 5             | 1      | 4              | False     |
+          | 1             | 1      | 0              | False     |
+          | 0             | 1      | {max_value}    | True      |
+
+    NOW GENERATE:
+    - Bitwidth: {req['bitwidth']}-bit
+    - Maximum value: {max_value}
+    - Modes: UP (00), DOWN (01), UP-DOWN (10)
+    - Include at least {req['num_tests']} test cases per mode
+
+    Generate the complete Feature file following the exact format above.
+    Output ONLY the Feature file content, no explanations.
+    """
+        return prompt
+
+    def _create_regfile_prompt(self, req: Dict) -> str:
+        """Create prompt for Register File Feature file"""
+        max_value = (1 << req['bitwidth']) - 1
+        depth = req.get('depth', 16)
+        addr_width = (depth - 1).bit_length()
+
+        prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
+    Generate a Gherkin-format Feature file for Register File testing.
+
+    CRITICAL FORMAT REQUIREMENTS:
+    1. Use strict Gherkin syntax with Scenario Outline and Examples tables
+    2. Examples table MUST use pipe (|) separators with consistent spacing
+    3. Test read/write operations
+    4. Test that register 0 always reads as 0 (RISC-V style)
+
+    EXAMPLE FORMAT:
+
+    Feature: {req['bitwidth']}-bit Register File Verification
+      As a hardware verification engineer
+      I want to verify the Register File implementation
+      So that I can ensure correct read/write behavior
+
+      Background:
+        Given the Register File has {depth} registers of {req['bitwidth']}-bit width
+
+      @write_read
+      Scenario Outline: Verify write and read back
+        Given I write <Write_Data> to register <Reg_Addr>
+        When I read from register <Reg_Addr>
+        Then the read data should be <Expected_Data>
+
+        Examples:
+          | Reg_Addr | Write_Data | Expected_Data |
+          | 1        | 100        | 100           |
+          | 2        | 255        | 255           |
+          | 5        | 0          | 0             |
+          | 10       | {max_value}| {max_value}   |
+
+      @reg_zero
+      Scenario Outline: Verify register 0 always returns 0
+        Given I write <Write_Data> to register 0
+        When I read from register 0
+        Then the read data should be 0
+
+        Examples:
+          | Write_Data |
+          | 100        |
+          | {max_value}|
+          | 1          |
+
+      @dual_read
+      Scenario Outline: Verify dual port read
+        Given I write <Data1> to register <Reg1>
+        And I write <Data2> to register <Reg2>
+        When I read from register <Reg1> on port 1
+        And I read from register <Reg2> on port 2
+        Then port 1 should return <Data1>
+        And port 2 should return <Data2>
+
+        Examples:
+          | Reg1 | Data1 | Reg2 | Data2 |
+          | 1    | 100   | 2    | 200   |
+          | 5    | 50    | 10   | 100   |
+
+    NOW GENERATE:
+    - Bitwidth: {req['bitwidth']}-bit
+    - Depth: {depth} registers
+    - Address width: {addr_width} bits
+    - Maximum data value: {max_value}
+    - Include at least {req['num_tests']} test cases per scenario type
+
+    Generate the complete Feature file following the exact format above.
+    Output ONLY the Feature file content, no explanations.
+    """
+        return prompt
+
+    def _create_cpu_prompt(self, req: Dict) -> str:
+        """Create prompt for RISC-V CPU Feature file"""
+        pipeline_stages = req.get('pipeline_stages', 3)
+
+        prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
+    Generate a Gherkin-format Feature file for RISC-V CPU testing.
+
+    CRITICAL FORMAT REQUIREMENTS:
+    1. Use strict Gherkin syntax with Scenario Outline and Examples tables
+    2. Examples table MUST use pipe (|) separators with consistent spacing
+    3. Test basic RV32I instructions
+    4. Test pipeline behavior and hazards
+
+    EXAMPLE FORMAT:
+
+    Feature: RISC-V CPU Verification ({pipeline_stages}-stage pipeline)
+      As a hardware verification engineer
+      I want to verify the RISC-V CPU implementation
+      So that I can ensure correct instruction execution
+
+      Background:
+        Given the CPU is a {pipeline_stages}-stage pipeline RV32I processor
+        And all registers are initialized to 0
+
+      @arithmetic
+      Scenario Outline: Verify arithmetic instructions
+        Given register x<Rs1> contains <Rs1_Value>
+        And register x<Rs2> contains <Rs2_Value>
+        When I execute <Instruction>
+        Then register x<Rd> should contain <Expected>
+
+        Examples:
+          | Instruction          | Rs1 | Rs1_Value | Rs2 | Rs2_Value | Rd | Expected |
+          | add x1, x2, x3       | 2   | 10        | 3   | 20        | 1  | 30       |
+          | sub x1, x2, x3       | 2   | 30        | 3   | 10        | 1  | 20       |
+          | addi x1, x2, 100     | 2   | 50        | 0   | 0         | 1  | 150      |
+
+      @logical
+      Scenario Outline: Verify logical instructions
+        Given register x<Rs1> contains <Rs1_Value>
+        And register x<Rs2> contains <Rs2_Value>
+        When I execute <Instruction>
+        Then register x<Rd> should contain <Expected>
+
+        Examples:
+          | Instruction          | Rs1 | Rs1_Value | Rs2 | Rs2_Value | Rd | Expected |
+          | and x1, x2, x3       | 2   | 0xFF      | 3   | 0x0F      | 1  | 0x0F     |
+          | or x1, x2, x3        | 2   | 0xF0      | 3   | 0x0F      | 1  | 0xFF     |
+          | xor x1, x2, x3       | 2   | 0xFF      | 3   | 0xFF      | 1  | 0x00     |
+
+      @memory
+      Scenario Outline: Verify load/store instructions
+        Given register x<Rs1> contains <Address>
+        And register x<Rs2> contains <Store_Data>
+        When I execute store: sw x<Rs2>, 0(x<Rs1>)
+        And I execute load: lw x<Rd>, 0(x<Rs1>)
+        Then register x<Rd> should contain <Store_Data>
+
+        Examples:
+          | Rs1 | Address | Rs2 | Store_Data | Rd |
+          | 2   | 0x100   | 3   | 0x12345678 | 1  |
+          | 2   | 0x200   | 3   | 0xDEADBEEF | 1  |
+
+      @branch
+      Scenario Outline: Verify branch instructions
+        Given register x<Rs1> contains <Rs1_Value>
+        And register x<Rs2> contains <Rs2_Value>
+        And PC is at <Initial_PC>
+        When I execute <Instruction>
+        Then PC should be <Expected_PC>
+
+        Examples:
+          | Instruction          | Rs1 | Rs1_Value | Rs2 | Rs2_Value | Initial_PC | Expected_PC |
+          | beq x1, x2, 8        | 1   | 10        | 2   | 10        | 0x100      | 0x108       |
+          | beq x1, x2, 8        | 1   | 10        | 2   | 20        | 0x100      | 0x104       |
+          | bne x1, x2, 8        | 1   | 10        | 2   | 20        | 0x100      | 0x108       |
+
+    NOW GENERATE:
+    - Architecture: RV32I
+    - Pipeline: {pipeline_stages}-stage
+    - Include at least {req['num_tests']} test cases per instruction category
+    - Test categories: Arithmetic, Logical, Memory, Branch
+
+    Generate the complete Feature file following the exact format above.
+    Output ONLY the Feature file content, no explanations.
+    """
         return prompt
 
     def _call_llm(self, prompt: str) -> Optional[str]:
@@ -554,24 +789,35 @@ Output ONLY the Feature file content, no explanations.
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         module_type = req.get('module_type', 'alu')
-        filename = f"{module_type}_{req['bitwidth']}bit_{timestamp}.feature"
+
+        # Generate filename based on module type
+        if module_type == 'cpu':
+            pipeline = req.get('pipeline_stages', 3)
+            filename = f"riscv_cpu_{pipeline}stage_{timestamp}.feature"
+        elif module_type == 'regfile':
+            depth = req.get('depth', 16)
+            filename = f"regfile_{req['bitwidth']}bit_{depth}x_{timestamp}.feature"
+        else:
+            filename = f"{module_type}_{req['bitwidth']}bit_{timestamp}.feature"
+
         filepath = self.output_dir / filename
 
         # Add header with author info
         header = f"""# ==============================================================================
-# BDD Test Scenarios - Hardware Verification
-#
-# Project: LLM-based Hardware Verification Pipeline
-# Authors: Rolf Drechsler, Qian Liu
-# Paper: https://arxiv.org/abs/2512.17814
-#
-# Generated by: feature_generator_llm.py
-# LLM Provider: {self.llm_name}
-# Generated at: {timestamp}
-# Bitwidth: {req['bitwidth']}
-# ==============================================================================
+    # BDD Test Scenarios - Hardware Verification
+    #
+    # Project: LLM-based Hardware Verification Pipeline
+    # Authors: Rolf Drechsler, Qian Liu
+    # Paper: https://arxiv.org/abs/2512.17814
+    #
+    # Generated by: feature_generator_llm.py
+    # LLM Provider: {self.llm_name}
+    # Generated at: {timestamp}
+    # Module Type: {module_type}
+    # Bitwidth: {req['bitwidth']}
+    # ==============================================================================
 
-"""
+    """
 
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(header + content)

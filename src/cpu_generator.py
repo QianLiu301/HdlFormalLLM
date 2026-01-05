@@ -337,22 +337,35 @@ Start with `module` and end with `endmodule`.
     def _extract_verilog(self, response: str) -> Optional[str]:
         """Extract Verilog code from LLM response"""
 
-        patterns = [
-            r'```verilog\n(.*?)```',
-            r'```v\n(.*?)```',
-            r'```\n(.*?)```',
-            r'(module\s+.*?endmodule)',
-        ]
+        # Remove markdown code blocks
+        if '```verilog' in response:
+            # Extract content between ```verilog and ```
+            match = re.search(r'```verilog\s*(.*?)```', response, re.DOTALL)
+            if match:
+                return match.group(1).strip()
 
-        for pattern in patterns:
-            match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+        if '```v' in response:
+            match = re.search(r'```v\s*(.*?)```', response, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+
+        if '```' in response:
+            match = re.search(r'```\s*(.*?)```', response, re.DOTALL)
             if match:
                 code = match.group(1).strip()
                 if 'module' in code and 'endmodule' in code:
                     return code
 
+        # Try to find module directly
+        match = re.search(r'(module\s+.*?endmodule)', response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        # If response contains module/endmodule, return as-is
         if 'module' in response and 'endmodule' in response:
-            return response.strip()
+            # Remove any remaining ``` markers
+            cleaned = response.replace('```verilog', '').replace('```v', '').replace('```', '')
+            return cleaned.strip()
 
         return None
 
