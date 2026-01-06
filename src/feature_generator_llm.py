@@ -237,6 +237,30 @@ class FeatureGeneratorLLM:
         elif 'cpu' in input_lower or 'risc' in input_lower or 'riscv' in input_lower:
             module_type = 'cpu'
 
+        # Extract depth for regfile (e.g., "8x", "16 registers", "8x8")
+        depth = 16  # default
+        if module_type == 'regfile':
+            depth_patterns = [
+                (r'(\d+)x\d+', lambda m: int(m.group(1))),  # "8x8", "32x32"
+                (r'(\d+)\s*registers?', lambda m: int(m.group(1))),  # "8 registers"
+                (r'(\d+)x[\s\-]', lambda m: int(m.group(1))),  # "16x " or "16x-"
+            ]
+            for pattern, extract in depth_patterns:
+                match = re.search(pattern, input_lower)
+                if match:
+                    depth = extract(match)
+                    break
+
+        # Extract pipeline stages for CPU (e.g., "5-stage", "3 stage")
+        pipeline_stages = 5  # default
+        if module_type == 'cpu':
+            pipeline_match = re.search(r'(\d+)[\s-]*stage', input_lower)
+            if pipeline_match:
+                pipeline_stages = int(pipeline_match.group(1))
+                if pipeline_stages not in [3, 5]:
+                    print(f"⚠️  Invalid pipeline stages: {pipeline_stages}, using 5")
+                    pipeline_stages = 5
+
         # Extract operations
         operations = []
         operation_names = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'NOT', 'SHL', 'SHR', 'NAND', 'NOR']
@@ -276,7 +300,9 @@ class FeatureGeneratorLLM:
             'operations': operations,
             'opcodes': opcodes,
             'num_tests': num_tests,
-            'original_input': user_input
+            'original_input': user_input,
+            'pipeline_stages': pipeline_stages,
+            'depth': depth
         }
 
     def generate_feature(self, user_input: str) -> Optional[str]:
@@ -483,7 +509,7 @@ class FeatureGeneratorLLM:
 
     EXAMPLE FORMAT:
 
-    Feature: {req['bitwidth']}-bit Register File Verification
+    Feature: {depth}x{req['bitwidth']}-bit Register File Verification
       As a hardware verification engineer
       I want to verify the Register File implementation
       So that I can ensure correct read/write behavior

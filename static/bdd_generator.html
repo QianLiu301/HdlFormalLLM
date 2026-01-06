@@ -1082,9 +1082,20 @@
                         <label>DUT Module Name</label>
                         <input type="text" id="tb-module-name" placeholder="e.g., alu_16bit" readonly>
                     </div>
-                    <div class="form-group">
+                    <!-- Bitwidth - ALU, Counter, RegFile 显示 -->
+                    <div class="form-group" id="tb-bitwidth-group">
                         <label>Bitwidth</label>
                         <input type="text" id="tb-bitwidth" placeholder="e.g., 16" readonly>
+                    </div>
+                    <!-- Registers - 仅 RegFile 显示 -->
+                    <div class="form-group" id="tb-registers-group" style="display: none;">
+                        <label>Registers</label>
+                        <input type="text" id="tb-registers" placeholder="e.g., 32" readonly>
+                    </div>
+                    <!-- Pipeline - 仅 CPU 显示 -->
+                    <div class="form-group" id="tb-pipeline-group" style="display: none;">
+                        <label>Pipeline</label>
+                        <input type="text" id="tb-pipeline" placeholder="e.g., 5-stage" readonly>
                     </div>
                 </div>
             </div>
@@ -1956,7 +1967,15 @@
             };
 
             const bddTemplate = BDD_TEMPLATES[payload.module_type] || BDD_TEMPLATES.other;
-            document.getElementById('bdd-input').value = bddTemplate(currentDUT.bitwidth, currentDUT.depth);
+            let bddContent;
+            if (payload.module_type === 'cpu') {
+                bddContent = bddTemplate(currentDUT.pipelineStages);
+            } else if (payload.module_type === 'regfile') {
+                bddContent = bddTemplate(currentDUT.bitwidth, currentDUT.depth);
+            } else {
+                bddContent = bddTemplate(currentDUT.bitwidth);
+            }
+            document.getElementById('bdd-input').value = bddContent;
             updateBddTabState();
         }
 
@@ -2416,10 +2435,36 @@
                 document.getElementById('tb-bdd-llm').textContent = currentBDD.llm.toUpperCase();
                 document.getElementById('tb-module-badge').textContent = currentDUT ? currentDUT.moduleType.toUpperCase() : 'BDD';
 
-                // Auto-fill DUT info
+                // Auto-fill DUT info based on module type
                 if (currentDUT) {
-                    document.getElementById('tb-module-name').value = `${currentDUT.moduleType}_${currentDUT.bitwidth}bit`;
-                    document.getElementById('tb-bitwidth').value = currentDUT.bitwidth + '-bit';
+                    const moduleType = currentDUT.moduleType;
+                    const bitwdithGroup = document.getElementById('tb-bitwidth-group');
+                    const registersGroup = document.getElementById('tb-registers-group');
+                    const pipelineGroup = document.getElementById('tb-pipeline-group');
+
+                    // Reset all fields
+                    if (bitwdithGroup) bitwdithGroup.style.display = 'none';
+                    if (registersGroup) registersGroup.style.display = 'none';
+                    if (pipelineGroup) pipelineGroup.style.display = 'none';
+
+                    if (moduleType === 'cpu') {
+                        // CPU: Pipeline
+                        if (pipelineGroup) pipelineGroup.style.display = 'block';
+                        document.getElementById('tb-pipeline').value = currentDUT.pipelineStages + '-stage';
+                        document.getElementById('tb-module-name').value = `riscv_${currentDUT.pipelineStages}stage`;
+                    } else if (moduleType === 'regfile') {
+                        // RegFile: Bitwidth + Registers
+                        if (bitwdithGroup) bitwdithGroup.style.display = 'block';
+                        if (registersGroup) registersGroup.style.display = 'block';
+                        document.getElementById('tb-bitwidth').value = currentDUT.bitwidth + '-bit';
+                        document.getElementById('tb-registers').value = currentDUT.depth + ' registers';
+                        document.getElementById('tb-module-name').value = `regfile_${currentDUT.bitwidth}bit`;
+                    } else {
+                        // ALU, Counter: Bitwidth
+                        if (bitwdithGroup) bitwdithGroup.style.display = 'block';
+                        document.getElementById('tb-bitwidth').value = currentDUT.bitwidth + '-bit';
+                        document.getElementById('tb-module-name').value = `${moduleType}_${currentDUT.bitwidth}bit`;
+                    }
                 }
             } else {
                 bddStatus.classList.remove('visible');
@@ -2441,8 +2486,12 @@
                 bdd_filepath: currentBDD.filepath,
                 dut_info: currentDUT ? {
                     module_type: currentDUT.moduleType,
-                    module_name: `${currentDUT.moduleType}_${currentDUT.bitwidth}bit`,
-                    bitwidth: currentDUT.bitwidth
+                    module_name: currentDUT.moduleType === 'cpu'
+                        ? `riscv_${currentDUT.pipelineStages}stage`
+                        : `${currentDUT.moduleType}_${currentDUT.bitwidth}bit`,
+                    bitwidth: currentDUT.bitwidth,
+                    depth: currentDUT.depth,
+                    pipeline_stages: currentDUT.pipelineStages
                 } : {}
             };
 
@@ -3054,16 +3103,16 @@
         function checkPassword()
         // 临时使用的门禁密码
         {
-        const PASSWORD = "agra2025"; // ← 你自己改，短期用
+        const PASSWORD = "agra2025";
 
         const input = prompt("🔒 Please enter access password:");
 
         if (input === null) {
-            return; // 用户点了取消
+            return;
         }
 
         if (input === PASSWORD) {
-            enterApp(); // 原有逻辑
+            enterApp();
         } else {
             alert("❌ Incorrect password.");
         }

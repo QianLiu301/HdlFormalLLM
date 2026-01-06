@@ -155,7 +155,7 @@ class CPUGenerator:
             if hasattr(self.llm, '_call_api'):
                 response = self.llm._call_api(
                     prompt,
-                    max_tokens=8000,  # CPU needs more tokens
+                    max_tokens=10000,  # CPU needs more tokens
                     system_prompt="You are an expert CPU architect and Verilog designer. Generate high-quality, synthesizable RTL code for a RISC-V processor."
                 )
             else:
@@ -209,7 +209,7 @@ class CPUGenerator:
 5. **WB (Write Back)**: Write results back to register file
 
 ### Module Interface
-```verilog
+
 module {module_name} (
     input  wire        clk,
     input  wire        rst_n,
@@ -229,7 +229,7 @@ module {module_name} (
     output wire [31:0] debug_pc,
     output wire [31:0] debug_inst
 );
-```
+
 
 ## Supported Instructions (RV32I Subset)
 
@@ -330,6 +330,27 @@ Generate ONLY the Verilog code. No explanations.
 The code should be complete and synthesizable.
 Include all pipeline stages, hazard detection, and forwarding logic.
 Start with `module` and end with `endmodule`.
+
+## IMPORTANT Verilog Syntax Rules (MUST FOLLOW)
+1. Signals assigned in 'always' blocks MUST be declared as 'reg', NOT 'wire'
+2. Signals assigned with 'assign' statements should be 'wire'
+3. Forwarding signals (forward_a, forward_b) set in always blocks MUST be 'reg'
+4. Control signals (stall, flush, branch_taken) set in always blocks MUST be 'reg'
+5. Pipeline registers MUST be 'reg' type
+6. NEVER assign to a 'wire' inside an 'always' block
+
+## Verilog Number Format Rules (MUST FOLLOW)
+- funct3 is 3 bits: use 3'b000, 3'b001, 3'b100, 3'b110, 3'b111 (binary format)
+- funct7 is 7 bits: use 7'b0000000, 7'b0100000 (binary format)
+- opcode is 7 bits: use 7'b0110011, 7'b0010011 (binary format)
+- Do NOT use decimal format like 4'd100 for binary bit patterns
+- WRONG: 4'd100, 4'd110, 4'd111 (these are decimal numbers)
+- CORRECT: 3'b100, 3'b110, 3'b111 (these are 3-bit binary values)
+
+## Signal Width Rules
+- funct3: declare as [2:0], NOT [3:0]
+- funct7: declare as [6:0]
+- opcode: declare as [6:0]
 """
 
         return prompt
@@ -422,7 +443,7 @@ Start with `module` and end with `endmodule`.
         """Save CPU to file"""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{module_name}_{pipeline_stages}stage.v"
+        filename = f"{module_name}_{pipeline_stages}stage_{timestamp}.v"
 
         header = f"""//==============================================================================
 // RISC-V CPU Design - Design Under Test (DUT)

@@ -16,15 +16,13 @@ Quality Metrics:
 4. Corner Case Coverage - edge cases and overflow scenarios
 """
 
-import os
-import re
-import json
 import argparse
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Union, Set
-from enum import Enum
-from datetime import datetime
+import re
 from collections import defaultdict
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 
 
 class NumberFormat(Enum):
@@ -431,6 +429,21 @@ class FeatureParser:
         if bitwidth_match:
             self.bitwidth = int(bitwidth_match.group(1))
 
+        # resolve depth
+        depth = 16  # default value
+        depth_patterns = [
+            r'(\d+)x\d+[-_]?bit',  # "8x32-bit", "32x32bit"
+            r'(\d+)\s*registers',  # "32 registers"
+            r'has\s+(\d+)\s+registers',  # "has 32 registers"
+            r'DEPTH\s*=\s*(\d+)',  # "DEPTH = 32"
+        ]
+        for pattern in depth_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                depth = int(match.group(1))
+                break
+        self.depth = depth
+
         # Detect module type
         self._detect_module_type(content)
         self._detect_number_format(content)
@@ -442,6 +455,7 @@ class FeatureParser:
 
         return {
             'bitwidth': self.bitwidth,
+            'depth': self.depth,
             'module_type': self.module_type,
             'operations': self.operations,
             'scenarios': self.scenarios,
@@ -508,34 +522,54 @@ class FeatureParser:
             self.operations[op_name] = opcode
 
     def _extract_scenarios(self, content: str):
-        """Extract test scenarios from Examples tables"""
-        examples_pattern = r'Examples?:\s*\n((?:\s*\|.*\n)+)'
+        """Extract test scenarios from Examples tables with mode detection"""
 
-        for match in re.finditer(examples_pattern, content, re.MULTILINE):
-            table_text = match.group(1)
-            rows = [row.strip() for row in table_text.strip().split('\n')]
+        # 按 Scenario Outline 分割内容
+        scenario_blocks = re.split(r'@(\w+)\s*\n\s*Scenario Outline:', content)
 
-            if len(rows) < 2:
-                continue
+        # scenario_blocks[0] 是 Feature 头部，之后是 [tag, content, tag, content, ...]
+        for i in range(1, len(scenario_blocks), 2):
+            if i + 1 >= len(scenario_blocks):
+                break
 
-            header = [col.strip() for col in rows[0].split('|') if col.strip()]
+            tag = scenario_blocks[i].lower()  # up_count, down_count, up_down_count
+            block_content = scenario_blocks[i + 1]
 
-            for row in rows[1:]:
-                cols = [col.strip() for col in row.split('|') if col.strip()]
+            # 确定 mode
+            if 'up_down' in tag or 'updown' in tag:
+                mode = '10'
+            elif 'down' in tag:
+                mode = '01'
+            else:  # up 或默认
+                mode = '00'
 
-                if len(cols) != len(header):
+            # 提取这个 block 中的 Examples 表格
+            examples_pattern = r'Examples?:\s*\n((?:\s*\|.*\n)+)'
+            for match in re.finditer(examples_pattern, block_content, re.MULTILINE):
+                table_text = match.group(1)
+                rows = [row.strip() for row in table_text.strip().split('\n')]
+
+                if len(rows) < 2:
                     continue
 
-                scenario = {}
-                for col_name, col_value in zip(header, cols):
-                    parsed_value = self._parse_value(col_value)
-                    if parsed_value is not None:
-                        scenario[col_name.lower()] = parsed_value
-                    else:
-                        scenario[col_name.lower()] = col_value
+                header = [col.strip().lower() for col in rows[0].split('|') if col.strip()]
 
-                if scenario:
-                    self.scenarios.append(scenario)
+                for row in rows[1:]:
+                    cols = [col.strip() for col in row.split('|') if col.strip()]
+
+                    if len(cols) != len(header):
+                        continue
+
+                    scenario = {'mode': mode}  # 添加 mode
+                    for col_name, col_value in zip(header, cols):
+                        parsed_value = self._parse_value(col_value)
+                        if parsed_value is not None:
+                            scenario[col_name] = parsed_value
+                        else:
+                            scenario[col_name] = col_value
+
+                    if scenario:
+                        self.scenarios.append(scenario)
 
     def _parse_value(self, value_str: str) -> Optional[int]:
         """Parse value string to integer"""
@@ -880,9 +914,10 @@ class TestbenchGenerator:
             module_name: str,
             llm_name: str
     ) -> Tuple[str, Dict]:
-        """Generate Counter testbench"""
+        """Generate Counter testbench with proper test cases"""
         bitwidth = spec['bitwidth']
         scenarios = spec['scenarios']
+        max_value = (1 << bitwidth) - 1
 
         analyzer = TestQualityAnalyzer(bitwidth=bitwidth, module_type='counter')
         quality_analysis = analyzer.analyze(scenarios)
@@ -907,13 +942,14 @@ class TestbenchGenerator:
         lines.append(f"    reg rst_n;")
         lines.append(f"    reg enable;")
         lines.append(f"    reg load;")
-        lines.append(f"    reg [1:0] mode;  // 00=hold, 01=up, 10=down, 11=load")
+        lines.append(f"    reg [1:0] mode;  // 00=UP, 01=DOWN, 10=UPDOWN")
         lines.append(f"    reg [WIDTH-1:0] load_value;")
         lines.append(f"    wire [WIDTH-1:0] count;")
         lines.append(f"    wire overflow;")
         lines.append(f"    wire zero;")
         lines.append("")
         lines.append(f"    integer total, passed, failed;")
+        lines.append(f"    integer i;")
         lines.append("")
         lines.append(f"    {module_name} dut (")
         lines.append(f"        .clk(clk),")
@@ -927,33 +963,185 @@ class TestbenchGenerator:
         lines.append(f"        .zero(zero)")
         lines.append(f"    );")
         lines.append("")
+        lines.append(f"    // Clock generation")
         lines.append(f"    initial clk = 0;")
         lines.append(f"    always #5 clk = ~clk;")
         lines.append("")
+        lines.append(f"    // Task: Load initial value")
+        lines.append(f"    task load_counter;")
+        lines.append(f"        input [WIDTH-1:0] value;")
+        lines.append(f"        begin")
+        lines.append(f"            enable = 0;")
+        lines.append(f"            load_value = value;")
+        lines.append(f"            @(negedge clk);")
+        lines.append(f"            load = 1;")
+        lines.append(f"            @(posedge clk);")
+        lines.append(f"            @(negedge clk);")
+        lines.append(f"            load = 0;")
+        lines.append(f"        end")
+        lines.append(f"    endtask")
+        lines.append("")
+        lines.append(f"    // Task: Run counter for N cycles")
+        lines.append(f"    task run_cycles;")
+        lines.append(f"        input integer n;")
+        lines.append(f"        begin")
+        lines.append(f"            @(negedge clk);")
+        lines.append(f"            enable = 1;")
+        lines.append(f"            repeat(n) @(posedge clk);")
+        lines.append(f"            @(negedge clk);")
+        lines.append(f"            enable = 0;")
+        lines.append(f"        end")
+        lines.append(f"    endtask")
+        lines.append("")
         lines.append(f"    initial begin")
+        lines.append(f"        // Initialize")
         lines.append(f"        total = 0; passed = 0; failed = 0;")
         lines.append(f"        rst_n = 0; enable = 0; load = 0; mode = 0; load_value = 0;")
         lines.append(f"        #20 rst_n = 1;")
+        lines.append(f"        #10;")
         lines.append("")
-        lines.append(f"        $display(\"\\nCounter Testbench - {llm_name}\\n\");")
+        lines.append(f"        $display(\"\\n========================================\");")
+        lines.append(f"        $display(\"Counter Testbench - {llm_name}\");")
+        lines.append(f"        $display(\"Configuration: {bitwidth}-bit counter\");")
+        lines.append(f"        $display(\"========================================\\n\");")
         lines.append("")
 
-        # Generate test cases
-        for i, scenario in enumerate(scenarios, 1):
-            mode_val = scenario.get('mode', 1)
-            data_val = scenario.get('data_in', scenario.get('value', 0))
-            expected = scenario.get('expected', scenario.get('count', 0))
+        # Generate test cases based on scenarios
+        test_num = 0
 
-            lines.append(f"        // Test {i}")
-            lines.append(f"        enable = 1;")
-            lines.append(f"        mode = 2'd{mode_val};")
-            lines.append(f"        load_value = {bitwidth}'d{data_val};")
-            lines.append(f"        #10;")
-            lines.append(f"        total = total + 1;")
-            lines.append(f"        $display(\"Test {i}: mode=%d, count=%d\", mode, count);")
+        # Group scenarios by mode
+        up_tests = []
+        down_tests = []
+        updown_tests = []
+
+        for scenario in scenarios:
+            mode_str = str(scenario.get('mode', scenario.get('Mode', '00')))
+
+            test_case = {
+                'initial': scenario.get('initial_value', scenario.get('Initial_Value',
+                           scenario.get('initial',
+                           scenario.get('value', 0)))),
+                'cycles': scenario.get('cycles', scenario.get('Cycles', 1)),
+                'expected': scenario.get('expected_value', scenario.get('Expected_Value',
+                           scenario.get('expected', 0)))
+            }
+
+            if mode_str in ['0', '00', 'UP', 'up']:
+                up_tests.append(test_case)
+            elif mode_str in ['1', '01', 'DOWN', 'down']:
+                down_tests.append(test_case)
+            elif mode_str in ['2', '10', 'UPDOWN', 'updown', 'UP-DOWN', 'up-down']:
+                updown_tests.append(test_case)
+            else:
+                up_tests.append(test_case)
+
+        # Generate UP mode tests
+        if up_tests or not scenarios:
+            lines.append(f"        // ========== UP MODE TESTS (mode=00) ==========")
+            lines.append(f"        $display(\"\\n--- UP Mode Tests ---\\n\");")
+            lines.append(f"        mode = 2'b00;")
             lines.append("")
 
-        lines.append(f"        $display(\"\\nTotal: %0d, Passed: %0d, Failed: %0d\", total, passed, failed);")
+            # Default tests if no scenarios
+            test_cases = up_tests if up_tests else [
+                {'initial': 0, 'cycles': 5, 'expected': 5},
+                {'initial': 100, 'cycles': 10, 'expected': 110},
+                {'initial': max_value - 1, 'cycles': 1, 'expected': max_value},
+                {'initial': max_value, 'cycles': 1, 'expected': 0},
+            ]
+
+            for tc in test_cases:
+                test_num += 1
+                initial = tc.get('initial', tc.get('Initial_Value', tc.get('value', 0)))
+                cycles = tc.get('cycles', tc.get('Cycles', 1))
+                expected = tc.get('expected', tc.get('Expected_Value', (initial + cycles) % (max_value + 1)))
+
+                lines.append(f"        // Test {test_num}: UP mode, initial={initial}, cycles={cycles}")
+                lines.append(f"        load_counter({bitwidth}'d{initial});")
+                lines.append(f"        run_cycles({cycles});")
+                lines.append(f"        total = total + 1;")
+                lines.append(f"        if (count == {bitwidth}'d{expected}) begin")
+                lines.append(f"            passed = passed + 1;")
+                lines.append(
+                    f"            $display(\"✓ Test {test_num}: PASS - UP from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+                lines.append(f"        end else begin")
+                lines.append(f"            failed = failed + 1;")
+                lines.append(
+                    f"            $display(\"✗ Test {test_num}: FAIL - UP from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+                lines.append(f"        end")
+                lines.append("")
+
+        # Generate DOWN mode tests
+        lines.append(f"        // ========== DOWN MODE TESTS (mode=01) ==========")
+        lines.append(f"        $display(\"\\n--- DOWN Mode Tests ---\\n\");")
+        lines.append(f"        mode = 2'b01;")
+        lines.append("")
+
+        test_cases = down_tests if down_tests else [
+            {'initial': 100, 'cycles': 5, 'expected': 95},
+            {'initial': 10, 'cycles': 10, 'expected': 0},
+            {'initial': 1, 'cycles': 1, 'expected': 0},
+            {'initial': 0, 'cycles': 1, 'expected': max_value},
+        ]
+
+        for tc in test_cases:
+            test_num += 1
+            initial = tc.get('initial', tc.get('Initial_Value', tc.get('value', 100)))
+            cycles = tc.get('cycles', tc.get('Cycles', 1))
+            expected = tc.get('expected', tc.get('Expected_Value', (initial - cycles) % (max_value + 1)))
+
+            lines.append(f"        // Test {test_num}: DOWN mode, initial={initial}, cycles={cycles}")
+            lines.append(f"        load_counter({bitwidth}'d{initial});")
+            lines.append(f"        run_cycles({cycles});")
+            lines.append(f"        total = total + 1;")
+            lines.append(f"        if (count == {bitwidth}'d{expected}) begin")
+            lines.append(f"            passed = passed + 1;")
+            lines.append(
+                f"            $display(\"✓ Test {test_num}: PASS - DOWN from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+            lines.append(f"        end else begin")
+            lines.append(f"            failed = failed + 1;")
+            lines.append(
+                f"            $display(\"✗ Test {test_num}: FAIL - DOWN from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+            lines.append(f"        end")
+            lines.append("")
+
+        # Generate UPDOWN mode tests
+        lines.append(f"        // ========== UP-DOWN MODE TESTS (mode=10) ==========")
+        lines.append(f"        $display(\"\\n--- UP-DOWN Mode Tests ---\\n\");")
+        lines.append(f"        mode = 2'b10;")
+        lines.append("")
+
+        test_cases = updown_tests if updown_tests else [
+            {'initial': 0, 'cycles': 5, 'expected': 5},
+            {'initial': 100, 'cycles': 10, 'expected': 110},
+        ]
+
+        for tc in test_cases:
+            test_num += 1
+            initial = tc.get('initial', tc.get('Initial_Value', tc.get('value', 0)))
+            cycles = tc.get('cycles', tc.get('Cycles', 1))
+            expected = tc.get('expected', tc.get('Expected_Value', initial + cycles))
+
+            lines.append(f"        // Test {test_num}: UPDOWN mode, initial={initial}, cycles={cycles}")
+            lines.append(f"        load_counter({bitwidth}'d{initial});")
+            lines.append(f"        run_cycles({cycles});")
+            lines.append(f"        total = total + 1;")
+            lines.append(f"        $display(\"Test {test_num}: UPDOWN from {initial}, {cycles} cycles -> %d\", count);")
+            lines.append("")
+
+        # Summary
+        lines.append(f"        // ========== SUMMARY ==========")
+        lines.append(f"        $display(\"\\n========================================\");")
+        lines.append(f"        $display(\"Test Summary\");")
+        lines.append(f"        $display(\"========================================\");")
+        lines.append(f"        $display(\"Total:  %0d\", total);")
+        lines.append(f"        $display(\"Passed: %0d\", passed);")
+        lines.append(f"        $display(\"Failed: %0d\", failed);")
+        lines.append(f"        if (failed == 0)")
+        lines.append(f"            $display(\"\\n🎉 ALL TESTS PASSED!\");")
+        lines.append(f"        else")
+        lines.append(f"            $display(\"\\n⚠️  SOME TESTS FAILED\");")
+        lines.append(f"        $display(\"========================================\\n\");")
         lines.append(f"        $finish;")
         lines.append(f"    end")
         lines.append("")
