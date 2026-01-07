@@ -155,7 +155,7 @@ class CPUGenerator:
             if hasattr(self.llm, '_call_api'):
                 response = self.llm._call_api(
                     prompt,
-                    max_tokens=10000,  # CPU needs more tokens
+                    max_tokens=20000,  # CPU needs more tokens
                     system_prompt="You are an expert CPU architect and Verilog designer. Generate high-quality, synthesizable RTL code for a RISC-V processor."
                 )
             else:
@@ -172,8 +172,12 @@ class CPUGenerator:
             verilog_code = self._extract_verilog(response)
 
             if not verilog_code:
-                print(f"❌ Could not extract valid Verilog code")
-                print(f"   Raw response preview: {response[:300]}...")
+                #  Check if it's a truncation issue
+                if 'module' in response and 'endmodule' not in response:
+                    print(f"❌ Code was truncated! Response length: {len(response)}")
+                    print(f"   Try increasing max_tokens (current limit may be too low)")
+                else:
+                    print(f"❌ Could not extract valid Verilog code")
                 return None
 
             # Validate
@@ -358,18 +362,25 @@ Start with `module` and end with `endmodule`.
     def _extract_verilog(self, response: str) -> Optional[str]:
         """Extract Verilog code from LLM response"""
 
-        # Remove markdown code blocks
+        # ★★★ 首先尝试提取完整的代码块 ★★★
+
+        # Try ```verilog ... ```
         if '```verilog' in response:
-            # Extract content between ```verilog and ```
             match = re.search(r'```verilog\s*(.*?)```', response, re.DOTALL)
             if match:
-                return match.group(1).strip()
+                code = match.group(1).strip()
+                if 'module' in code and 'endmodule' in code:
+                    return code
 
+        # Try ```v ... ```
         if '```v' in response:
             match = re.search(r'```v\s*(.*?)```', response, re.DOTALL)
             if match:
-                return match.group(1).strip()
+                code = match.group(1).strip()
+                if 'module' in code and 'endmodule' in code:
+                    return code
 
+        # Try ``` ... ```
         if '```' in response:
             match = re.search(r'```\s*(.*?)```', response, re.DOTALL)
             if match:
@@ -377,17 +388,31 @@ Start with `module` and end with `endmodule`.
                 if 'module' in code and 'endmodule' in code:
                     return code
 
+        # ★★★ 处理被截断的情况（没有结尾的 ```）★★★
+        if '```verilog' in response or '```v' in response:
+            # 移除开头的 markdown 标记，提取后面的内容
+            cleaned = re.sub(r'```verilog\s*', '', response)
+            cleaned = re.sub(r'```v\s*', '', cleaned)
+            cleaned = re.sub(r'```\s*', '', cleaned)
+
+            # 检查是否有完整的 module
+            if 'module' in cleaned and 'endmodule' in cleaned:
+                match = re.search(r'(module\s+.*?endmodule)', cleaned, re.DOTALL)
+                if match:
+                    return match.group(1).strip()
+
         # Try to find module directly
         match = re.search(r'(module\s+.*?endmodule)', response, re.DOTALL)
         if match:
             return match.group(1).strip()
 
-        # If response contains module/endmodule, return as-is
+        # If response contains module/endmodule, return cleaned
         if 'module' in response and 'endmodule' in response:
-            # Remove any remaining ``` markers
             cleaned = response.replace('```verilog', '').replace('```v', '').replace('```', '')
             return cleaned.strip()
 
+        # ★★★ 最后：如果代码被截断（有 module 但没有 endmodule），返回 None ★★★
+        # 这样调用方知道生成失败了
         return None
 
     def _validate_verilog(self, verilog_code: str, bitwidth: int, pipeline_stages: int) -> bool:

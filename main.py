@@ -240,7 +240,6 @@ if HAS_SIMULATION_MODULE:
 @app.route('/api/upload-dut', methods=['POST'])
 def upload_dut():
     """Handle Verilog file upload and parsing."""
-
     if not HAS_PARSER:
         return jsonify({'success': False, 'error': 'Verilog parser not available'}), 500
 
@@ -248,7 +247,6 @@ def upload_dut():
         return jsonify({'success': False, 'error': 'No file provided'}), 400
 
     file = request.files['file']
-
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No file selected'}), 400
 
@@ -258,13 +256,45 @@ def upload_dut():
     try:
         file_content = file.read()
         filename = secure_filename(file.filename)
+
+        # ========== 新增：保存文件到指定目录 ==========
+        upload_dir = PROJECT_ROOT / 'generated' / 'uploaded'
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        filepath = upload_dir / filename
+        with open(filepath, 'wb') as f:
+            f.write(file_content)
+
+        # 解析文件 - 保留原有逻辑
         result = verilog_parser.parse_file(filename, file_content)
+
+        # ========== 新增：更新 last_generated_hw 状态 ==========
+        module_name = result.get('module', {}).get('name', 'unknown') if isinstance(result.get('module'),
+                                                                                    dict) else result.get('name',
+                                                                                                          'unknown')
+        detected_module_type = result.get('module_type', 'custom')
+
+        last_generated_hw['filename'] = filename
+        last_generated_hw['filepath'] = str(filepath)
+        last_generated_hw['llm'] = 'uploaded'
+        last_generated_hw['module_type'] = detected_module_type
+
+        # ========== 关键修改：使用 saved_path 而不是 filepath ==========
+        content = file_content.decode('utf-8', errors='replace')
+
+        result['saved_path'] = str(filepath)  # 前端期望的字段名
+        result['filepath'] = str(filepath)  # 保留这个也没关系
+        result['full_content'] = content
+        result['preview'] = content[:1000] + ('...' if len(content) > 1000 else '')
+        result['llm'] = 'uploaded'
+
         return jsonify(result)
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
 
 
 @app.errorhandler(413)

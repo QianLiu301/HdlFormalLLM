@@ -205,7 +205,7 @@ class VerilogParser:
         # Process each module
         parsed_modules = []
         for module_name, module_content in modules:
-            module_info = self._parse_module(module_name, module_content)
+            module_info = self._parse_module(module_name, module_content, filename)
             parsed_modules.append(module_info)
 
         # Save file
@@ -255,24 +255,30 @@ class VerilogParser:
 
         return modules
 
-    def _parse_module(self, module_name: str, module_content: str) -> Dict:
+    def _parse_module(self, module_name: str, module_content: str, filename: str = "") -> Dict:
         """
         Parse a single module to extract detailed information.
         """
         # Extract ports
         ports = self._extract_ports(module_content)
 
-        # Detect bitwidth
-        bitwidth = self._detect_bitwidth(module_content, ports)
-
-        # Detect module type
+        # Detect module type first (needed for other detections)
         detected_type, confidence = self._detect_module_type(module_name, ports, module_content)
+
+        # Detect bitwidth
+        bitwidth = self._detect_bitwidth(module_content, ports, module_name)
+
+        # ★★★ 新增：检测 CPU stages ★★★
+        stages = self._detect_stages(module_name, module_content) if detected_type == 'cpu' else None
+
+        # ★★★ 新增：检测 Register 数量 ★★★
+        num_registers = self._detect_num_registers(module_name, module_content, ports, filename) if detected_type == 'regfile' else None
 
         # Generate BDD suggestion
         bdd_template = self.BDD_TEMPLATES.get(detected_type, self.BDD_TEMPLATES['other'])
         suggested_bdd = bdd_template(bitwidth, ports)
 
-        return {
+        result = {
             'name': module_name,
             'ports': ports,
             'bitwidth': bitwidth,
@@ -280,6 +286,14 @@ class VerilogParser:
             'type_confidence': confidence,
             'suggested_bdd': suggested_bdd
         }
+
+        # add stages and num_registers to return results
+        if stages is not None:
+            result['stages'] = stages
+        if num_registers is not None:
+            result['num_registers'] = num_registers
+
+        return result
 
     def _extract_ports(self, content: str) -> Dict[str, List[Dict]]:
         """
@@ -327,34 +341,188 @@ class VerilogParser:
             'output_names': [p['name'] for p in outputs]
         }
 
-    def _detect_bitwidth(self, content: str, ports: Dict) -> int:
+    def _detect_bitwidth(self, content: str, ports: Dict, module_name: str = "") -> int:
         """
         Detect the primary bitwidth of the module.
+
+        Priority:
+        1. Extract from module name (e.g., counter_8bit -> 8)
+        2. Check key output ports (result, count, data, out, q)
+        3. Check key input ports (a, b, data, din)
+        4. Find most common width >= 4 (filter control signals)
+        5. Default to 8
         """
-        # Check output ports first (usually the main data path)
+        import re
+
+        # ★ Priority 1: Extract from module name ★
+        if module_name:
+            # Match patterns like: counter_8bit, alu_32bit, 16bit_counter
+            patterns = [
+                r'(\d+)\s*bit',  # 8bit, 32bit
+                r'_(\d+)(?:_|$)',  # _32_, _16
+                r'^(\d+)_',  # 16_xxx
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, module_name.lower())
+                if match:
+                    width = int(match.group(1))
+                    if width in [4, 8, 16, 32, 64, 128]:
+                        return width
+
+            # For register files: 32x32 means 32-bit data width
+            regfile_match = re.search(r'\d+x(\d+)', module_name.lower())
+            if regfile_match:
+                width = int(regfile_match.group(1))
+                if width in [8, 16, 32, 64]:
+                    return width
+
+        # ★ Priority 2: Check key output ports ★
+        key_outputs = ['result', 'data', 'out', 'q', 'count', 'dout', 'rdata', 'read_data']
         for port in ports.get('outputs', []):
-            if port['name'].lower() in ['result', 'data', 'out', 'q', 'count', 'dout']:
+            if port['name'].lower() in key_outputs:
                 if port['width'] > 1:
                     return port['width']
 
-        # Check input ports
+        # ★ Priority 3: Check key input ports ★
+        key_inputs = ['a', 'b', 'data', 'in', 'd', 'din', 'wdata', 'write_data', 'load_value']
         for port in ports.get('inputs', []):
-            if port['name'].lower() in ['a', 'b', 'data', 'in', 'd', 'din']:
+            if port['name'].lower() in key_inputs:
                 if port['width'] > 1:
                     return port['width']
 
-        # Find the most common width > 1
+        # ★ Priority 4: Find most common width >= 4 ★
         widths = []
         for port_list in [ports.get('inputs', []), ports.get('outputs', [])]:
             for port in port_list:
-                if port['width'] > 1:
+                if port['width'] >= 4:  # Filter out small control signals
                     widths.append(port['width'])
 
         if widths:
-            # Return most common or largest
             return max(set(widths), key=widths.count)
 
+        # ★ Priority 5: Any width > 1 ★
+        for port_list in [ports.get('outputs', []), ports.get('inputs', [])]:
+            for port in port_list:
+                if port['width'] > 1:
+                    return port['width']
+
         return 8  # Default
+
+    def _detect_stages(self, module_name: str, content: str) -> int:
+        """
+        Detect CPU pipeline stages from module name or content.
+
+        Examples:
+            - riscv_cpu_3stage.v -> 3
+            - cpu_5stage.v -> 5
+            - 内容中有 IF/ID/EX/MEM/WB -> 5
+        """
+        import re
+
+        # ★ Priority 1: From module name ★
+        # Match patterns like: 3stage, 5_stage, 7-stage
+        patterns = [
+            r'(\d+)\s*stage',  # 3stage, 5stage, 5 stage
+            r'(\d+)_stage',  # 3_stage, 5_stage
+            r'(\d+)-stage',  # 3-stage, 5-stage
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, module_name.lower())
+            if match:
+                stages = int(match.group(1))
+                if stages in [3, 5, 7]:  # Common pipeline stages
+                    return stages
+
+        # ★ Priority 2: From content - count pipeline stage registers/signals ★
+        content_lower = content.lower()
+
+        # 5-stage pipeline indicators
+        five_stage_signals = ['if_id', 'id_ex', 'ex_mem', 'mem_wb']
+        if sum(1 for s in five_stage_signals if s in content_lower) >= 3:
+            return 5
+
+        # Check for stage names
+        stage_names = {
+            'fetch': 0, 'if_': 0,
+            'decode': 0, 'id_': 0,
+            'execute': 0, 'ex_': 0,
+            'memory': 0, 'mem_': 0,
+            'writeback': 0, 'wb_': 0
+        }
+
+        for stage in stage_names:
+            if stage in content_lower:
+                stage_names[stage] = 1
+
+        # Count unique stages
+        stage_count = 0
+        if stage_names['fetch'] or stage_names['if_']:
+            stage_count += 1
+        if stage_names['decode'] or stage_names['id_']:
+            stage_count += 1
+        if stage_names['execute'] or stage_names['ex_']:
+            stage_count += 1
+        if stage_names['memory'] or stage_names['mem_']:
+            stage_count += 1
+        if stage_names['writeback'] or stage_names['wb_']:
+            stage_count += 1
+
+        if stage_count >= 4:
+            return 5
+        elif stage_count >= 2:
+            return 3
+
+        return 5  # Default for CPU
+
+    def _detect_num_registers(self, module_name: str, content: str, ports: Dict, filename: str = "") -> int:
+        """
+        Detect number of registers in a register file.
+        """
+        import re
+
+        # ★★★ 同时检查 filename 和 module_name ★★★
+        names_to_check = [filename, module_name]
+
+        for name in names_to_check:
+            if not name:
+                continue
+
+            patterns = [
+                r'_(\d+)x(?:_|\d|$)',  # _8x_, _16x_, _8x_20260107
+                r'(\d+)x\d+',  # 32x32
+                r'_(\d+)(?:regs?|registers?)',  # _32regs
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, name.lower())
+                if match:
+                    num = int(match.group(1))
+                    if num in [4, 8, 16, 32, 64]:
+                        return num
+
+        # Priority 2: From content
+        array_patterns = [
+            r'reg\s*\[\d+:\d+\]\s*\w+\s*\[(?:\d+:)?(\d+)\]',
+            r'reg\s*\[\d+:\d+\]\s*\w+\s*\[(\d+):0\]',
+        ]
+
+        for pattern in array_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                num = int(match.group(1)) + 1
+                if num in [4, 8, 16, 32, 64]:
+                    return num
+
+        # Priority 3: Check address width
+        addr_ports = ['rs1', 'rs2', 'rd', 'raddr', 'waddr', 'read_addr', 'write_addr', 'addr']
+
+        for port in ports.get('inputs', []):
+            if port['name'].lower() in addr_ports:
+                addr_width = port['width']
+                return 2 ** addr_width  # 3-bit addr = 8 regs, 4-bit = 16, 5-bit = 32
+
+        return 32  # Default
 
     def _detect_module_type(self, module_name: str, ports: Dict, content: str) -> Tuple[str, str]:
         """

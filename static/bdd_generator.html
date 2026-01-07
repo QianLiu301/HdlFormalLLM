@@ -860,13 +860,24 @@
                         <div class="detected-info-row">
                             <span class="detected-info-label">Detected Type</span>
                             <span>
-                                    <span class="detected-info-value" id="detected-type">ALU</span>
-                                    <span class="confidence-badge high" id="confidence-badge">High</span>
-                                </span>
+                                <span class="detected-info-value" id="detected-type">ALU</span>
+                                <span class="confidence-badge high" id="confidence-badge">High</span>
+                            </span>
                         </div>
-                        <div class="detected-info-row">
+                        <!-- ★ Bitwidth row (CPU) ★ -->
+                        <div class="detected-info-row" id="detected-bitwidth-row">
                             <span class="detected-info-label">Bitwidth</span>
                             <span class="detected-info-value" id="detected-bitwidth">16-bit</span>
+                        </div>
+                        <!-- ★ Stages row ( CPU ) ★ -->
+                        <div class="detected-info-row" id="detected-stages-row" style="display: none;">
+                            <span class="detected-info-label">Pipeline Stages</span>
+                            <span class="detected-info-value" id="detected-stages">5-stage</span>
+                        </div>
+                        <!-- ★ Registers row (Register File) ★ -->
+                        <div class="detected-info-row" id="detected-registers-row" style="display: none;">
+                            <span class="detected-info-label">Registers</span>
+                            <span class="detected-info-value" id="detected-registers">32 registers</span>
                         </div>
                         <div class="detected-info-row">
                             <span class="detected-info-label">Inputs</span>
@@ -884,7 +895,7 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Module Type</label>
-                                <select id="override-type">
+                                <select id="override-type" onchange="onOverrideTypeChange()">
                                     <option value="alu">ALU - Arithmetic Logic Unit</option>
                                     <option value="counter">Counter - Up/Down Counter</option>
                                     <option value="regfile">Register File</option>
@@ -892,7 +903,8 @@
                                     <option value="other">Other - Custom Module</option>
                                 </select>
                             </div>
-                            <div class="form-group">
+                            <!-- ★ Bitwidth (ALU, Counter, Register, Other) ★ -->
+                            <div class="form-group" id="override-bitwidth-group">
                                 <label>Bitwidth Override</label>
                                 <select id="override-bitwidth">
                                     <option value="auto">Auto-detected</option>
@@ -900,6 +912,27 @@
                                     <option value="16">16-bit</option>
                                     <option value="32">32-bit</option>
                                     <option value="64">64-bit</option>
+                                </select>
+                            </div>
+                            <!-- ★ Stages (CPU) ★ -->
+                            <div class="form-group" id="override-stages-group" style="display: none;">
+                                <label>Pipeline Override</label>
+                                <select id="override-stages">
+                                    <option value="auto">Auto-detected</option>
+                                    <option value="3">3-stage</option>
+                                    <option value="5">5-stage</option>
+                                    <option value="7">7-stage</option>
+                                </select>
+                            </div>
+                            <!-- ★ Registers (Register File) ★ -->
+                            <div class="form-group" id="override-registers-group" style="display: none;">
+                                <label>Registers Override</label>
+                                <select id="override-registers">
+                                    <option value="auto">Auto-detected</option>
+                                    <option value="8">8 registers</option>
+                                    <option value="16">16 registers</option>
+                                    <option value="32">32 registers</option>
+                                    <option value="64">64 registers</option>
                                 </select>
                             </div>
                         </div>
@@ -1693,25 +1726,56 @@
         }
 
         function updateDetectedInfo(module) {
-            document.getElementById('detected-module-name').textContent = module.name;
-            document.getElementById('detected-type').textContent = module.detected_type.toUpperCase();
-            document.getElementById('detected-bitwidth').textContent = module.bitwidth + '-bit';
-            document.getElementById('detected-inputs').textContent =
-                module.ports.input_names.slice(0, 6).join(', ') +
-                (module.ports.input_names.length > 6 ? '...' : '');
-            document.getElementById('detected-outputs').textContent =
-                module.ports.output_names.slice(0, 6).join(', ') +
-                (module.ports.output_names.length > 6 ? '...' : '');
+        // Basic info
+        document.getElementById('detected-module-name').textContent = module.name;
+        document.getElementById('detected-type').textContent = module.detected_type.toUpperCase();
+        document.getElementById('detected-inputs').textContent =
+            module.ports.input_names.slice(0, 6).join(', ') +
+            (module.ports.input_names.length > 6 ? '...' : '');
+        document.getElementById('detected-outputs').textContent =
+            module.ports.output_names.slice(0, 6).join(', ') +
+            (module.ports.output_names.length > 6 ? '...' : '');
 
-            // Update confidence badge
-            const badge = document.getElementById('confidence-badge');
-            badge.textContent = module.type_confidence.charAt(0).toUpperCase() + module.type_confidence.slice(1);
-            badge.className = 'confidence-badge ' + module.type_confidence;
+        // Confidence badge
+        const badge = document.getElementById('confidence-badge');
+        badge.textContent = module.type_confidence.charAt(0).toUpperCase() + module.type_confidence.slice(1);
+        badge.className = 'confidence-badge ' + module.type_confidence;
 
-            // Update override dropdown
-            document.getElementById('override-type').value = module.detected_type;
-            document.getElementById('override-bitwidth').value = 'auto';
+        // Display different fields based on module type
+        const isCPU = module.detected_type === 'cpu';
+        const isRegFile = module.detected_type === 'regfile';
+
+        // Bitwidth row: Hide from CPU
+        document.getElementById('detected-bitwidth-row').style.display = isCPU ? 'none' : '';
+        document.getElementById('detected-bitwidth').textContent = module.bitwidth + '-bit';
+
+        // Stages row: CPU display only
+        document.getElementById('detected-stages-row').style.display = isCPU ? '' : 'none';
+        if (isCPU && module.stages) {
+            document.getElementById('detected-stages').textContent = module.stages + '-stage';
         }
+
+        // Registers row: Only Register File Display
+        document.getElementById('detected-registers-row').style.display = isRegFile ? '' : 'none';
+        if (isRegFile && module.num_registers) {
+            document.getElementById('detected-registers').textContent = module.num_registers + ' registers';
+        }
+
+        // Update override dropdowns
+        document.getElementById('override-type').value = module.detected_type;
+        document.getElementById('override-bitwidth').value = 'auto';
+
+        // Added the new override dropdown list
+        if (document.getElementById('override-stages')) {
+            document.getElementById('override-stages').value = 'auto';
+        }
+        if (document.getElementById('override-registers')) {
+            document.getElementById('override-registers').value = 'auto';
+        }
+
+        // Trigger override type change to update the display
+        onOverrideTypeChange();
+    }
 
         function removeUploadedFile() {
             uploadedFileData = null;
@@ -1722,44 +1786,72 @@
         }
 
         function confirmUpload() {
-            if (!uploadedFileData || parsedModules.length === 0) {
-                showError('upload', 'No file uploaded');
-                return;
-            }
-
-            const selectedModule = parsedModules[selectedModuleIndex];
-            const overrideType = document.getElementById('override-type').value;
-            const overrideBitwidth = document.getElementById('override-bitwidth').value;
-
-            // Create DUT info
-            const moduleNames = { 'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'CPU', 'other': 'Custom' };
-
-            currentDUT = {
-                moduleType: overrideType,
-                moduleName: moduleNames[overrideType] || overrideType,
-                bitwidth: overrideBitwidth === 'auto' ? selectedModule.bitwidth : parseInt(overrideBitwidth),
-                filename: uploadedFileData.filename,
-                savedPath: uploadedFileData.saved_path,
-                source: 'upload',
-                moduleName_verilog: selectedModule.name,
-                ports: selectedModule.ports
-            };
-
-            currentHwFilename = uploadedFileData.filename;
-
-            // Generate BDD requirements
-            const bddTemplate = BDD_TEMPLATES[overrideType] || BDD_TEMPLATES.other;
-            const bddRequirements = selectedModule.suggested_bdd || bddTemplate(currentDUT.bitwidth);
-            document.getElementById('bdd-input').value = bddRequirements;
-
-            // Update UI
-            updateBddTabState();
-            updateStepStatus(1, 'completed');
-            updatePipelineIndicator(1, 'completed');
-            updatePipelineIndicator(2, 'active');
-
-            showSuccess('upload', '✅ DUT configured! Proceed to Step 2 to generate tests.');
+        if (!uploadedFileData || parsedModules.length === 0) {
+            showError('upload', 'No file uploaded');
+            return;
         }
+
+        const selectedModule = parsedModules[selectedModuleIndex];
+        const overrideType = document.getElementById('override-type').value;
+        const overrideBitwidth = document.getElementById('override-bitwidth').value;
+        const overrideStages = document.getElementById('override-stages')?.value || 'auto';
+        const overrideRegisters = document.getElementById('override-registers')?.value || 'auto';
+
+        // ========== 调试：打印所有值 ==========
+        console.log('=== DEBUG confirmUpload ===');
+        console.log('overrideType:', overrideType);
+        console.log('overrideBitwidth:', overrideBitwidth);
+        console.log('overrideStages:', overrideStages);
+        console.log('overrideRegisters:', overrideRegisters);
+        console.log('selectedModule:', selectedModule);
+        console.log('selectedModule.bitwidth:', selectedModule.bitwidth);
+        console.log('selectedModule.num_registers:', selectedModule.num_registers);
+        // ========== 调试结束 ==========
+
+        // Create DUT info
+        const moduleNames = { 'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'CPU', 'other': 'Custom' };
+
+        // 解析实际的值
+        const finalBitwidth = overrideBitwidth === 'auto' ? selectedModule.bitwidth : parseInt(overrideBitwidth);
+        const finalStages = overrideStages === 'auto' ? (selectedModule.stages || 5) : parseInt(overrideStages);
+        const finalNumRegisters = overrideRegisters === 'auto' ? (selectedModule.num_registers || 32) : parseInt(overrideRegisters);
+
+        // Create a DUT object containing all configurations
+        currentDUT = {
+            moduleType: overrideType,
+            moduleName: moduleNames[overrideType] || overrideType,
+            bitwidth: finalBitwidth,
+            stages: finalStages,
+            numRegisters: finalNumRegisters,
+            filename: uploadedFileData.filename || uploadedFileData.saved_path.split('/').pop(),
+            savedPath: uploadedFileData.saved_path,
+            source: 'upload',
+            moduleName_verilog: selectedModule.name,
+            ports: selectedModule.ports
+        };
+
+        currentHwFilename = uploadedFileData.filename || uploadedFileData.saved_path.split('/').pop();
+
+        // Generate BDD requirements - 根据模块类型传递正确参数
+        const bddTemplate = BDD_TEMPLATES[overrideType] || BDD_TEMPLATES.other;
+        let bddRequirements;
+        if (overrideType === 'cpu') {
+            bddRequirements = bddTemplate(finalStages);
+        } else if (overrideType === 'regfile') {
+            bddRequirements = bddTemplate(finalBitwidth, finalNumRegisters);
+        } else {
+            bddRequirements = bddTemplate(finalBitwidth);
+        }
+        document.getElementById('bdd-input').value = bddRequirements;
+
+        // Update UI
+        updateBddTabState();
+        updateStepStatus(1, 'completed');
+        updatePipelineIndicator(1, 'completed');
+        updatePipelineIndicator(2, 'active');
+
+        showSuccess('upload', '✅ DUT configured! Proceed to Step 2 to generate tests.');
+    }
 
         // ============================================================
         // Module Type Change (Generate mode)
@@ -1769,6 +1861,25 @@
             document.getElementById('hw-depth-group').style.display = moduleType === 'regfile' ? 'block' : 'none';
             document.getElementById('hw-pipeline-group').style.display = moduleType === 'cpu' ? 'block' : 'none';
             document.getElementById('hw-bitwidth-group').style.display = moduleType === 'cpu' ? 'none' : 'block';
+        }
+
+        // ============================================================
+        // Upload Mode - Override Type Change
+        // ============================================================
+        function onOverrideTypeChange() {
+            const moduleType = document.getElementById('override-type').value;
+
+            // Bitwidth: Displays ALU, Counter, Register, and Other; hides CPU.
+            document.getElementById('override-bitwidth-group').style.display =
+                moduleType === 'cpu' ? 'none' : 'block';
+
+            // Stages: Display only for CPU
+            document.getElementById('override-stages-group').style.display =
+                moduleType === 'cpu' ? 'block' : 'none';
+
+            // Registers: Display only for Register File
+            document.getElementById('override-registers-group').style.display =
+                moduleType === 'regfile' ? 'block' : 'none';
         }
 
         // ============================================================
