@@ -757,6 +757,31 @@ class TestbenchGenerator:
                 traceback.print_exc()
             return {'success': False, 'error': str(e)}
 
+    def _format_verilog_value(self, value, bitwidth: int) -> str:
+        """
+        Format a value as a valid Verilog constant.
+        Handles negative numbers correctly: -16'd100 instead of 16'd-100
+
+        Args:
+            value: The value to format (int or str)
+            bitwidth: The bit width for the constant
+
+        Returns:
+            Properly formatted Verilog constant string
+        """
+        # Convert string to int if needed
+        if isinstance(value, str):
+            try:
+                value = int(value)
+            except ValueError:
+                return f"{bitwidth}'d0"
+
+        # Handle negative numbers correctly
+        if value < 0:
+            return f"-{bitwidth}'d{abs(value)}"
+        else:
+            return f"{bitwidth}'d{value}"
+
     def _generate_testbench_content(
             self,
             spec: Dict,
@@ -870,19 +895,24 @@ class TestbenchGenerator:
 
             op_str = f"{op:04b}" if isinstance(op, int) else str(op).zfill(4)
 
+            # Format values correctly (handles negative numbers)
+            a_str = self._format_verilog_value(a_val, bitwidth)
+            b_str = self._format_verilog_value(b_val, bitwidth)
+            exp_str = self._format_verilog_value(expected, bitwidth)
+
             lines.append(f"        // Test {i}")
-            lines.append(f"        a = {bitwidth}'d{a_val};")
-            lines.append(f"        b = {bitwidth}'d{b_val};")
+            lines.append(f"        a = {a_str};")
+            lines.append(f"        b = {b_str};")
             lines.append(f"        opcode = 4'b{op_str};")
             lines.append(f"        #10;")
             lines.append(f"        total = total + 1;")
-            lines.append(f"        if (result == {bitwidth}'d{expected}) begin")
+            lines.append(f"        if (result == {exp_str}) begin")
             lines.append(f"            passed = passed + 1;")
             lines.append(f"            $display(\"✓ Test {i}: PASS\");")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
             lines.append(
-                f"            $display(\"✗ Test {i}: FAIL - Expected %d, Got %d\", {bitwidth}'d{expected}, result);")
+                f"            $display(\"✗ Test {i}: FAIL - Expected %d, Got %d\", {exp_str}, result);")
             lines.append(f"        end")
             lines.append("")
 
@@ -1056,11 +1086,15 @@ class TestbenchGenerator:
                 cycles = tc.get('cycles', tc.get('Cycles', 1))
                 expected = tc.get('expected', tc.get('Expected_Value', (initial + cycles) % (max_value + 1)))
 
+                # Format values correctly
+                initial_str = self._format_verilog_value(initial, bitwidth)
+                expected_str = self._format_verilog_value(expected, bitwidth)
+
                 lines.append(f"        // Test {test_num}: UP mode, initial={initial}, cycles={cycles}")
-                lines.append(f"        load_counter({bitwidth}'d{initial});")
+                lines.append(f"        load_counter({initial_str});")
                 lines.append(f"        run_cycles({cycles});")
                 lines.append(f"        total = total + 1;")
-                lines.append(f"        if (count == {bitwidth}'d{expected}) begin")
+                lines.append(f"        if (count == {expected_str}) begin")
                 lines.append(f"            passed = passed + 1;")
                 lines.append(
                     f"            $display(\"✓ Test {test_num}: PASS - UP from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
@@ -1090,11 +1124,15 @@ class TestbenchGenerator:
             cycles = tc.get('cycles', tc.get('Cycles', 1))
             expected = tc.get('expected', tc.get('Expected_Value', (initial - cycles) % (max_value + 1)))
 
+            # Format values correctly
+            initial_str = self._format_verilog_value(initial, bitwidth)
+            expected_str = self._format_verilog_value(expected, bitwidth)
+
             lines.append(f"        // Test {test_num}: DOWN mode, initial={initial}, cycles={cycles}")
-            lines.append(f"        load_counter({bitwidth}'d{initial});")
+            lines.append(f"        load_counter({initial_str});")
             lines.append(f"        run_cycles({cycles});")
             lines.append(f"        total = total + 1;")
-            lines.append(f"        if (count == {bitwidth}'d{expected}) begin")
+            lines.append(f"        if (count == {expected_str}) begin")
             lines.append(f"            passed = passed + 1;")
             lines.append(
                 f"            $display(\"✓ Test {test_num}: PASS - DOWN from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
@@ -1122,8 +1160,11 @@ class TestbenchGenerator:
             cycles = tc.get('cycles', tc.get('Cycles', 1))
             expected = tc.get('expected', tc.get('Expected_Value', initial + cycles))
 
+            # Format values correctly
+            initial_str = self._format_verilog_value(initial, bitwidth)
+
             lines.append(f"        // Test {test_num}: UPDOWN mode, initial={initial}, cycles={cycles}")
-            lines.append(f"        load_counter({bitwidth}'d{initial});")
+            lines.append(f"        load_counter({initial_str});")
             lines.append(f"        run_cycles({cycles});")
             lines.append(f"        total = total + 1;")
             lines.append(f"        $display(\"Test {test_num}: UPDOWN from {initial}, {cycles} cycles -> %d\", count);")
@@ -1231,19 +1272,22 @@ class TestbenchGenerator:
             reg_addr = i % (depth - 1) + 1  # Avoid register 0 (always 0)
             test_data = (i * 100) % (1 << bitwidth)  # Keep within bitwidth
 
+            # Format values correctly
+            data_str = self._format_verilog_value(test_data, bitwidth)
+
             lines.append(f"        // Test {i}: Write and Read back")
-            lines.append(f"        wen = 1; waddr = {addr_width}'d{reg_addr}; wdata = {bitwidth}'d{test_data};")
+            lines.append(f"        wen = 1; waddr = {addr_width}'d{reg_addr}; wdata = {data_str};")
             lines.append(f"        #10;")
             lines.append(f"        wen = 0; raddr1 = {addr_width}'d{reg_addr};")
             lines.append(f"        #10;")
             lines.append(f"        total = total + 1;")
-            lines.append(f"        if (rdata1 == {bitwidth}'d{test_data}) begin")
+            lines.append(f"        if (rdata1 == {data_str}) begin")
             lines.append(f"            passed = passed + 1;")
             lines.append(f"            $display(\"✓ Test {i}: PASS - R%0d = %0d\", {addr_width}'d{reg_addr}, rdata1);")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
             lines.append(
-                f"            $display(\"✗ Test {i}: FAIL - R%0d expected %0d, got %0d\", {addr_width}'d{reg_addr}, {bitwidth}'d{test_data}, rdata1);")
+                f"            $display(\"✗ Test {i}: FAIL - R%0d expected %0d, got %0d\", {addr_width}'d{reg_addr}, {data_str}, rdata1);")
             lines.append(f"        end")
             lines.append("")
 
