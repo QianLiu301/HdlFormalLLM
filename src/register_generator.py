@@ -151,10 +151,14 @@ class RegFileGenerator:
         print(f"\n🤖 Calling {self.llm_provider.upper()} API...")
 
         try:
+            # 🔧 根据位宽和深度动态计算 max_tokens
+            base_tokens = 4000 + (bitwidth // 16) * 500 + depth * 50
+            max_tokens = min(base_tokens, 10000)
+
             if hasattr(self.llm, '_call_api'):
                 response = self.llm._call_api(
                     prompt,
-                    max_tokens=3000,
+                    max_tokens=max_tokens,
                     system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code."
                 )
             else:
@@ -169,6 +173,18 @@ class RegFileGenerator:
 
             # Extract Verilog code
             verilog_code = self._extract_verilog(response)
+
+            # 🔧 新增：截断检测和自动重试
+            if not verilog_code and 'module' in response and 'endmodule' not in response:
+                print(f"⚠️ Code appears truncated! Retrying with more tokens...")
+                retry_tokens = min(max_tokens * 2, 16000)
+                response = self.llm._call_api(
+                    prompt,
+                    max_tokens=retry_tokens,
+                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code."
+                )
+                if response:
+                    verilog_code = self._extract_verilog(response)
 
             if not verilog_code:
                 print(f"❌ Could not extract valid Verilog code")
@@ -285,7 +301,7 @@ Start with `module` and end with `endmodule`.
         return prompt
 
     def _extract_verilog(self, response: str) -> Optional[str]:
-        """Extract Verilog code from LLM response"""
+        """Extract Verilog code from LLM response (with truncation handling)"""
 
         patterns = [
             r'```verilog\n(.*?)```',
@@ -303,6 +319,23 @@ Start with `module` and end with `endmodule`.
 
         if 'module' in response and 'endmodule' in response:
             return response.strip()
+
+        # 🔧 新增：处理截断情况
+        if 'module' in response and 'endmodule' not in response:
+            print(f"⚠️ Verilog code truncated, attempting force complete...")
+            code = response.strip()
+            if code.endswith('```'):
+                code = code[:-3].strip()
+
+            begin_count = code.count('begin')
+            end_count = len(re.findall(r'\bend\b(?!\w)', code))
+            while end_count < begin_count:
+                code += '\n    end'
+                end_count += 1
+
+            code += '\n\nendmodule'
+            print(f"   ✅ Force completed")
+            return code
 
         return None
 
