@@ -50,6 +50,7 @@ env/
 output/bdd/
 output/
 output/dut/
+output/dut/uploaded
 
 # ============================================
 # OS
