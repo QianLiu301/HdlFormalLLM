@@ -224,7 +224,7 @@ module {module_name} #(
     input  wire [WIDTH-1:0] load_value, // Preset value to load
     input  wire [1:0]       mode,       // Counter mode
     output reg  [WIDTH-1:0] count,      // Current count value
-    output wire             overflow,   // Overflow flag
+    output reg              overflow,   // Overflow flag
     output wire             zero        // Zero flag
 );
 ```
@@ -252,6 +252,22 @@ module {module_name} #(
 ```
 count: 0xFD -> 0xFE -> 0xFF -> 0x00 (overflow=1) -> 0x01
 ```
+### CRITICAL Verilog Rules (MUST follow)
+1. Signals assigned inside `always` blocks MUST be declared as `reg`, not `wire`
+2. Use blocking assignment (=) in combinational always @(*) blocks
+3. Use non-blocking assignment (<=) in sequential always @(posedge clk) blocks
+4. The `direction` register should ONLY be updated in the sequential always block
+5. Ensure all cases in combinational logic have default values to avoid latches
+6. Do NOT mix blocking and non-blocking assignments for the same signal
+7. NEVER use `assign` for `reg` signals - `assign` is ONLY for `wire` types
+8. Output ports declared as `reg` should be assigned directly in the always block, no extra `assign` needed
+
+### Required Implementation for zero flag
+The `zero` flag MUST be implemented using assign statement (NOT inside always block):
+```verilog
+assign zero = (count == 0);
+```
+Do NOT put zero assignment inside any always block.
 
 ## Output Format
 Generate ONLY the Verilog code. No explanations.
