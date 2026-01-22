@@ -281,11 +281,13 @@ class ALUGenerator:
                 print(f"❌ Failed to extract Verilog code from response")
                 return None
 
+            # 修复常见语法错误
+            verilog_code = self._fix_verilog_syntax(verilog_code)
+
             # Force correct module name (LLM may ignore the prompt)
             verilog_code = self._fix_module_name(verilog_code, module_name)
 
             print(f"✅ Verilog code extracted ({len(verilog_code.splitlines())} lines)")
-
 
 
             # Validate
@@ -463,6 +465,73 @@ Start with `module` and end with `endmodule`.
             return code
 
         return None
+
+    def _fix_verilog_syntax(self, verilog_code: str) -> str:
+        """Fix common Verilog syntax errors from LLM generation"""
+
+        # 移除 markdown 代码块标记
+        verilog_code = re.sub(r'```verilog\s*', '', verilog_code)
+        verilog_code = re.sub(r'```v\s*', '', verilog_code)
+        verilog_code = re.sub(r'```\s*', '', verilog_code)
+
+        # 修复 case 分支缺少 begin/end 的问题
+        # 匹配: 4'b0000: // comment 后面跟着多行语句（没有 begin）
+
+        lines = verilog_code.split('\n')
+        fixed_lines = []
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            # 检测 case 分支行（如 4'b0000: 或 default:）
+            case_match = re.match(r"(\s*)(4'b[01]+|[0-9]+'[bhd][0-9a-fA-F]+|default)\s*:\s*(//.*)?$", line)
+
+            if case_match:
+                indent = case_match.group(1)
+                case_label = case_match.group(2)
+                comment = case_match.group(3) or ''
+
+                # 查看下一行
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+
+                    # 如果下一行不是 begin，检查是否需要添加
+                    if not next_line.startswith('begin'):
+                        # 收集这个分支的所有行
+                        branch_lines = []
+                        j = i + 1
+                        while j < len(lines):
+                            check = lines[j].strip()
+                            # 遇到下一个分支或 endcase 就停止
+                            if (re.match(r"(4'b[01]+|[0-9]+'[bhd][0-9a-fA-F]+|default)\s*:", check) or
+                                    check == 'endcase' or check.startswith('endcase')):
+                                break
+                            if check:  # 非空行
+                                branch_lines.append(lines[j])
+                            j += 1
+
+                        # 如果有多行语句，添加 begin/end
+                        if len(branch_lines) > 1:
+                            fixed_lines.append(f"{indent}{case_label}: begin {comment}")
+                            for bl in branch_lines:
+                                fixed_lines.append(bl)
+                            fixed_lines.append(f"{indent}end")
+                            i = j
+                            continue
+                        elif len(branch_lines) == 1:
+                            # 单行可以不需要 begin/end，但为了安全还是加上
+                            fixed_lines.append(f"{indent}{case_label}: begin {comment}")
+                            fixed_lines.append(branch_lines[0])
+                            fixed_lines.append(f"{indent}end")
+                            i = j
+                            continue
+
+            fixed_lines.append(line)
+            i += 1
+
+        return '\n'.join(fixed_lines)
 
     def _fix_module_name(self, verilog_code: str, expected_name: str) -> str:
         """
