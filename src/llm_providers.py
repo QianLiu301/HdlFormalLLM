@@ -161,7 +161,9 @@ class GeminiProvider(LLMProvider):
         # 如果 google-genai 可用,使用新的 SDK
         if GENAI_AVAILABLE and False:
             # 使用新的模型名称和 SDK
-            self.models_to_try = ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"]
+            self.models_to_try = [ "gemini-2.0-flash-exp",  # Best for code
+                                   "gemini-1.5-pro-latest",
+                                   "gemini-1.5-flash-latest"]
             self.client = genai.Client(api_key=self.api_key)
             self.use_sdk = True
             self.max_retries = 3
@@ -175,7 +177,7 @@ class GeminiProvider(LLMProvider):
         # 🔧 保存最近的 prompt 用于 fallback 解析
         self._last_prompt = ""
 
-    def _call_api_sdk(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
+    def _call_api_sdk(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
         """使用新的 google-genai SDK 调用 API,包含重试和模型降级"""
         self._last_prompt = prompt  # 🔧 保存 prompt
         last_error = None
@@ -186,6 +188,10 @@ class GeminiProvider(LLMProvider):
                     response = self.client.models.generate_content(
                         model=model_name,
                         contents=prompt,
+                        config={                          # ← 添加这个
+                            "max_output_tokens": max_tokens,
+                            "temperature": 0.7,
+                        }
                     )
                     return response.text
 
@@ -210,31 +216,35 @@ class GeminiProvider(LLMProvider):
         print(f"⚠️  Gemini API failed after all attempts: {last_error}")
         return self._fallback_description(prompt)
 
-    def _call_api_rest(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
-        """旧的 REST API 调用方式(作为备用)"""
-        self._last_prompt = prompt  # 🔧 保存 prompt
-        # 改回 v1beta
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+    def _call_api_rest(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
+        # 修正模型名称 (改为稳定版)
+        model_name = self.model if "gemini" in self.model else "gemini-2.0-flash-exp"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
 
+        # 正确构建 payload，加入 system_instruction
         payload = {
-            "contents": [{
-                "parts": [{
-                    "text": prompt
-                }]
-            }],
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "maxOutputTokens": max_tokens,
-                "temperature": 0.7,
+                "maxOutputTokens": max_tokens,  # 调大 token 限制
+                "temperature": 0.4, # 代码生成建议调低随机性
+                "stopSequences": []
             }
         }
 
+        # 如果有 system_prompt，按照 Gemini API 规范添加
+        if system_prompt:
+            payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
         try:
-            # 🆕 添加代理支持
             proxies = self._get_proxies()
-            response = requests.post(url, json=payload, timeout=30, proxies=proxies)
+            response = requests.post(url, json=payload, timeout=60, proxies=proxies)
             response.raise_for_status()
             result = response.json()
-            return result['candidates'][0]['content']['parts'][0]['text'].strip()
+
+            # 增加安全性检查，防止 index error
+            if 'candidates' in result and result['candidates'][0]['content']['parts']:
+                return result['candidates'][0]['content']['parts'][0]['text'].strip()
+            return "Error: No content generated."
         except Exception as e:
             print(f"⚠️  Gemini REST API request failed: {e}")
             return self._fallback_description(prompt)
@@ -320,7 +330,7 @@ class GeminiProvider(LLMProvider):
             if result:
                 yield result
 
-    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
         """统一的 API 调用接口"""
         if self.use_sdk:
             return self._call_api_sdk(prompt, max_tokens, system_prompt)

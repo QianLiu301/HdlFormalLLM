@@ -329,6 +329,19 @@ class ALUGenerator:
 
         prompt = f"""Generate a high-quality, synthesizable Verilog RTL design for a {bitwidth}-bit ALU.
 
+        CRITICAL OUTPUT RULES:
+        1. Output ONLY Verilog code - NO markdown blocks, NO ```verilog
+        2. Keep comments MINIMAL - only short inline comments
+        3. Do NOT include file headers or documentation blocks (no /** */)
+        4. Start DIRECTLY with: module {module_name} (
+        5. Be CONCISE - no verbose explanations in comments
+        6. You MUST generate the ENTIRE module from start to finish
+        7. Include 'endmodule' at the end
+        8. Do NOT truncate or stop early
+        9. The code must be syntactically complete and compilable
+        10. Generate ALL combinational and sequential logic blocks fully
+        Remember: Generate the COMPLETE module with no truncation.
+
 REQUIREMENTS:
 
 1. Module Interface:
