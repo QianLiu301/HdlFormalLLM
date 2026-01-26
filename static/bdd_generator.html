@@ -1403,12 +1403,20 @@
 
                 <div class="action-buttons">
                     <button class="btn btn-secondary btn-sm" id="sim-download-vcd" onclick="downloadSimVcd()"
-                            style="display: none;">📥 Download VCD
+                            style="display: none;">📊 Download VCD (Waveform)
                     </button>
                     <button class="btn btn-secondary btn-sm" id="sim-download-log" onclick="downloadSimLog()">📥
                         Download Log
                     </button>
                     <button class="btn btn-secondary btn-sm" onclick="resetSimulation()">🔄 Reset</button>
+                </div>
+
+                <!-- Waveform tip -->
+                <div id="vcd-tip" style="display: none; margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px;">
+                    <strong>💡 How to view waveform:</strong><br>
+                    1. Download the .vcd file above<br>
+                    2. Open with <a href="https://gtkwave.sourceforge.net/" target="_blank" style="color: var(--primary);">GTKWave</a> (free tool)<br>
+                    3. Or run: <code style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;">gtkwave filename.vcd</code>
                 </div>
             </div>
 
@@ -1445,7 +1453,9 @@
                 <div class="preview-box" id="sim-batch-details" style="min-height: 100px; max-height: 200px;"></div>
 
                 <div class="action-buttons">
-                    <button class="btn btn-secondary btn-sm" onclick="showSimComparisonModal()">📊 View Comparison
+                    <button class="btn btn-secondary btn-sm" onclick="showSimComparisonModal()">📊 View Comparison</button>
+                    <button class="btn btn-secondary btn-sm" id="batch-download-vcd" onclick="downloadBatchVcd()"
+                            style="display: none;">📦 Download All VCDs (.zip)
                     </button>
                     <button class="btn btn-secondary btn-sm" onclick="resetBatchSimulation()">🔄 Reset</button>
                 </div>
@@ -2957,8 +2967,13 @@
             document.getElementById('sim-log-preview').textContent = data.log_preview || data.full_log || 'No log available';
 
             // VCD download button
+            // VCD download button and tip
             if (data.vcd_file) {
-                document.getElementById('sim-download-vcd').style.display = 'flex';
+                document.getElementById('sim-download-vcd').style.display = 'inline-block';
+                document.getElementById('vcd-tip').style.display = 'block';
+            } else {
+                document.getElementById('sim-download-vcd').style.display = 'none';
+                document.getElementById('vcd-tip').style.display = 'none';
             }
 
             // Waveform preview
@@ -3159,6 +3174,8 @@
 
             document.getElementById('sim-batch-details').textContent = details;
             document.getElementById('sim-batch-result').classList.add('visible');
+            // Show batch VCD download button
+            document.getElementById('batch-download-vcd').style.display = 'inline-block';
         }
 
         function setSimLoading(loading) {
@@ -3179,7 +3196,9 @@
 
         function downloadSimVcd() {
             if (currentSimResult?.vcd_file) {
-                window.location.href = `/api/download-vcd/${encodeURIComponent(currentSimResult.vcd_file)}`;
+                // Replace backslashes with forward slashes for URL
+                const vcdPath = currentSimResult.vcd_file.replace(/\\/g, '/');
+                window.location.href = `/api/download-vcd/${vcdPath}`;
             }
         }
 
@@ -3189,16 +3208,23 @@
             }
         }
 
-        function resetSimulation() {
-            document.getElementById('sim-result').classList.remove('visible');
-            currentSimResult = null;
-            updateStepStatus(4, 'pending');
+        function downloadBatchVcd() {
+            window.location.href = '/api/download-all-waveforms';
         }
 
+        function resetSimulation() {
+        document.getElementById('sim-result').classList.remove('visible');
+        document.getElementById('sim-download-vcd').style.display = 'none';
+        document.getElementById('vcd-tip').style.display = 'none';
+        currentSimResult = null;
+        updateStepStatus(4, 'pending');
+    }
+
         function resetBatchSimulation() {
-            document.getElementById('sim-batch-result').classList.remove('visible');
-            updateStepStatus(4, 'pending');
-        }
+        document.getElementById('sim-batch-result').classList.remove('visible');
+        document.getElementById('batch-download-vcd').style.display = 'none';
+        updateStepStatus(4, 'pending');
+    }
 
         function downloadAllSimFiles() {
             // Download testbench zip (reuse existing function)

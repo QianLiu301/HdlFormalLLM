@@ -1393,17 +1393,87 @@ def run_simulation_batch():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# @app.route('/api/download-vcd/<path:filepath>')
+# def download_vcd(filepath):
+#     """Download VCD file"""
+#     file_path = PROJECT_ROOT / filepath
+#     if not file_path.exists():
+#         return jsonify({'error': 'File not found'}), 404
+#
+#     return send_from_directory(
+#         str(file_path.parent.absolute()),
+#         file_path.name,
+#         as_attachment=True
+#     )
 @app.route('/api/download-vcd/<path:filepath>')
 def download_vcd(filepath):
     """Download VCD file"""
+    # Fix Windows path separators
+    filepath = filepath.replace('\\', '/')
+
     file_path = PROJECT_ROOT / filepath
+
     if not file_path.exists():
-        return jsonify({'error': 'File not found'}), 404
+        return jsonify({'error': f'File not found: {filepath}'}), 404
 
     return send_from_directory(
         str(file_path.parent.absolute()),
         file_path.name,
-        as_attachment=True
+        as_attachment=True,
+        mimetype='application/x-vcd'  # VCD mimetype for GTKWave association
+    )
+
+@app.route('/api/download-waveforms/<llm_name>')
+def download_waveforms_batch(llm_name):
+    """Download all VCD files for an LLM as a zip"""
+    waveform_dir = PROJECT_ROOT / 'output' / 'waveform' / llm_name
+
+    if not waveform_dir.exists():
+        return jsonify({'error': 'No waveform directory found'}), 404
+
+    vcd_files = list(waveform_dir.glob('*.vcd'))
+    if not vcd_files:
+        return jsonify({'error': 'No VCD files found'}), 404
+
+    # Create zip in memory
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for vcd_file in vcd_files:
+            zf.write(vcd_file, vcd_file.name)
+
+    memory_file.seek(0)
+
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f'waveforms_{llm_name}.zip'
+    )
+
+
+@app.route('/api/download-all-waveforms')
+def download_all_waveforms():
+    """Download all VCD files from all LLMs as a zip"""
+    waveform_dir = PROJECT_ROOT / 'output' / 'waveform'
+
+    if not waveform_dir.exists():
+        return jsonify({'error': 'No waveform directory found'}), 404
+
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for llm_dir in waveform_dir.iterdir():
+            if llm_dir.is_dir():
+                for vcd_file in llm_dir.glob('*.vcd'):
+                    # Store as llm_name/filename.vcd
+                    zf.write(vcd_file, f'{llm_dir.name}/{vcd_file.name}')
+
+    memory_file.seek(0)
+
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name='waveforms_all.zip'
     )
 
 

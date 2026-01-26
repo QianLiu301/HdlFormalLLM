@@ -85,6 +85,12 @@ class WebSimulationRunner:
         results_dir = self.project_root / 'output' / 'results'
         results_dir.mkdir(parents=True, exist_ok=True)
 
+        # Setup waveform directory
+        # # Extract LLM name from testbench path (e.g., output/testbench/groq/xxx_tb.v)
+        llm_name = tb_path.parent.name if tb_path.parent.name != 'testbench' else 'default'
+        waveform_dir = self.project_root / 'output' / 'waveform' / llm_name
+        waveform_dir.mkdir(parents=True, exist_ok=True)
+
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         vvp_file = results_dir / f'{tb_path.stem}_{timestamp}.vvp'
         log_file = results_dir / f'{tb_path.stem}_{timestamp}.log'
@@ -175,10 +181,21 @@ class WebSimulationRunner:
                 vcd_files = list(results_dir.glob('*.vcd'))
                 if vcd_files:
                     latest_vcd = max(vcd_files, key=lambda x: x.stat().st_mtime)
-                    result['vcd_file'] = str(latest_vcd.relative_to(self.project_root))
+                    result['vcd_file'] = str(latest_vcd.relative_to(self.project_root)).replace('\\', '/')
 
                     # Parse VCD for waveform data
                     result['waveform_data'] = self._parse_vcd_simple(latest_vcd)
+                    # Move VCD to waveform directory
+                    try:
+                        llm_name = tb_path.parent.name if tb_path.parent.name != 'testbench' else 'default'
+                        waveform_dir = self.project_root / 'output' / 'waveform' / llm_name
+                        waveform_dir.mkdir(parents=True, exist_ok=True)
+
+                        new_vcd_path = waveform_dir / latest_vcd.name
+                        shutil.move(str(latest_vcd), str(new_vcd_path))
+                        result['vcd_file'] = str(new_vcd_path.relative_to(self.project_root)).replace('\\', '/')
+                    except Exception as e:
+                        print(f"Failed to move VCD: {e}")
             else:
                 result['errors'].append(f'Simulation failed: {sim_result.stderr}')
 
@@ -335,6 +352,9 @@ class WebSimulationRunner:
             if item.is_dir():
                 llm_name = item.name
                 results_by_llm[llm_name] = []
+                # # Create waveform directory for this LLM
+                # waveform_dir = self.project_root / 'output' / 'waveform' / llm_name
+                # waveform_dir.mkdir(parents=True, exist_ok=True)
 
                 for tb_file in item.glob('*_tb.v'):
                     # Extract bitwidth from filename
