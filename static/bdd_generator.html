@@ -951,37 +951,49 @@
         <div class="step-header" onclick="toggleStep(2)">
             <div class="step-number green" id="step-2-num">2</div>
             <div class="step-title-area">
-                <div class="step-title">🧪 Generate BDD Test Scenarios</div>
-                <div class="step-subtitle">Create Gherkin test cases for the DUT</div>
+                <div class="step-title">🧪 BDD Test Scenarios</div>
+                <div class="step-subtitle">Generate with LLM or upload existing .feature file</div>
             </div>
             <div class="step-status pending" id="step-2-status">Pending</div>
             <div class="step-toggle">▼</div>
         </div>
         <div class="step-content">
-            <!-- DUT Status -->
-            <div class="dut-status" id="dut-status">
-                <div class="dut-status-header">
-                    <div class="dut-status-icon">📋</div>
-                    <div class="dut-status-info">
-                        <h4>Current DUT</h4>
-                        <p><span class="filename" id="dut-filename">-</span> • <span id="dut-type-display">-</span> •
-                            <span id="dut-bitwidth-display">-</span></p>
+            <!-- Mode Switcher for Step 2 -->
+            <div class="mode-switcher">
+                <button class="mode-btn active" onclick="switchBddMode('generate')" id="bdd-mode-generate-btn">
+                    🤖 Generate with LLM
+                </button>
+                <button class="mode-btn" onclick="switchBddMode('upload')" id="bdd-mode-upload-btn">
+                    📤 Upload Existing File
+                </button>
+            </div>
+
+            <!-- Generate Mode for Step 2 -->
+            <div class="mode-content active" id="bdd-mode-generate">
+                <!-- DUT Status -->
+                <div class="dut-status" id="dut-status">
+                    <div class="dut-status-header">
+                        <div class="dut-status-icon">📋</div>
+                        <div class="dut-status-info">
+                            <h4>Current DUT</h4>
+                            <p><span class="filename" id="dut-filename">-</span> • <span id="dut-type-display">-</span> •
+                                <span id="dut-bitwidth-display">-</span></p>
+                        </div>
+                        <div class="dut-status-badge" id="dut-module-badge">-</div>
+                        <div class="dut-status-badge source-badge" id="dut-source-badge">LLM</div>
                     </div>
-                    <div class="dut-status-badge" id="dut-module-badge">-</div>
-                    <div class="dut-status-badge source-badge" id="dut-source-badge">LLM</div>
                 </div>
-            </div>
 
-            <!-- No DUT Warning -->
-            <div class="no-dut-warning visible" id="no-dut-warning">
-                <div class="no-dut-warning-icon">⚠️</div>
-                <div class="no-dut-warning-text">
-                    <h4>No Hardware Generated</h4>
-                    <p>Complete Step 1 first to generate or upload hardware.</p>
+                <!-- No DUT Warning -->
+                <div class="no-dut-warning visible" id="no-dut-warning">
+                    <div class="no-dut-warning-icon">⚠️</div>
+                    <div class="no-dut-warning-text">
+                        <h4>No Hardware Generated</h4>
+                        <p>Complete Step 1 first to generate or upload hardware.</p>
+                    </div>
                 </div>
-            </div>
 
-            <div class="card">
+                <div class="card">
                 <div class="card-title">⚡ Configuration</div>
                 <div class="form-row">
                     <div class="form-group">
@@ -1056,6 +1068,64 @@
                     <button class="btn btn-secondary btn-sm" onclick="resetBDD()">🔄 Reset</button>
                 </div>
             </div>
+            </div>
+
+            <!-- Upload Mode for Step 2 -->
+            <div class="mode-content" id="bdd-mode-upload">
+                <div class="upload-area" id="bdd-upload-area" onclick="document.getElementById('bdd-upload-input').click()">
+                    <div class="upload-icon">📄</div>
+                    <div class="upload-title">Drag & drop your BDD feature file here</div>
+                    <div class="upload-subtitle">or click to browse</div>
+                    <div class="upload-info">
+                        <div class="upload-info-item">📄 .feature files</div>
+                        <div class="upload-info-item">📏 Max 1MB</div>
+                        <div class="upload-info-item">🔒 Secure upload</div>
+                    </div>
+                    <input type="file" id="bdd-upload-input" class="upload-input" accept=".feature"
+                           onchange="handleBddFileSelect(event)">
+                </div>
+
+                <div class="error-message" id="bdd-upload-error"></div>
+                <div class="success-message" id="bdd-upload-success"></div>
+
+                <!-- BDD Upload Result -->
+                <div class="upload-result" id="bdd-upload-result">
+                    <div class="file-info-card">
+                        <div class="file-info-header">
+                            <div class="file-info-icon">📄</div>
+                            <div class="file-info-details">
+                                <h4 id="bdd-uploaded-filename">test.feature</h4>
+                                <p id="bdd-uploaded-filesize">2.3 KB • Uploaded successfully</p>
+                            </div>
+                            <div class="file-info-actions">
+                                <button class="btn btn-danger btn-sm" onclick="removeBddUploadedFile()">✕ Remove</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Detected BDD Info -->
+                    <div class="detected-info" id="bdd-detected-info">
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Feature Name</span>
+                            <span class="detected-info-value" id="bdd-detected-feature-name">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Scenarios</span>
+                            <span class="detected-info-value" id="bdd-detected-scenario-count">0</span>
+                        </div>
+                    </div>
+
+                    <!-- BDD Preview -->
+                    <div class="card">
+                        <div class="card-title">📋 File Preview</div>
+                        <div class="preview-box" id="bdd-upload-preview" style="max-height: 200px;"></div>
+                    </div>
+
+                    <button class="btn btn-primary green" onclick="confirmBddUpload()">
+                        ✅ Use This BDD File
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1064,49 +1134,61 @@
     <div class="step-header" onclick="toggleStep(3)">
         <div class="step-number orange" id="step-3-num">3</div>
         <div class="step-title-area">
-            <div class="step-title">⚙️ Generate Verilog Testbench</div>
-            <div class="step-subtitle">Convert BDD to Verilog testbench</div>
+            <div class="step-title">⚙️ Verilog Testbench</div>
+            <div class="step-subtitle">Generate from BDD or upload existing testbench</div>
         </div>
         <div class="step-status pending" id="step-3-status">Pending</div>
         <div class="step-toggle">▼</div>
     </div>
     <div class="step-content">
-        <!-- BDD Source Status -->
-        <div class="dut-status" id="bdd-source-status">
-            <div class="dut-status-header">
-                <div class="dut-status-icon">📄</div>
-                <div class="dut-status-info">
-                    <h4>Source BDD</h4>
-                    <p><span class="filename" id="tb-bdd-filename">-</span> • <span id="tb-bdd-llm">-</span></p>
-                </div>
-                <div class="dut-status-badge" id="tb-module-badge">-</div>
-            </div>
+        <!-- Mode Switcher for Step 3 -->
+        <div class="mode-switcher">
+            <button class="mode-btn active" onclick="switchTbMainMode('generate')" id="tb-main-mode-generate-btn">
+                🤖 Generate from BDD
+            </button>
+            <button class="mode-btn" onclick="switchTbMainMode('upload')" id="tb-main-mode-upload-btn">
+                📤 Upload Existing File
+            </button>
         </div>
 
-        <!-- No BDD Warning -->
-        <div class="no-dut-warning visible" id="no-bdd-warning">
-            <div class="no-dut-warning-icon">⚠️</div>
-            <div class="no-dut-warning-text">
-                <h4>No BDD File Generated</h4>
-                <p>Complete Step 2 first to generate BDD test scenarios.</p>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">⚡ Configuration</div>
-
-            <!-- Mode Switcher -->
-            <div class="form-group">
-                <label>Generation Mode</label>
-                <div class="mode-switcher" style="margin-top: 8px;">
-                    <button class="mode-btn active" onclick="switchTbMode('single')" id="tb-mode-single-btn">
-                        📄 Single File
-                    </button>
-                    <button class="mode-btn" onclick="switchTbMode('batch')" id="tb-mode-batch-btn">
-                        📚 Batch (All BDD Files)
-                    </button>
+        <!-- Generate Mode for Step 3 -->
+        <div class="mode-content active" id="tb-main-mode-generate">
+            <!-- BDD Source Status -->
+            <div class="dut-status" id="bdd-source-status">
+                <div class="dut-status-header">
+                    <div class="dut-status-icon">📄</div>
+                    <div class="dut-status-info">
+                        <h4>Source BDD</h4>
+                        <p><span class="filename" id="tb-bdd-filename">-</span> • <span id="tb-bdd-llm">-</span></p>
+                    </div>
+                    <div class="dut-status-badge" id="tb-module-badge">-</div>
                 </div>
             </div>
+
+            <!-- No BDD Warning -->
+            <div class="no-dut-warning visible" id="no-bdd-warning">
+                <div class="no-dut-warning-icon">⚠️</div>
+                <div class="no-dut-warning-text">
+                    <h4>No BDD File Generated</h4>
+                    <p>Complete Step 2 first to generate BDD test scenarios.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">⚡ Configuration</div>
+
+                <!-- Mode Switcher -->
+                <div class="form-group">
+                    <label>Generation Mode</label>
+                    <div class="mode-switcher" style="margin-top: 8px;">
+                        <button class="mode-btn active" onclick="switchTbMode('single')" id="tb-mode-single-btn">
+                            📄 Single File
+                        </button>
+                        <button class="mode-btn" onclick="switchTbMode('batch')" id="tb-mode-batch-btn">
+                            📚 Batch (All BDD Files)
+                        </button>
+                    </div>
+                </div>
 
             <!-- Single Mode Options -->
             <div id="tb-single-options">
@@ -1238,6 +1320,64 @@
                 </button>
                 <button class="btn btn-secondary btn-sm" onclick="showComparisonModal()">📊 View Comparison</button>
                 <button class="btn btn-secondary btn-sm" onclick="resetBatchTestbench()">🔄 Reset</button>
+            </div>
+        </div>
+        </div>
+
+        <!-- Upload Mode for Step 3 -->
+        <div class="mode-content" id="tb-main-mode-upload">
+            <div class="upload-area" id="tb-upload-area" onclick="document.getElementById('tb-upload-input').click()">
+                <div class="upload-icon">📄</div>
+                <div class="upload-title">Drag & drop your Verilog testbench file here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-info">
+                    <div class="upload-info-item">📄 .v, .sv files</div>
+                    <div class="upload-info-item">📏 Max 1MB</div>
+                    <div class="upload-info-item">🔒 Secure upload</div>
+                </div>
+                <input type="file" id="tb-upload-input" class="upload-input" accept=".v,.sv,.vh"
+                       onchange="handleTbFileSelect(event)">
+            </div>
+
+            <div class="error-message" id="tb-upload-error"></div>
+            <div class="success-message" id="tb-upload-success"></div>
+
+            <!-- Testbench Upload Result -->
+            <div class="upload-result" id="tb-upload-result">
+                <div class="file-info-card">
+                    <div class="file-info-header">
+                        <div class="file-info-icon">📄</div>
+                        <div class="file-info-details">
+                            <h4 id="tb-uploaded-filename">testbench.v</h4>
+                            <p id="tb-uploaded-filesize">4.5 KB • Uploaded successfully</p>
+                        </div>
+                        <div class="file-info-actions">
+                            <button class="btn btn-danger btn-sm" onclick="removeTbUploadedFile()">✕ Remove</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detected Testbench Info -->
+                <div class="detected-info" id="tb-detected-info">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Module Name</span>
+                        <span class="detected-info-value" id="tb-detected-module-name">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Test Count (estimated)</span>
+                        <span class="detected-info-value" id="tb-detected-test-count">0</span>
+                    </div>
+                </div>
+
+                <!-- Testbench Preview -->
+                <div class="card">
+                    <div class="card-title">📋 File Preview</div>
+                    <div class="preview-box" id="tb-upload-preview" style="max-height: 200px;"></div>
+                </div>
+
+                <button class="btn btn-primary" style="background: var(--accent-orange);" onclick="confirmTbUpload()">
+                    ✅ Use This Testbench
+                </button>
             </div>
         </div>
     </div>
@@ -1607,11 +1747,27 @@
         // Mode Switching
         // ============================================================
         function switchMode(mode) {
-            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
-            document.querySelectorAll('.mode-content').forEach(content => content.classList.remove('active'));
+            document.querySelectorAll('#step-1 .mode-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('#step-1 .mode-content').forEach(content => content.classList.remove('active'));
 
             document.getElementById(`mode-${mode}-btn`).classList.add('active');
             document.getElementById(`mode-${mode}`).classList.add('active');
+        }
+
+        // Step 2 BDD Mode Switching
+        function switchBddMode(mode) {
+            document.getElementById('bdd-mode-generate-btn').classList.toggle('active', mode === 'generate');
+            document.getElementById('bdd-mode-upload-btn').classList.toggle('active', mode === 'upload');
+            document.getElementById('bdd-mode-generate').classList.toggle('active', mode === 'generate');
+            document.getElementById('bdd-mode-upload').classList.toggle('active', mode === 'upload');
+        }
+
+        // Step 3 Testbench Main Mode Switching (Generate vs Upload)
+        function switchTbMainMode(mode) {
+            document.getElementById('tb-main-mode-generate-btn').classList.toggle('active', mode === 'generate');
+            document.getElementById('tb-main-mode-upload-btn').classList.toggle('active', mode === 'upload');
+            document.getElementById('tb-main-mode-generate').classList.toggle('active', mode === 'generate');
+            document.getElementById('tb-main-mode-upload').classList.toggle('active', mode === 'upload');
         }
 
         // ============================================================
@@ -1733,6 +1889,253 @@
         function onModuleSelect() {
             selectedModuleIndex = parseInt(document.getElementById('module-select').value);
             updateDetectedInfo(parsedModules[selectedModuleIndex]);
+        }
+
+        // ============================================================
+        // BDD File Upload Handling (Step 2)
+        // ============================================================
+        let uploadedBddData = null;
+
+        // Initialize BDD upload area drag-and-drop
+        document.addEventListener('DOMContentLoaded', function() {
+            const bddUploadArea = document.getElementById('bdd-upload-area');
+            if (bddUploadArea) {
+                bddUploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    bddUploadArea.classList.add('dragover');
+                });
+                bddUploadArea.addEventListener('dragleave', () => {
+                    bddUploadArea.classList.remove('dragover');
+                });
+                bddUploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    bddUploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        processBddFile(files[0]);
+                    }
+                });
+            }
+
+            // Initialize Testbench upload area drag-and-drop
+            const tbUploadArea = document.getElementById('tb-upload-area');
+            if (tbUploadArea) {
+                tbUploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    tbUploadArea.classList.add('dragover');
+                });
+                tbUploadArea.addEventListener('dragleave', () => {
+                    tbUploadArea.classList.remove('dragover');
+                });
+                tbUploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    tbUploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        processTbFile(files[0]);
+                    }
+                });
+            }
+        });
+
+        function handleBddFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processBddFile(file);
+            }
+        }
+
+        function processBddFile(file) {
+            hideError('bdd-upload');
+            hideSuccess('bdd-upload');
+
+            // Validate extension
+            if (!file.name.toLowerCase().endsWith('.feature')) {
+                showError('bdd-upload', 'Unsupported file type. Please upload .feature files only.');
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('bdd-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            // Upload file
+            uploadBddFile(file);
+        }
+
+        async function uploadBddFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-bdd', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('bdd-upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store uploaded data
+                uploadedBddData = data;
+
+                // Update UI
+                document.getElementById('bdd-uploaded-filename').textContent = data.filename;
+                document.getElementById('bdd-uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+                document.getElementById('bdd-detected-feature-name').textContent = data.feature_name || 'Unknown';
+                document.getElementById('bdd-detected-scenario-count').textContent = data.scenario_count || 0;
+                document.getElementById('bdd-upload-preview').textContent = data.preview || '';
+
+                // Show result
+                document.getElementById('bdd-upload-result').classList.add('visible');
+                showSuccess('bdd-upload', 'BDD file uploaded successfully!');
+
+            } catch (error) {
+                showError('bdd-upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function removeBddUploadedFile() {
+            uploadedBddData = null;
+            document.getElementById('bdd-upload-result').classList.remove('visible');
+            document.getElementById('bdd-upload-input').value = '';
+            hideSuccess('bdd-upload');
+        }
+
+        function confirmBddUpload() {
+            if (!uploadedBddData) {
+                showError('bdd-upload', 'No file uploaded');
+                return;
+            }
+
+            // Set current BDD info
+            currentBddFilename = uploadedBddData.filename;
+            currentBDD = {
+                filename: uploadedBddData.filename,
+                filepath: uploadedBddData.filepath,
+                llm: 'uploaded'
+            };
+
+            // Update Testbench tab state
+            updateTbTabState();
+
+            // Update Step 2 status
+            updateStepStatus(2, 'completed');
+            updatePipelineIndicator(2, 'completed');
+            updatePipelineIndicator(3, 'active');
+
+            // Expand Step 3
+            document.getElementById('step-3').classList.remove('collapsed');
+
+            showSuccess('bdd-upload', '✅ BDD file configured! Proceed to Step 3 to generate testbench.');
+        }
+
+        // ============================================================
+        // Testbench File Upload Handling (Step 3)
+        // ============================================================
+        let uploadedTbData = null;
+
+        function handleTbFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processTbFile(file);
+            }
+        }
+
+        function processTbFile(file) {
+            hideError('tb-upload');
+            hideSuccess('tb-upload');
+
+            // Validate extension
+            const validExtensions = ['.v', '.sv', '.vh'];
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            if (!validExtensions.includes(ext)) {
+                showError('tb-upload', `Unsupported file type: ${ext}. Please upload .v or .sv files.`);
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('tb-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            // Upload file
+            uploadTbFile(file);
+        }
+
+        async function uploadTbFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-testbench', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('tb-upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store uploaded data
+                uploadedTbData = data;
+
+                // Update UI
+                document.getElementById('tb-uploaded-filename').textContent = data.filename;
+                document.getElementById('tb-uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+                document.getElementById('tb-detected-module-name').textContent = data.module_name || 'Unknown';
+                document.getElementById('tb-detected-test-count').textContent = data.test_count || 0;
+                document.getElementById('tb-upload-preview').textContent = data.preview || '';
+
+                // Show result
+                document.getElementById('tb-upload-result').classList.add('visible');
+                showSuccess('tb-upload', 'Testbench file uploaded successfully!');
+
+            } catch (error) {
+                showError('tb-upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function removeTbUploadedFile() {
+            uploadedTbData = null;
+            document.getElementById('tb-upload-result').classList.remove('visible');
+            document.getElementById('tb-upload-input').value = '';
+            hideSuccess('tb-upload');
+        }
+
+        function confirmTbUpload() {
+            if (!uploadedTbData) {
+                showError('tb-upload', 'No file uploaded');
+                return;
+            }
+
+            // Set current testbench info
+            currentTbFilename = uploadedTbData.filename;
+
+            // Update Step 3 status
+            updateStepStatus(3, 'completed');
+            updatePipelineIndicator(3, 'completed');
+            updatePipelineIndicator(4, 'active');
+
+            // Update Step 4 state
+            updateSimTabState();
+
+            // Expand Step 4
+            document.getElementById('step-4').classList.remove('collapsed');
+
+            showSuccess('tb-upload', '✅ Testbench configured! Proceed to Step 4 to run simulation.');
         }
 
         function updateDetectedInfo(module) {
@@ -2873,10 +3276,14 @@
         function updateSimTabState() {
             const noTbWarning = document.getElementById('no-tb-warning');
 
-            if (currentTbFilename && currentDUT) {
+            if (currentTbFilename) {
                 noTbWarning.classList.remove('visible');
                 document.getElementById('sim-tb-name').textContent = currentTbFilename;
-                document.getElementById('sim-dut-name').textContent = currentDUT.filename || `${currentDUT.moduleType}_${currentDUT.bitwidth}bit.v`;
+                if (currentDUT) {
+                    document.getElementById('sim-dut-name').textContent = currentDUT.filename || `${currentDUT.moduleType}_${currentDUT.bitwidth}bit.v`;
+                } else {
+                    document.getElementById('sim-dut-name').textContent = uploadedTbData ? 'Uploaded testbench' : '-';
+                }
             } else {
                 noTbWarning.classList.add('visible');
             }
