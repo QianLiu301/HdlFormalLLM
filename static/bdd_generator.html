@@ -1400,257 +1400,261 @@
                 </div>
             </div>
         </div>
-    </div>
 
-
-    <!-- Step 4: Run Simulation -->
-    <div class="step-section collapsed" id="step-4">
-        <div class="step-header" onclick="toggleStep(4)">
-            <div class="step-number red" id="step-4-num">4</div>
-            <div class="step-title-area">
-                <div class="step-title">🚀 Run Simulation</div>
-                <div class="step-subtitle">Execute testbench and view results</div>
-            </div>
-            <div class="step-status pending" id="step-4-status">Pending</div>
-            <div class="step-toggle">▼</div>
-        </div>
-        <div class="step-content">
-            <!-- Tools Status -->
-            <div class="dut-status" id="sim-tools-status">
-                <div class="dut-status-header">
-                    <div class="dut-status-icon">🔧</div>
-                    <div class="dut-status-info">
-                        <h4>Simulation Tools</h4>
-                        <p id="sim-tools-info">Checking...</p>
-                    </div>
-                    <div class="dut-status-badge" id="sim-tools-badge">...</div>
+        <!-- Step 4: Run Simulation -->
+        <div class="step-section collapsed" id="step-4">
+            <div class="step-header" onclick="toggleStep(4)">
+                <div class="step-number red" id="step-4-num">4</div>
+                <div class="step-title-area">
+                    <div class="step-title">🚀 Run Simulation</div>
+                    <div class="step-subtitle">Execute testbench and view results</div>
                 </div>
+                <div class="step-status pending" id="step-4-status">Pending</div>
+                <div class="step-toggle">▼</div>
             </div>
-
-            <!-- No Testbench Warning -->
-            <div class="no-dut-warning" id="no-tb-warning">
-                <div class="no-dut-warning-icon">⚠️</div>
-                <div class="no-dut-warning-text">
-                    <h4>No Testbench Available</h4>
-                    <p>Complete Step 3 first to generate a testbench.</p>
-                </div>
-            </div>
-
-            <!-- Tools Not Available Warning -->
-            <div class="no-dut-warning" id="sim-tools-unavailable" style="display: none;">
-                <div class="no-dut-warning-icon">⚠️</div>
-                <div class="no-dut-warning-text">
-                    <h4>Simulation Tools Not Available</h4>
-                    <p>iverilog/vvp not installed on server. Please download files and run locally.</p>
-                </div>
-            </div>
-
-            <!-- Configuration -->
-            <div class="card" id="sim-config-card">
-                <div class="card-title">⚡ Configuration</div>
-
-                <!-- Mode Switcher -->
-                <div class="form-group">
-                    <label>Simulation Mode</label>
-                    <div class="mode-switcher" style="margin-top: 8px;">
-                        <button class="mode-btn active" onclick="switchSimMode('single')" id="sim-mode-single-btn">
-                            📄 Single Testbench
-                        </button>
-                        <button class="mode-btn" onclick="switchSimMode('batch')" id="sim-mode-batch-btn">
-                            📚 Batch (All Testbenches)
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Single Mode Info -->
-                <div id="sim-single-options">
-                    <div class="detected-info">
-                        <div class="detected-info-row">
-                            <span class="detected-info-label">Testbench</span>
-                            <span class="detected-info-value" id="sim-tb-name">-</span>
+            <div class="step-content">
+                <!-- Tools Status -->
+                <div class="dut-status" id="sim-tools-status">
+                    <div class="dut-status-header">
+                        <div class="dut-status-icon">🔧</div>
+                        <div class="dut-status-info">
+                            <h4>Simulation Tools</h4>
+                            <p id="sim-tools-info">Checking...</p>
                         </div>
-                        <div class="detected-info-row">
-                            <span class="detected-info-label">DUT</span>
-                            <span class="detected-info-value" id="sim-dut-name">-</span>
+                        <div class="dut-status-badge" id="sim-tools-badge">...</div>
+                    </div>
+                </div>
+
+                <!-- No Testbench Warning -->
+                <div class="no-dut-warning" id="no-tb-warning">
+                    <div class="no-dut-warning-icon">⚠️</div>
+                    <div class="no-dut-warning-text">
+                        <h4>No Testbench Available</h4>
+                        <p>Complete Step 3 first to generate a testbench.</p>
+                    </div>
+                </div>
+
+                <!-- Tools Not Available Warning -->
+                <div class="no-dut-warning" id="sim-tools-unavailable" style="display: none;">
+                    <div class="no-dut-warning-icon">⚠️</div>
+                    <div class="no-dut-warning-text">
+                        <h4>Simulation Tools Not Available</h4>
+                        <p>iverilog/vvp not installed on server. Please download files and run locally.</p>
+                    </div>
+                </div>
+
+                <!-- Configuration -->
+                <div class="card" id="sim-config-card">
+                    <div class="card-title">⚡ Configuration</div>
+
+                    <!-- Mode Switcher -->
+                    <div class="form-group">
+                        <label>Simulation Mode</label>
+                        <div class="mode-switcher" style="margin-top: 8px;">
+                            <button class="mode-btn active" onclick="switchSimMode('single')" id="sim-mode-single-btn">
+                                📄 Single Testbench
+                            </button>
+                            <button class="mode-btn" onclick="switchSimMode('batch')" id="sim-mode-batch-btn">
+                                📚 Batch (All Testbenches)
+                            </button>
                         </div>
                     </div>
+
+                    <!-- Single Mode Info -->
+                    <div id="sim-single-options">
+                        <div class="detected-info">
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Testbench</span>
+                                <span class="detected-info-value" id="sim-tb-name">-</span>
+                            </div>
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">DUT</span>
+                                <span class="detected-info-value" id="sim-dut-name">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Batch Mode Info -->
+                    <div id="sim-batch-options" style="display: none;">
+                        <div class="detected-info">
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Source Directory</span>
+                                <span class="detected-info-value">output/testbench/</span>
+                            </div>
+                            <div class="detected-info-row">
+                                <span class="detected-info-label">Results Directory</span>
+                                <span class="detected-info-value">output/results/</span>
+                            </div>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                            ℹ️ Batch mode will run simulations for all testbenches and generate a comparison report.
+                        </p>
+                    </div>
                 </div>
 
-                <!-- Batch Mode Info -->
-                <div id="sim-batch-options" style="display: none;">
-                    <div class="detected-info">
+                <div class="error-message" id="sim-error"></div>
+
+                <button class="btn btn-primary" style="background: var(--error);" id="sim-btn"
+                        onclick="runSimulationByMode()">
+                    <span id="sim-btn-text">🚀 Run Simulation</span>
+                    <div class="spinner" id="sim-spinner" style="display: none;"></div>
+                </button>
+
+                <!-- Single Simulation Result -->
+                <div class="card result" id="sim-result" style="margin-top: 16px;">
+                    <div class="result-header">
+                        <div class="icon" id="sim-result-icon">✅</div>
+                        <div class="info">
+                            <h3 id="sim-result-title">Simulation Complete</h3>
+                            <p id="sim-result-info">-</p>
+                        </div>
+                        <div class="badge" id="sim-result-badge">SIM</div>
+                    </div>
+
+                    <!-- Statistics -->
+                    <div class="detected-info" id="sim-stats">
                         <div class="detected-info-row">
-                            <span class="detected-info-label">Source Directory</span>
-                            <span class="detected-info-value">output/testbench/</span>
+                            <span class="detected-info-label">Total Tests</span>
+                            <span class="detected-info-value" id="sim-total-tests">-</span>
                         </div>
                         <div class="detected-info-row">
-                            <span class="detected-info-label">Results Directory</span>
-                            <span class="detected-info-value">output/results/</span>
+                            <span class="detected-info-label">Passed</span>
+                            <span class="detected-info-value" style="color: var(--success);"
+                                  id="sim-passed-tests">-</span>
                         </div>
-                    </div>
-                    <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
-                        ℹ️ Batch mode will run simulations for all testbenches and generate a comparison report.
-                    </p>
-                </div>
-            </div>
-
-            <div class="error-message" id="sim-error"></div>
-
-            <button class="btn btn-primary" style="background: var(--error);" id="sim-btn"
-                    onclick="runSimulationByMode()">
-                <span id="sim-btn-text">🚀 Run Simulation</span>
-                <div class="spinner" id="sim-spinner" style="display: none;"></div>
-            </button>
-
-            <!-- Single Simulation Result -->
-            <div class="card result" id="sim-result" style="margin-top: 16px;">
-                <div class="result-header">
-                    <div class="icon" id="sim-result-icon">✅</div>
-                    <div class="info">
-                        <h3 id="sim-result-title">Simulation Complete</h3>
-                        <p id="sim-result-info">-</p>
-                    </div>
-                    <div class="badge" id="sim-result-badge">SIM</div>
-                </div>
-
-                <!-- Statistics -->
-                <div class="detected-info" id="sim-stats">
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Total Tests</span>
-                        <span class="detected-info-value" id="sim-total-tests">-</span>
-                    </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Passed</span>
-                        <span class="detected-info-value" style="color: var(--success);" id="sim-passed-tests">-</span>
-                    </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Failed</span>
-                        <span class="detected-info-value" style="color: var(--error);" id="sim-failed-tests">-</span>
-                    </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Pass Rate</span>
-                        <span>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Failed</span>
+                            <span class="detected-info-value" style="color: var(--error);"
+                                  id="sim-failed-tests">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Pass Rate</span>
+                            <span>
                         <span class="detected-info-value" id="sim-pass-rate">-</span>
                         <span class="confidence-badge" id="sim-pass-badge">-</span>
                     </span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Compile Time</span>
+                            <span class="detected-info-value" id="sim-compile-time">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Simulation Time</span>
+                            <span class="detected-info-value" id="sim-sim-time">-</span>
+                        </div>
                     </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Compile Time</span>
-                        <span class="detected-info-value" id="sim-compile-time">-</span>
+
+                    <!-- Waveform Preview -->
+                    <div id="sim-waveform-container" style="display: none;">
+                        <div class="preview-label">📊 Waveform Preview</div>
+                        <div style="background: var(--bg-tertiary); border-radius: 8px; padding: 16px; overflow-x: auto;">
+                            <canvas id="waveform-canvas" width="600" height="200"
+                                    style="width: 100%; background: #1a1a2e; border-radius: 4px;"></canvas>
+                        </div>
+                        <p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">
+                            ℹ️ Simplified preview. Download VCD for full waveform analysis with GTKWave.
+                        </p>
                     </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Simulation Time</span>
-                        <span class="detected-info-value" id="sim-sim-time">-</span>
+
+                    <!-- Log Preview -->
+                    <div class="preview-label">📋 Simulation Log</div>
+                    <div class="preview-box" id="sim-log-preview" style="max-height: 200px;"></div>
+
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary btn-sm" id="sim-download-vcd" onclick="downloadSimVcd()"
+                                style="display: none;">📊 Download VCD (Waveform)
+                        </button>
+                        <button class="btn btn-secondary btn-sm" id="sim-download-log" onclick="downloadSimLog()">📥
+                            Download Log
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="resetSimulation()">🔄 Reset</button>
+                    </div>
+
+                    <!-- Waveform tip -->
+                    <div id="vcd-tip"
+                         style="display: none; margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px;">
+                        <strong>💡 How to view waveform:</strong><br>
+                        1. Download the .vcd file above<br>
+                        2. Open with <a href="https://gtkwave.sourceforge.net/" target="_blank"
+                                        style="color: var(--primary);">GTKWave</a> (free tool)<br>
+                        3. Or run: <code style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;">gtkwave
+                        filename.vcd</code>
                     </div>
                 </div>
 
-                <!-- Waveform Preview -->
-                <div id="sim-waveform-container" style="display: none;">
-                    <div class="preview-label">📊 Waveform Preview</div>
-                    <div style="background: var(--bg-tertiary); border-radius: 8px; padding: 16px; overflow-x: auto;">
-                        <canvas id="waveform-canvas" width="600" height="200"
-                                style="width: 100%; background: #1a1a2e; border-radius: 4px;"></canvas>
+                <!-- Batch Simulation Result -->
+                <div class="card result" id="sim-batch-result" style="margin-top: 16px;">
+                    <div class="result-header">
+                        <div class="icon">✅</div>
+                        <div class="info">
+                            <h3 id="sim-batch-title">Batch Simulation Complete</h3>
+                            <p id="sim-batch-info">-</p>
+                        </div>
+                        <div class="badge">BATCH</div>
                     </div>
-                    <p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">
-                        ℹ️ Simplified preview. Download VCD for full waveform analysis with GTKWave.
+
+                    <!-- Batch Summary -->
+                    <div class="detected-info">
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Total Simulations</span>
+                            <span class="detected-info-value" id="sim-batch-total">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Successful</span>
+                            <span class="detected-info-value" style="color: var(--success);"
+                                  id="sim-batch-successful">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Overall Pass Rate</span>
+                            <span class="detected-info-value" id="sim-batch-pass-rate">-</span>
+                        </div>
+                    </div>
+
+                    <!-- LLM Comparison -->
+                    <div class="preview-label">Results by LLM</div>
+                    <div class="preview-box" id="sim-batch-details" style="min-height: 100px; max-height: 200px;"></div>
+
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary btn-sm" onclick="showSimComparisonModal()">📊 View Comparison
+                        </button>
+                        <button class="btn btn-secondary btn-sm" id="batch-download-vcd" onclick="downloadBatchVcd()"
+                                style="display: none;">📦 Download All VCDs (.zip)
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="resetBatchSimulation()">🔄 Reset</button>
+                    </div>
+                </div>
+
+                <!-- Local Run Instructions (when tools not available) -->
+                <div class="card" id="sim-local-instructions" style="display: none; margin-top: 16px;">
+                    <div class="card-title">💻 Run Locally</div>
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+                        Simulation tools are not available on the server. Please run locally:
                     </p>
-                </div>
+                    <div class="preview-box" style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+                        # 1. Install Icarus Verilog
+                        # Windows: Download from https://bleyer.org/icarus/
+                        # Mac: brew install icarus-verilog
+                        # Linux: sudo apt-get install iverilog
 
-                <!-- Log Preview -->
-                <div class="preview-label">📋 Simulation Log</div>
-                <div class="preview-box" id="sim-log-preview" style="max-height: 200px;"></div>
+                        # 2. Download your files and run:
+                        iverilog -g2012 -o sim.vvp alu_16bit.v alu_16bit_tb.v
+                        vvp sim.vvp
 
-                <div class="action-buttons">
-                    <button class="btn btn-secondary btn-sm" id="sim-download-vcd" onclick="downloadSimVcd()"
-                            style="display: none;">📊 Download VCD (Waveform)
-                    </button>
-                    <button class="btn btn-secondary btn-sm" id="sim-download-log" onclick="downloadSimLog()">📥
-                        Download Log
-                    </button>
-                    <button class="btn btn-secondary btn-sm" onclick="resetSimulation()">🔄 Reset</button>
-                </div>
-
-                <!-- Waveform tip -->
-                <div id="vcd-tip"
-                     style="display: none; margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px;">
-                    <strong>💡 How to view waveform:</strong><br>
-                    1. Download the .vcd file above<br>
-                    2. Open with <a href="https://gtkwave.sourceforge.net/" target="_blank"
-                                    style="color: var(--primary);">GTKWave</a> (free tool)<br>
-                    3. Or run: <code style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;">gtkwave
-                    filename.vcd</code>
-                </div>
-            </div>
-
-            <!-- Batch Simulation Result -->
-            <div class="card result" id="sim-batch-result" style="margin-top: 16px;">
-                <div class="result-header">
-                    <div class="icon">✅</div>
-                    <div class="info">
-                        <h3 id="sim-batch-title">Batch Simulation Complete</h3>
-                        <p id="sim-batch-info">-</p>
+                        # 3. View waveform (optional):
+                        gtkwave waveform.vcd
                     </div>
-                    <div class="badge">BATCH</div>
-                </div>
-
-                <!-- Batch Summary -->
-                <div class="detected-info">
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Total Simulations</span>
-                        <span class="detected-info-value" id="sim-batch-total">-</span>
+                    <div class="action-buttons" style="margin-top: 12px;">
+                        <button class="btn btn-primary btn-sm" onclick="downloadAllSimFiles()">📦 Download All Files
+                            (.zip)
+                        </button>
                     </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Successful</span>
-                        <span class="detected-info-value" style="color: var(--success);"
-                              id="sim-batch-successful">-</span>
-                    </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Overall Pass Rate</span>
-                        <span class="detected-info-value" id="sim-batch-pass-rate">-</span>
-                    </div>
-                </div>
-
-                <!-- LLM Comparison -->
-                <div class="preview-label">Results by LLM</div>
-                <div class="preview-box" id="sim-batch-details" style="min-height: 100px; max-height: 200px;"></div>
-
-                <div class="action-buttons">
-                    <button class="btn btn-secondary btn-sm" onclick="showSimComparisonModal()">📊 View Comparison
-                    </button>
-                    <button class="btn btn-secondary btn-sm" id="batch-download-vcd" onclick="downloadBatchVcd()"
-                            style="display: none;">📦 Download All VCDs (.zip)
-                    </button>
-                    <button class="btn btn-secondary btn-sm" onclick="resetBatchSimulation()">🔄 Reset</button>
-                </div>
-            </div>
-
-            <!-- Local Run Instructions (when tools not available) -->
-            <div class="card" id="sim-local-instructions" style="display: none; margin-top: 16px;">
-                <div class="card-title">💻 Run Locally</div>
-                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
-                    Simulation tools are not available on the server. Please run locally:
-                </p>
-                <div class="preview-box" style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">
-                    # 1. Install Icarus Verilog
-                    # Windows: Download from https://bleyer.org/icarus/
-                    # Mac: brew install icarus-verilog
-                    # Linux: sudo apt-get install iverilog
-
-                    # 2. Download your files and run:
-                    iverilog -g2012 -o sim.vvp alu_16bit.v alu_16bit_tb.v
-                    vvp sim.vvp
-
-                    # 3. View waveform (optional):
-                    gtkwave waveform.vcd
-                </div>
-                <div class="action-buttons" style="margin-top: 12px;">
-                    <button class="btn btn-primary btn-sm" onclick="downloadAllSimFiles()">📦 Download All Files
-                        (.zip)
-                    </button>
                 </div>
             </div>
         </div>
     </div>
+
+
+
 
     <!-- Footer -->
     <div class="footer">
