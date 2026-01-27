@@ -952,108 +952,178 @@
             <div class="step-number green" id="step-2-num">2</div>
             <div class="step-title-area">
                 <div class="step-title">🧪 Generate BDD Test Scenarios</div>
-                <div class="step-subtitle">Create Gherkin test cases for the DUT</div>
+                <div class="step-subtitle">Generate with LLM or upload existing .feature file</div>
             </div>
             <div class="step-status pending" id="step-2-status">Pending</div>
             <div class="step-toggle">▼</div>
         </div>
         <div class="step-content">
-            <!-- DUT Status -->
-            <div class="dut-status" id="dut-status">
-                <div class="dut-status-header">
-                    <div class="dut-status-icon">📋</div>
-                    <div class="dut-status-info">
-                        <h4>Current DUT</h4>
-                        <p><span class="filename" id="dut-filename">-</span> • <span id="dut-type-display">-</span> •
-                            <span id="dut-bitwidth-display">-</span></p>
-                    </div>
-                    <div class="dut-status-badge" id="dut-module-badge">-</div>
-                    <div class="dut-status-badge source-badge" id="dut-source-badge">LLM</div>
-                </div>
+            <!-- Mode Switcher for Step 2 -->
+            <div class="mode-switcher">
+                <button class="mode-btn active" onclick="switchBddMode('generate')" id="bdd-mode-generate-btn">
+                    🤖 Generate with LLM
+                </button>
+                <button class="mode-btn" onclick="switchBddMode('upload')" id="bdd-mode-upload-btn">
+                    📤 Upload Existing File
+                </button>
             </div>
 
-            <!-- No DUT Warning -->
-            <div class="no-dut-warning visible" id="no-dut-warning">
-                <div class="no-dut-warning-icon">⚠️</div>
-                <div class="no-dut-warning-text">
-                    <h4>No Hardware Generated</h4>
-                    <p>Complete Step 1 first to generate or upload hardware.</p>
+            <!-- Generate Mode for BDD -->
+            <div class="mode-content active" id="bdd-mode-generate">
+                <!-- DUT Status -->
+                <div class="dut-status" id="dut-status">
+                    <div class="dut-status-header">
+                        <div class="dut-status-icon">📋</div>
+                        <div class="dut-status-info">
+                            <h4>Current DUT</h4>
+                            <p><span class="filename" id="dut-filename">-</span> • <span id="dut-type-display">-</span> •
+                                <span id="dut-bitwidth-display">-</span></p>
+                        </div>
+                        <div class="dut-status-badge" id="dut-module-badge">-</div>
+                        <div class="dut-status-badge source-badge" id="dut-source-badge">LLM</div>
+                    </div>
                 </div>
-            </div>
 
-            <div class="card">
-                <div class="card-title">⚡ Configuration</div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>LLM Provider</label>
-                        <select id="bdd-llm" onchange="onBddLlmChange()">
-                            <option value="groq">Groq</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="openai">OpenAI</option>
-                            <option value="claude">Claude</option>
-                            <option value="gemini">Gemini</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="bdd-model-group" style="display: none;">
-                        <label>Model</label>
-                        <select id="bdd-model">
-                            <option value="gpt-5-mini">GPT-5 Mini (Recommended)</option>
-                            <option value="gpt-5">GPT-5</option>
-                            <option value="gpt-5.1">GPT-5.1</option>
-                        </select>
+                <!-- No DUT Warning -->
+                <div class="no-dut-warning visible" id="no-dut-warning">
+                    <div class="no-dut-warning-icon">⚠️</div>
+                    <div class="no-dut-warning-text">
+                        <h4>No Hardware Generated</h4>
+                        <p>Complete Step 1 first to generate or upload hardware.</p>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Requirements (auto-filled based on DUT)</label>
-                    <textarea id="bdd-input"
-                              placeholder="Requirements will be auto-filled when you generate or upload hardware..."></textarea>
-                    <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with DUT</div>
-                    <div class="examples">
-                        <div class="examples-title">Examples:</div>
-                        <div class="example-chips" id="bdd-examples">
-                            <span class="example-chip" onclick="setBddExample('Basic functionality verification')">Basic test</span>
-                            <span class="example-chip" onclick="setBddExample('Test boundary values and edge cases')">Boundary</span>
-                            <span class="example-chip"
-                                  onclick="setBddExample('Reset behavior and initialization tests')">Reset</span>
+
+                <div class="card">
+                    <div class="card-title">⚡ Configuration</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>LLM Provider</label>
+                            <select id="bdd-llm" onchange="onBddLlmChange()">
+                                <option value="groq">Groq</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="claude">Claude</option>
+                                <option value="gemini">Gemini</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="bdd-model-group" style="display: none;">
+                            <label>Model</label>
+                            <select id="bdd-model">
+                                <option value="gpt-5-mini">GPT-5 Mini (Recommended)</option>
+                                <option value="gpt-5">GPT-5</option>
+                                <option value="gpt-5.1">GPT-5.1</option>
+                            </select>
                         </div>
                     </div>
-                </div>
-                <div class="toggle-row">
-                    <span class="toggle-label">⚡ Stream output</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="bdd-stream" checked>
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="error-message" id="bdd-error"></div>
-            <div class="stream-status" id="bdd-status">
-                <div class="dot"></div>
-                <span id="bdd-status-text">Generating...</span>
-            </div>
-
-            <button class="btn btn-primary green" id="bdd-btn" onclick="generateBDD()">
-                <span id="bdd-btn-text">🧪 Generate BDD Tests</span>
-                <div class="spinner" id="bdd-spinner" style="display: none;"></div>
-            </button>
-
-            <div class="card result" id="bdd-result" style="margin-top: 16px;">
-                <div class="result-header">
-                    <div class="icon">✅</div>
-                    <div class="info">
-                        <h3 id="bdd-filename">Generating...</h3>
-                        <p id="bdd-info">Ready to generate</p>
+                    <div class="form-group">
+                        <label>Requirements (auto-filled based on DUT)</label>
+                        <textarea id="bdd-input"
+                                  placeholder="Requirements will be auto-filled when you generate or upload hardware..."></textarea>
+                        <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with DUT</div>
+                        <div class="examples">
+                            <div class="examples-title">Examples:</div>
+                            <div class="example-chips" id="bdd-examples">
+                                <span class="example-chip" onclick="setBddExample('Basic functionality verification')">Basic test</span>
+                                <span class="example-chip" onclick="setBddExample('Test boundary values and edge cases')">Boundary</span>
+                                <span class="example-chip"
+                                      onclick="setBddExample('Reset behavior and initialization tests')">Reset</span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="badge" id="bdd-badge">LLM</div>
+                    <div class="toggle-row">
+                        <span class="toggle-label">⚡ Stream output</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="bdd-stream" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="preview-label">BDD Feature Preview</div>
-                <div class="preview-box" id="bdd-preview"></div>
-                <div class="action-buttons">
-                    <button class="btn btn-secondary btn-sm" id="bdd-download" onclick="downloadBDD()">📥 Download
-                        .feature
+
+                <div class="error-message" id="bdd-error"></div>
+                <div class="stream-status" id="bdd-status">
+                    <div class="dot"></div>
+                    <span id="bdd-status-text">Generating...</span>
+                </div>
+
+                <button class="btn btn-primary green" id="bdd-btn" onclick="generateBDD()">
+                    <span id="bdd-btn-text">🧪 Generate BDD Tests</span>
+                    <div class="spinner" id="bdd-spinner" style="display: none;"></div>
+                </button>
+
+                <div class="card result" id="bdd-result" style="margin-top: 16px;">
+                    <div class="result-header">
+                        <div class="icon">✅</div>
+                        <div class="info">
+                            <h3 id="bdd-filename">Generating...</h3>
+                            <p id="bdd-info">Ready to generate</p>
+                        </div>
+                        <div class="badge" id="bdd-badge">LLM</div>
+                    </div>
+                    <div class="preview-label">BDD Feature Preview</div>
+                    <div class="preview-box" id="bdd-preview"></div>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary btn-sm" id="bdd-download" onclick="downloadBDD()">📥 Download
+                            .feature
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="resetBDD()">🔄 Reset</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload Mode for BDD -->
+            <div class="mode-content" id="bdd-mode-upload">
+                <div class="upload-area" id="bdd-upload-area" onclick="document.getElementById('bdd-upload-input').click()">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-title">Drag & drop your BDD .feature file here</div>
+                    <div class="upload-subtitle">or click to browse</div>
+                    <div class="upload-info">
+                        <div class="upload-info-item">📄 .feature files</div>
+                        <div class="upload-info-item">📏 Max 1MB</div>
+                        <div class="upload-info-item">🔒 Secure upload</div>
+                    </div>
+                    <input type="file" id="bdd-upload-input" class="upload-input" accept=".feature"
+                           onchange="handleBddFileSelect(event)">
+                </div>
+
+                <div class="error-message" id="bdd-upload-error"></div>
+                <div class="success-message" id="bdd-upload-success"></div>
+
+                <!-- BDD Upload Result -->
+                <div class="upload-result" id="bdd-upload-result">
+                    <div class="file-info-card">
+                        <div class="file-info-header">
+                            <div class="file-info-icon">📄</div>
+                            <div class="file-info-details">
+                                <h4 id="bdd-uploaded-filename">test.feature</h4>
+                                <p id="bdd-uploaded-filesize">2.3 KB • Uploaded successfully</p>
+                            </div>
+                            <div class="file-info-actions">
+                                <button class="btn btn-danger btn-sm" onclick="removeBddUploadedFile()">✕ Remove</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Feature File Preview -->
+                    <div class="card">
+                        <div class="card-title">📋 Feature File Preview</div>
+                        <div class="preview-box" id="bdd-upload-preview" style="max-height: 200px;"></div>
+                    </div>
+
+                    <!-- Detected Info -->
+                    <div class="detected-info" id="bdd-detected-info">
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Feature Name</span>
+                            <span class="detected-info-value" id="bdd-detected-feature-name">-</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Scenarios Count</span>
+                            <span class="detected-info-value" id="bdd-detected-scenarios">-</span>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary green" onclick="confirmBddUpload()">
+                        ✅ Use This BDD File
                     </button>
-                    <button class="btn btn-secondary btn-sm" onclick="resetBDD()">🔄 Reset</button>
                 </div>
             </div>
         </div>
@@ -1065,179 +1135,253 @@
         <div class="step-number orange" id="step-3-num">3</div>
         <div class="step-title-area">
             <div class="step-title">⚙️ Generate Verilog Testbench</div>
-            <div class="step-subtitle">Convert BDD to Verilog testbench</div>
+            <div class="step-subtitle">Generate with LLM or upload existing testbench file</div>
         </div>
         <div class="step-status pending" id="step-3-status">Pending</div>
         <div class="step-toggle">▼</div>
     </div>
     <div class="step-content">
-        <!-- BDD Source Status -->
-        <div class="dut-status" id="bdd-source-status">
-            <div class="dut-status-header">
-                <div class="dut-status-icon">📄</div>
-                <div class="dut-status-info">
-                    <h4>Source BDD</h4>
-                    <p><span class="filename" id="tb-bdd-filename">-</span> • <span id="tb-bdd-llm">-</span></p>
+        <!-- Top Level Mode Switcher for Step 3 -->
+        <div class="mode-switcher">
+            <button class="mode-btn active" onclick="switchTbTopMode('generate')" id="tb-top-mode-generate-btn">
+                🤖 Generate with LLM
+            </button>
+            <button class="mode-btn" onclick="switchTbTopMode('upload')" id="tb-top-mode-upload-btn">
+                📤 Upload Existing File
+            </button>
+        </div>
+
+        <!-- Generate Mode for Testbench -->
+        <div class="mode-content active" id="tb-mode-generate">
+            <!-- BDD Source Status -->
+            <div class="dut-status" id="bdd-source-status">
+                <div class="dut-status-header">
+                    <div class="dut-status-icon">📄</div>
+                    <div class="dut-status-info">
+                        <h4>Source BDD</h4>
+                        <p><span class="filename" id="tb-bdd-filename">-</span> • <span id="tb-bdd-llm">-</span></p>
+                    </div>
+                    <div class="dut-status-badge" id="tb-module-badge">-</div>
                 </div>
-                <div class="dut-status-badge" id="tb-module-badge">-</div>
             </div>
-        </div>
 
-        <!-- No BDD Warning -->
-        <div class="no-dut-warning visible" id="no-bdd-warning">
-            <div class="no-dut-warning-icon">⚠️</div>
-            <div class="no-dut-warning-text">
-                <h4>No BDD File Generated</h4>
-                <p>Complete Step 2 first to generate BDD test scenarios.</p>
+            <!-- No BDD Warning -->
+            <div class="no-dut-warning visible" id="no-bdd-warning">
+                <div class="no-dut-warning-icon">⚠️</div>
+                <div class="no-dut-warning-text">
+                    <h4>No BDD File Generated</h4>
+                    <p>Complete Step 2 first to generate BDD test scenarios.</p>
+                </div>
             </div>
-        </div>
 
-        <div class="card">
-            <div class="card-title">⚡ Configuration</div>
+            <div class="card">
+                <div class="card-title">⚡ Configuration</div>
 
-            <!-- Mode Switcher -->
-            <div class="form-group">
-                <label>Generation Mode</label>
-                <div class="mode-switcher" style="margin-top: 8px;">
-                    <button class="mode-btn active" onclick="switchTbMode('single')" id="tb-mode-single-btn">
-                        📄 Single File
+                <!-- Generation Mode Switcher (Single/Batch) -->
+                <div class="form-group">
+                    <label>Generation Mode</label>
+                    <div class="mode-switcher" style="margin-top: 8px;">
+                        <button class="mode-btn active" onclick="switchTbMode('single')" id="tb-mode-single-btn">
+                            📄 Single File
+                        </button>
+                        <button class="mode-btn" onclick="switchTbMode('batch')" id="tb-mode-batch-btn">
+                            📚 Batch (All BDD Files)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Single Mode Options -->
+                <div id="tb-single-options">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>DUT Module Name</label>
+                            <input type="text" id="tb-module-name" placeholder="e.g., alu_16bit" readonly>
+                        </div>
+                        <!-- Bitwidth - ALU, Counter, RegFile 显示 -->
+                        <div class="form-group" id="tb-bitwidth-group">
+                            <label>Bitwidth</label>
+                            <input type="text" id="tb-bitwidth" placeholder="e.g., 16" readonly>
+                        </div>
+                        <!-- Registers - 仅 RegFile 显示 -->
+                        <div class="form-group" id="tb-registers-group" style="display: none;">
+                            <label>Registers</label>
+                            <input type="text" id="tb-registers" placeholder="e.g., 32" readonly>
+                        </div>
+                        <!-- Pipeline - 仅 CPU 显示 -->
+                        <div class="form-group" id="tb-pipeline-group" style="display: none;">
+                            <label>Pipeline</label>
+                            <input type="text" id="tb-pipeline" placeholder="e.g., 5-stage" readonly>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Batch Mode Options -->
+                <div id="tb-batch-options" style="display: none;">
+                    <div class="detected-info">
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Source Directory</span>
+                            <span class="detected-info-value">output/bdd/</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Output Directory</span>
+                            <span class="detected-info-value">output/testbench/</span>
+                        </div>
+                        <div class="detected-info-row">
+                            <span class="detected-info-label">Quality Reports</span>
+                            <span class="detected-info-value">output/quality_reports/</span>
+                        </div>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                        ℹ️ Batch mode will generate testbenches for all .feature files and create a quality comparison
+                        report.
+                    </p>
+                </div>
+            </div>
+
+            <div class="error-message" id="tb-error"></div>
+
+            <button class="btn btn-primary" style="background: var(--accent-orange);" id="tb-btn"
+                    onclick="generateTestbenchByMode()">
+                <span id="tb-btn-text">⚙️ Generate Testbench</span>
+                <div class="spinner" id="tb-spinner" style="display: none;"></div>
+            </button>
+
+            <!-- Testbench Result -->
+            <div class="card result" id="tb-result" style="margin-top: 16px;">
+                <div class="result-header">
+                    <div class="icon">✅</div>
+                    <div class="info">
+                        <h3 id="tb-filename">Generating...</h3>
+                        <p id="tb-info">Ready to generate</p>
+                    </div>
+                    <div class="badge" id="tb-badge">TB</div>
+                </div>
+
+                <!-- Quality Summary -->
+                <div class="detected-info" id="tb-quality-summary">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Quality Score</span>
+                        <span>
+                            <span class="detected-info-value" id="tb-quality-score">-</span>
+                            <span class="confidence-badge high" id="tb-quality-grade">-</span>
+                        </span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Test Cases</span>
+                        <span class="detected-info-value" id="tb-test-count">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Operations Covered</span>
+                        <span class="detected-info-value" id="tb-ops-covered">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Corner Cases</span>
+                        <span class="detected-info-value" id="tb-corner-cases">-</span>
+                    </div>
+                </div>
+
+                <div class="preview-label">Testbench Preview</div>
+                <div class="preview-box" id="tb-preview"></div>
+                <div class="action-buttons">
+                    <button class="btn btn-secondary btn-sm" id="tb-download" onclick="downloadTestbench()">📥 Download .v</button>
+                    <button class="btn btn-secondary btn-sm" onclick="resetTestbench()">🔄 Reset</button>
+                </div>
+            </div>
+
+            <!-- Batch Result -->
+            <div class="card result" id="tb-batch-result" style="margin-top: 16px;">
+                <div class="result-header">
+                    <div class="icon">✅</div>
+                    <div class="info">
+                        <h3 id="tb-batch-title">Batch Generation Complete</h3>
+                        <p id="tb-batch-info">-</p>
+                    </div>
+                    <div class="badge" id="tb-batch-badge">BATCH</div>
+                </div>
+
+                <!-- Batch Summary -->
+                <div class="detected-info" id="tb-batch-summary">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Total Testbenches</span>
+                        <span class="detected-info-value" id="tb-batch-total">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">LLM Providers</span>
+                        <span class="detected-info-value" id="tb-batch-llms">-</span>
+                    </div>
+                </div>
+
+                <!-- LLM Results -->
+                <div class="preview-label">Results by LLM</div>
+                <div class="preview-box" id="tb-batch-details" style="min-height: 100px; max-height: 200px;"></div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-secondary btn-sm" onclick="downloadTestbenchZip()">📦 Download All (.zip)
                     </button>
-                    <button class="mode-btn" onclick="switchTbMode('batch')" id="tb-mode-batch-btn">
-                        📚 Batch (All BDD Files)
-                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="showComparisonModal()">📊 View Comparison</button>
+                    <button class="btn btn-secondary btn-sm" onclick="resetBatchTestbench()">🔄 Reset</button>
                 </div>
-            </div>
-
-            <!-- Single Mode Options -->
-            <div id="tb-single-options">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>DUT Module Name</label>
-                        <input type="text" id="tb-module-name" placeholder="e.g., alu_16bit" readonly>
-                    </div>
-                    <!-- Bitwidth - ALU, Counter, RegFile 显示 -->
-                    <div class="form-group" id="tb-bitwidth-group">
-                        <label>Bitwidth</label>
-                        <input type="text" id="tb-bitwidth" placeholder="e.g., 16" readonly>
-                    </div>
-                    <!-- Registers - 仅 RegFile 显示 -->
-                    <div class="form-group" id="tb-registers-group" style="display: none;">
-                        <label>Registers</label>
-                        <input type="text" id="tb-registers" placeholder="e.g., 32" readonly>
-                    </div>
-                    <!-- Pipeline - 仅 CPU 显示 -->
-                    <div class="form-group" id="tb-pipeline-group" style="display: none;">
-                        <label>Pipeline</label>
-                        <input type="text" id="tb-pipeline" placeholder="e.g., 5-stage" readonly>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Batch Mode Options -->
-            <div id="tb-batch-options" style="display: none;">
-                <div class="detected-info">
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Source Directory</span>
-                        <span class="detected-info-value">output/bdd/</span>
-                    </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Output Directory</span>
-                        <span class="detected-info-value">output/testbench/</span>
-                    </div>
-                    <div class="detected-info-row">
-                        <span class="detected-info-label">Quality Reports</span>
-                        <span class="detected-info-value">output/quality_reports/</span>
-                    </div>
-                </div>
-                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
-                    ℹ️ Batch mode will generate testbenches for all .feature files and create a quality comparison
-                    report.
-                </p>
             </div>
         </div>
 
-        <div class="error-message" id="tb-error"></div>
-
-        <button class="btn btn-primary" style="background: var(--accent-orange);" id="tb-btn"
-                onclick="generateTestbenchByMode()">
-            <span id="tb-btn-text">⚙️ Generate Testbench</span>
-            <div class="spinner" id="tb-spinner" style="display: none;"></div>
-        </button>
-
-        <!-- Testbench Result -->
-        <div class="card result" id="tb-result" style="margin-top: 16px;">
-            <div class="result-header">
-                <div class="icon">✅</div>
-                <div class="info">
-                    <h3 id="tb-filename">Generating...</h3>
-                    <p id="tb-info">Ready to generate</p>
+        <!-- Upload Mode for Testbench -->
+        <div class="mode-content" id="tb-mode-upload">
+            <div class="upload-area" id="tb-upload-area" onclick="document.getElementById('tb-upload-input').click()">
+                <div class="upload-icon">📁</div>
+                <div class="upload-title">Drag & drop your Verilog testbench file here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-info">
+                    <div class="upload-info-item">📄 .v, .sv files</div>
+                    <div class="upload-info-item">📏 Max 1MB</div>
+                    <div class="upload-info-item">🔒 Secure upload</div>
                 </div>
-                <div class="badge" id="tb-badge">TB</div>
+                <input type="file" id="tb-upload-input" class="upload-input" accept=".v,.sv"
+                       onchange="handleTbFileSelect(event)">
             </div>
 
-            <!-- Quality Summary -->
-            <div class="detected-info" id="tb-quality-summary">
-                <div class="detected-info-row">
-                    <span class="detected-info-label">Quality Score</span>
-                    <span>
-                        <span class="detected-info-value" id="tb-quality-score">-</span>
-                        <span class="confidence-badge high" id="tb-quality-grade">-</span>
-                    </span>
-                </div>
-                <div class="detected-info-row">
-                    <span class="detected-info-label">Test Cases</span>
-                    <span class="detected-info-value" id="tb-test-count">-</span>
-                </div>
-                <div class="detected-info-row">
-                    <span class="detected-info-label">Operations Covered</span>
-                    <span class="detected-info-value" id="tb-ops-covered">-</span>
-                </div>
-                <div class="detected-info-row">
-                    <span class="detected-info-label">Corner Cases</span>
-                    <span class="detected-info-value" id="tb-corner-cases">-</span>
-                </div>
-            </div>
+            <div class="error-message" id="tb-upload-error"></div>
+            <div class="success-message" id="tb-upload-success"></div>
 
-            <div class="preview-label">Testbench Preview</div>
-            <div class="preview-box" id="tb-preview"></div>
-            <div class="action-buttons">
-                <button class="btn btn-secondary btn-sm" id="tb-download" onclick="downloadTestbench()">📥 Download .v</button>
-                <button class="btn btn-secondary btn-sm" onclick="resetTestbench()">🔄 Reset</button>
-            </div>
-        </div>
-
-        <!-- Batch Result -->
-        <div class="card result" id="tb-batch-result" style="margin-top: 16px;">
-            <div class="result-header">
-                <div class="icon">✅</div>
-                <div class="info">
-                    <h3 id="tb-batch-title">Batch Generation Complete</h3>
-                    <p id="tb-batch-info">-</p>
+            <!-- Testbench Upload Result -->
+            <div class="upload-result" id="tb-upload-result">
+                <div class="file-info-card">
+                    <div class="file-info-header">
+                        <div class="file-info-icon">📄</div>
+                        <div class="file-info-details">
+                            <h4 id="tb-uploaded-filename">testbench.v</h4>
+                            <p id="tb-uploaded-filesize">2.3 KB • Uploaded successfully</p>
+                        </div>
+                        <div class="file-info-actions">
+                            <button class="btn btn-danger btn-sm" onclick="removeTbUploadedFile()">✕ Remove</button>
+                        </div>
+                    </div>
                 </div>
-                <div class="badge" id="tb-batch-badge">BATCH</div>
-            </div>
 
-            <!-- Batch Summary -->
-            <div class="detected-info" id="tb-batch-summary">
-                <div class="detected-info-row">
-                    <span class="detected-info-label">Total Testbenches</span>
-                    <span class="detected-info-value" id="tb-batch-total">-</span>
+                <!-- Testbench File Preview -->
+                <div class="card">
+                    <div class="card-title">📋 Testbench Preview</div>
+                    <div class="preview-box" id="tb-upload-preview" style="max-height: 200px;"></div>
                 </div>
-                <div class="detected-info-row">
-                    <span class="detected-info-label">LLM Providers</span>
-                    <span class="detected-info-value" id="tb-batch-llms">-</span>
+
+                <!-- Detected Info -->
+                <div class="detected-info" id="tb-detected-info">
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Module Name</span>
+                        <span class="detected-info-value" id="tb-detected-module-name">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">DUT Instance</span>
+                        <span class="detected-info-value" id="tb-detected-dut-instance">-</span>
+                    </div>
+                    <div class="detected-info-row">
+                        <span class="detected-info-label">Test Cases</span>
+                        <span class="detected-info-value" id="tb-detected-test-cases">-</span>
+                    </div>
                 </div>
-            </div>
 
-            <!-- LLM Results -->
-            <div class="preview-label">Results by LLM</div>
-            <div class="preview-box" id="tb-batch-details" style="min-height: 100px; max-height: 200px;"></div>
-
-            <div class="action-buttons">
-                <button class="btn btn-secondary btn-sm" onclick="downloadTestbenchZip()">📦 Download All (.zip)
+                <button class="btn btn-primary" style="background: var(--accent-orange);" onclick="confirmTbUpload()">
+                    ✅ Use This Testbench File
                 </button>
-                <button class="btn btn-secondary btn-sm" onclick="showComparisonModal()">📊 View Comparison</button>
-                <button class="btn btn-secondary btn-sm" onclick="resetBatchTestbench()">🔄 Reset</button>
             </div>
         </div>
     </div>
@@ -1607,11 +1751,37 @@
         // Mode Switching
         // ============================================================
         function switchMode(mode) {
-            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
-            document.querySelectorAll('.mode-content').forEach(content => content.classList.remove('active'));
+            document.querySelectorAll('#step-1 .mode-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('#step-1 .mode-content').forEach(content => content.classList.remove('active'));
 
             document.getElementById(`mode-${mode}-btn`).classList.add('active');
             document.getElementById(`mode-${mode}`).classList.add('active');
+        }
+
+        // ============================================================
+        // BDD Mode Switching (Step 2)
+        // ============================================================
+        function switchBddMode(mode) {
+            // Update buttons
+            document.getElementById('bdd-mode-generate-btn').classList.toggle('active', mode === 'generate');
+            document.getElementById('bdd-mode-upload-btn').classList.toggle('active', mode === 'upload');
+
+            // Update content visibility
+            document.getElementById('bdd-mode-generate').classList.toggle('active', mode === 'generate');
+            document.getElementById('bdd-mode-upload').classList.toggle('active', mode === 'upload');
+        }
+
+        // ============================================================
+        // Testbench Top Mode Switching (Step 3: Generate vs Upload)
+        // ============================================================
+        function switchTbTopMode(mode) {
+            // Update buttons
+            document.getElementById('tb-top-mode-generate-btn').classList.toggle('active', mode === 'generate');
+            document.getElementById('tb-top-mode-upload-btn').classList.toggle('active', mode === 'upload');
+
+            // Update content visibility
+            document.getElementById('tb-mode-generate').classList.toggle('active', mode === 'generate');
+            document.getElementById('tb-mode-upload').classList.toggle('active', mode === 'upload');
         }
 
         // ============================================================
@@ -1863,6 +2033,291 @@
 
         showSuccess('upload', '✅ DUT configured! Proceed to Step 2 to generate tests.');
     }
+
+        // ============================================================
+        // BDD File Upload Handling (Step 2)
+        // ============================================================
+        let bddUploadedFileData = null;
+
+        // Initialize BDD upload area drag and drop
+        document.addEventListener('DOMContentLoaded', function() {
+            const bddUploadArea = document.getElementById('bdd-upload-area');
+            if (bddUploadArea) {
+                bddUploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    bddUploadArea.classList.add('dragover');
+                });
+                bddUploadArea.addEventListener('dragleave', () => {
+                    bddUploadArea.classList.remove('dragover');
+                });
+                bddUploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    bddUploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        processBddFile(files[0]);
+                    }
+                });
+            }
+
+            // Initialize TB upload area drag and drop
+            const tbUploadArea = document.getElementById('tb-upload-area');
+            if (tbUploadArea) {
+                tbUploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    tbUploadArea.classList.add('dragover');
+                });
+                tbUploadArea.addEventListener('dragleave', () => {
+                    tbUploadArea.classList.remove('dragover');
+                });
+                tbUploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    tbUploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        processTbFile(files[0]);
+                    }
+                });
+            }
+        });
+
+        function handleBddFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processBddFile(file);
+            }
+        }
+
+        function processBddFile(file) {
+            hideError('bdd-upload');
+            hideSuccess('bdd-upload');
+
+            // Validate extension
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            if (ext !== '.feature') {
+                showError('bdd-upload', `Unsupported file type: ${ext}. Please upload .feature files.`);
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('bdd-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            // Read file
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const content = e.target.result;
+                await uploadBddFile(file, content);
+            };
+            reader.readAsText(file);
+        }
+
+        async function uploadBddFile(file, content) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-bdd', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('bdd-upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store uploaded data
+                bddUploadedFileData = data;
+
+                // Update UI
+                document.getElementById('bdd-uploaded-filename').textContent = data.filename;
+                document.getElementById('bdd-uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+
+                // Show preview
+                document.getElementById('bdd-upload-preview').textContent =
+                    content.substring(0, 1000) + (content.length > 1000 ? '\n...' : '');
+
+                // Parse feature info
+                const featureMatch = content.match(/Feature:\s*(.+)/);
+                const scenarioCount = (content.match(/Scenario:/gi) || []).length;
+
+                document.getElementById('bdd-detected-feature-name').textContent =
+                    featureMatch ? featureMatch[1].trim() : 'Unknown';
+                document.getElementById('bdd-detected-scenarios').textContent = scenarioCount + ' scenarios';
+
+                // Show result
+                document.getElementById('bdd-upload-result').classList.add('visible');
+                showSuccess('bdd-upload', 'BDD file uploaded successfully!');
+
+            } catch (error) {
+                showError('bdd-upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function removeBddUploadedFile() {
+            bddUploadedFileData = null;
+            document.getElementById('bdd-upload-result').classList.remove('visible');
+            document.getElementById('bdd-upload-input').value = '';
+            hideSuccess('bdd-upload');
+        }
+
+        function confirmBddUpload() {
+            if (!bddUploadedFileData) {
+                showError('bdd-upload', 'No file uploaded');
+                return;
+            }
+
+            // Set current BDD
+            currentBddFilename = bddUploadedFileData.filename;
+            currentBDD = {
+                filename: bddUploadedFileData.filename,
+                filepath: bddUploadedFileData.filepath,
+                llm: 'uploaded'
+            };
+
+            // Update testbench tab state
+            updateTbTabState();
+
+            // Update status
+            updateStepStatus(2, 'completed');
+            updatePipelineIndicator(2, 'completed');
+            updatePipelineIndicator(3, 'active');
+
+            // Expand Step 3
+            document.getElementById('step-3').classList.remove('collapsed');
+
+            showSuccess('bdd-upload', '✅ BDD file configured! Proceed to Step 3 to generate testbench.');
+        }
+
+        // ============================================================
+        // Testbench File Upload Handling (Step 3)
+        // ============================================================
+        let tbUploadedFileData = null;
+
+        function handleTbFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processTbFile(file);
+            }
+        }
+
+        function processTbFile(file) {
+            hideError('tb-upload');
+            hideSuccess('tb-upload');
+
+            // Validate extension
+            const validExtensions = ['.v', '.sv'];
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            if (!validExtensions.includes(ext)) {
+                showError('tb-upload', `Unsupported file type: ${ext}. Please upload .v or .sv files.`);
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('tb-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            // Read file
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const content = e.target.result;
+                await uploadTbFile(file, content);
+            };
+            reader.readAsText(file);
+        }
+
+        async function uploadTbFile(file, content) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-testbench', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('tb-upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store uploaded data
+                tbUploadedFileData = data;
+
+                // Update UI
+                document.getElementById('tb-uploaded-filename').textContent = data.filename;
+                document.getElementById('tb-uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+
+                // Show preview
+                document.getElementById('tb-upload-preview').textContent =
+                    content.substring(0, 1000) + (content.length > 1000 ? '\n...' : '');
+
+                // Parse testbench info
+                const moduleMatch = content.match(/module\s+(\w+)/);
+                const dutMatch = content.match(/(\w+)\s+(?:dut|uut|DUT|UUT)\s*\(/);
+                const testCount = (content.match(/\$display.*(?:Test|PASS|FAIL)/gi) || []).length;
+
+                document.getElementById('tb-detected-module-name').textContent =
+                    moduleMatch ? moduleMatch[1] : 'Unknown';
+                document.getElementById('tb-detected-dut-instance').textContent =
+                    dutMatch ? dutMatch[1] : 'Unknown';
+                document.getElementById('tb-detected-test-cases').textContent =
+                    testCount > 0 ? testCount + ' test outputs' : 'Unable to detect';
+
+                // Show result
+                document.getElementById('tb-upload-result').classList.add('visible');
+                showSuccess('tb-upload', 'Testbench file uploaded successfully!');
+
+            } catch (error) {
+                showError('tb-upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function removeTbUploadedFile() {
+            tbUploadedFileData = null;
+            document.getElementById('tb-upload-result').classList.remove('visible');
+            document.getElementById('tb-upload-input').value = '';
+            hideSuccess('tb-upload');
+        }
+
+        function confirmTbUpload() {
+            if (!tbUploadedFileData) {
+                showError('tb-upload', 'No file uploaded');
+                return;
+            }
+
+            // Set current testbench
+            currentTbFilename = tbUploadedFileData.filename;
+            currentTB = {
+                filename: tbUploadedFileData.filename,
+                filepath: tbUploadedFileData.filepath,
+                source: 'uploaded'
+            };
+
+            // Update simulation tab state
+            updateSimTabState();
+
+            // Update status
+            updateStepStatus(3, 'completed');
+            updatePipelineIndicator(3, 'completed');
+            updatePipelineIndicator(4, 'active');
+
+            // Expand Step 4
+            document.getElementById('step-4').classList.remove('collapsed');
+
+            showSuccess('tb-upload', '✅ Testbench file configured! Proceed to Step 4 to run simulation.');
+        }
 
         // ============================================================
         // Module Type Change (Generate mode)
@@ -2334,6 +2789,7 @@
         // ============================================================
         let currentTbFilename = null;
         let currentBDD = null;
+        let currentTB = null;  // For storing uploaded testbench info
 
         // ============================================================
         // Testbench Mode Switching
@@ -2873,10 +3329,23 @@
         function updateSimTabState() {
             const noTbWarning = document.getElementById('no-tb-warning');
 
-            if (currentTbFilename && currentDUT) {
+            // Support both generated and uploaded testbenches
+            const hasTb = currentTbFilename || (currentTB && currentTB.filename);
+            const hasDut = currentDUT || (currentTB && currentTB.source === 'uploaded');
+
+            if (hasTb && hasDut) {
                 noTbWarning.classList.remove('visible');
-                document.getElementById('sim-tb-name').textContent = currentTbFilename;
-                document.getElementById('sim-dut-name').textContent = currentDUT.filename || `${currentDUT.moduleType}_${currentDUT.bitwidth}bit.v`;
+                document.getElementById('sim-tb-name').textContent = currentTbFilename || currentTB.filename;
+                if (currentDUT) {
+                    document.getElementById('sim-dut-name').textContent = currentDUT.filename || `${currentDUT.moduleType}_${currentDUT.bitwidth}bit.v`;
+                } else {
+                    document.getElementById('sim-dut-name').textContent = 'User uploaded';
+                }
+            } else if (currentTbFilename || (currentTB && currentTB.filename)) {
+                // Have testbench but no DUT - still allow simulation setup
+                noTbWarning.classList.remove('visible');
+                document.getElementById('sim-tb-name').textContent = currentTbFilename || currentTB.filename;
+                document.getElementById('sim-dut-name').textContent = 'Not specified (use testbench internal)';
             } else {
                 noTbWarning.classList.add('visible');
             }

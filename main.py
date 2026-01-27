@@ -300,6 +300,111 @@ def upload_dut():
 @app.errorhandler(413)
 def too_large(e):
     return jsonify({'success': False, 'error': 'File too large. Maximum: 1MB'}), 413
+
+
+# ============================================================================
+# Upload BDD API
+# ============================================================================
+@app.route('/api/upload-bdd', methods=['POST'])
+def upload_bdd():
+    """Handle BDD .feature file upload."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+    # Validate extension
+    if not file.filename.lower().endswith('.feature'):
+        return jsonify({'success': False, 'error': 'Invalid file type. Only .feature files allowed'}), 400
+
+    try:
+        file_content = file.read()
+        filename = secure_filename(file.filename)
+
+        # Save to uploaded BDD directory
+        upload_dir = PROJECT_ROOT / 'output' / 'bdd' / 'uploaded'
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        filepath = upload_dir / filename
+        with open(filepath, 'wb') as f:
+            f.write(file_content)
+
+        content = file_content.decode('utf-8', errors='replace')
+
+        # Update last_generated_bdd state
+        last_generated_bdd['filename'] = filename
+        last_generated_bdd['filepath'] = str(filepath)
+        last_generated_bdd['llm'] = 'uploaded'
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'filepath': str(filepath),
+            'preview': content[:1000] + ('...' if len(content) > 1000 else ''),
+            'full_content': content,
+            'source': 'uploaded'
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
+
+# ============================================================================
+# Upload Testbench API
+# ============================================================================
+@app.route('/api/upload-testbench', methods=['POST'])
+def upload_testbench():
+    """Handle Verilog testbench file upload."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+    # Validate extension
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    if ext not in ['v', 'sv']:
+        return jsonify({'success': False, 'error': 'Invalid file type. Only .v or .sv files allowed'}), 400
+
+    try:
+        file_content = file.read()
+        filename = secure_filename(file.filename)
+
+        # Save to uploaded testbench directory
+        upload_dir = PROJECT_ROOT / 'output' / 'testbench' / 'uploaded'
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        filepath = upload_dir / filename
+        with open(filepath, 'wb') as f:
+            f.write(file_content)
+
+        content = file_content.decode('utf-8', errors='replace')
+
+        # Update last_generated_tb state
+        last_generated_tb['filename'] = filename
+        last_generated_tb['filepath'] = str(filepath)
+        last_generated_tb['bdd_source'] = 'uploaded'
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'filepath': str(filepath),
+            'preview': content[:1000] + ('...' if len(content) > 1000 else ''),
+            'full_content': content,
+            'source': 'uploaded'
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
+
 def make_sse_message(msg_type, **kwargs):
     """Helper to create SSE message"""
     data = {"type": msg_type}
