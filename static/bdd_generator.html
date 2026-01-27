@@ -1908,16 +1908,15 @@
             }
         }
 
-        function onModuleSelect() {
-            selectedModuleIndex = parseInt(document.getElementById('module-select').value);
-            updateDetectedInfo(parsedModules[selectedModuleIndex]);
-        }
-         1024 * 1024) {
+        // 修正后的处理函数
+        function handleTbFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (file.size > 1024 * 1024) {
                 showError('tb-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
                 return;
             }
-
-            // Upload file
             uploadTbFile(file);
         }
 
