@@ -342,19 +342,19 @@ def upload_dut():
                     # 如果有Critical Bug，添加警告信息
                     if bug_report['has_critical']:
                         result['validation_warning'] = (
-                            f"检测到 {sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} 个严重Bug！"
-                            f"这些Bug可能导致验证结果不可靠。"
+                            f"Found {sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} critical bugs!"
+                            f"Validation reliability may be compromised by these bugs."
                         )
                 else:
                     # 非ALU类型，标记为未检测
                     result['bug_detection'] = {
                         'checked': False,
                         'module_type': detected_type,
-                        'message': f'Bug检测目前仅支持ALU类型，检测到的类型为: {detected_type}'
+                        'message': f'Bug detection currently only supports ALU types; detected type: {detected_type}'
                     }
 
             except Exception as bug_check_error:
-                print(f"⚠️ Bug检测过程出错: {bug_check_error}")
+                print(f"⚠️ Error during bug detection: {bug_check_error}")
                 result['bug_detection'] = {
                     'checked': False,
                     'error': str(bug_check_error)
