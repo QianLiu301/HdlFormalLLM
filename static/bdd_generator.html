@@ -1962,7 +1962,7 @@
 
                 // Show appropriate success/warning message
                 if (data.bug_detection && data.bug_detection.has_critical) {
-                    showError('upload', data.validation_warning || '检测到严重Bug，请查看详情');
+                    showError('upload', data.validation_warning || 'Critical bug detected.Please view details.');
                 } else {
                     showSuccess('upload', 'File parsed successfully!');
                 }
@@ -2113,7 +2113,7 @@
 
             // If not checked, show info message
             if (!bugDetection || !bugDetection.checked) {
-                const message = bugDetection?.message || 'Bug检测仅支持特定模块类型';
+                const message = bugDetection?.message || 'Bug detection is only supported for specific module types.';
                 container.innerHTML = `
                     <div class="bug-not-checked">
                         <span class="bug-not-checked-icon">ℹ️</span>
@@ -2131,21 +2131,21 @@
             let panelClass = 'no-bugs';
             let headerClass = 'success';
             let icon = '✅';
-            let title = 'DUT接口验证通过';
-            let subtitle = '未检测到接口规范问题';
+            let title = 'DUT interface verification passed.';
+            let subtitle = 'No interface specification issues detected.';
 
             if (hasCritical) {
                 panelClass = 'has-critical';
                 headerClass = 'critical';
                 icon = '🚨';
-                title = `检测到 ${totalBugs} 个接口Bug`;
-                subtitle = '存在严重问题，可能导致验证结果不可靠';
+                title = `Detected ${totalBugs} API bug(s).`;
+                subtitle = 'Critical issues found; validation results may be unreliable.';
             } else if (hasWarning) {
                 panelClass = 'has-warning';
                 headerClass = 'warning';
                 icon = '⚠️';
-                title = `检测到 ${totalBugs} 个潜在问题`;
-                subtitle = '建议检查以下警告';
+                title = `Detected ${totalBugs} Potential problems.`;
+                subtitle = 'We recommend checking the following warnings.';
             }
 
             // Build bug list HTML
@@ -2164,26 +2164,26 @@
                                     </div>
                                     <div class="bug-item-details">
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">端口</span>
+                                            <span class="bug-detail-label">port</span>
                                             <span class="bug-detail-value">${bug.port}</span>
                                         </div>
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">预期</span>
+                                            <span class="bug-detail-label">expected</span>
                                             <span class="bug-detail-value">${bug.expected}</span>
                                         </div>
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">实际</span>
+                                            <span class="bug-detail-label">actual</span>
                                             <span class="bug-detail-value">${bug.actual}</span>
                                         </div>
                                         ${bug.code ? `
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">代码</span>
+                                            <span class="bug-detail-label">code</span>
                                             <span class="bug-detail-value code">${escapeHtml(bug.code)}</span>
                                         </div>
                                         ` : ''}
                                         ${bug.impact ? `
                                         <div class="bug-impact">
-                                            <strong>影响：</strong>${bug.impact}
+                                            <strong>impact：</strong>${bug.impact}
                                         </div>
                                         ` : ''}
                                     </div>
