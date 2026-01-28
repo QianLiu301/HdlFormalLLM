@@ -2180,18 +2180,69 @@
             hideError('bdd-upload');
         }
 
+        // Helper function to parse BDD filename and extract module info
+        function parseBddFilename(filename) {
+            const info = {
+                moduleType: 'other',
+                bitwidth: 8,
+                depth: 32,
+                pipelineStages: 5
+            };
+
+            const lowerName = filename.toLowerCase();
+
+            // Detect module type
+            if (lowerName.includes('alu')) {
+                info.moduleType = 'alu';
+            } else if (lowerName.includes('counter')) {
+                info.moduleType = 'counter';
+            } else if (lowerName.includes('regfile') || lowerName.includes('register')) {
+                info.moduleType = 'regfile';
+            } else if (lowerName.includes('riscv') || lowerName.includes('cpu') || lowerName.includes('risc-v')) {
+                info.moduleType = 'cpu';
+            }
+
+            // Extract bitwidth (e.g., "8bit", "16bit", "32bit")
+            const bitwithMatch = lowerName.match(/(\d+)\s*bit/);
+            if (bitwithMatch) {
+                info.bitwidth = parseInt(bitwithMatch[1], 10);
+            }
+
+            // Extract pipeline stages for CPU (e.g., "5stage", "3stage")
+            const stageMatch = lowerName.match(/(\d+)\s*stage/);
+            if (stageMatch) {
+                info.pipelineStages = parseInt(stageMatch[1], 10);
+            }
+
+            // Extract register count (e.g., "32reg", "16registers")
+            const regMatch = lowerName.match(/(\d+)\s*reg/);
+            if (regMatch) {
+                info.depth = parseInt(regMatch[1], 10);
+            }
+
+            return info;
+        }
+
         function confirmBddUpload() {
             if (!uploadedBddData) {
                 showError('bdd-upload', 'No file uploaded');
                 return;
             }
 
+            // Parse BDD filename to extract module info
+            const parsedInfo = parseBddFilename(uploadedBddData.filename);
+
             // Set current BDD info (this is the key state variable Step 3 checks)
             currentBddFilename = uploadedBddData.filename;
             currentBDD = {
                 filename: uploadedBddData.filename,
                 filepath: uploadedBddData.filepath,
-                llm: 'uploaded'
+                llm: 'uploaded',
+                // Store parsed module info for Step 3 to use
+                moduleType: parsedInfo.moduleType,
+                bitwidth: parsedInfo.bitwidth,
+                depth: parsedInfo.depth,
+                pipelineStages: parsedInfo.pipelineStages
             };
 
             // Update Step 2 status
@@ -3157,38 +3208,44 @@
                 noBddWarning.classList.remove('visible');
                 document.getElementById('tb-bdd-filename').textContent = currentBDD.filename;
                 document.getElementById('tb-bdd-llm').textContent = currentBDD.llm.toUpperCase();
-                document.getElementById('tb-module-badge').textContent = currentDUT ? currentDUT.moduleType.toUpperCase() : 'BDD';
 
-                // Auto-fill DUT info based on module type
-                if (currentDUT) {
-                    const moduleType = currentDUT.moduleType;
-                    const bitwdithGroup = document.getElementById('tb-bitwidth-group');
-                    const registersGroup = document.getElementById('tb-registers-group');
-                    const pipelineGroup = document.getElementById('tb-pipeline-group');
+                // Get module info from DUT or BDD (for upload-only case)
+                const moduleInfo = currentDUT || {
+                    moduleType: currentBDD.moduleType || 'other',
+                    bitwidth: currentBDD.bitwidth || 8,
+                    depth: currentBDD.depth || 32,
+                    pipelineStages: currentBDD.pipelineStages || 5
+                };
 
-                    // Reset all fields
-                    if (bitwdithGroup) bitwdithGroup.style.display = 'none';
-                    if (registersGroup) registersGroup.style.display = 'none';
-                    if (pipelineGroup) pipelineGroup.style.display = 'none';
+                const moduleType = moduleInfo.moduleType;
+                document.getElementById('tb-module-badge').textContent = moduleType.toUpperCase();
 
-                    if (moduleType === 'cpu') {
-                        // CPU: Pipeline
-                        if (pipelineGroup) pipelineGroup.style.display = 'block';
-                        document.getElementById('tb-pipeline').value = currentDUT.pipelineStages + '-stage';
-                        document.getElementById('tb-module-name').value = `riscv_${currentDUT.pipelineStages}stage`;
-                    } else if (moduleType === 'regfile') {
-                        // RegFile: Bitwidth + Registers
-                        if (bitwdithGroup) bitwdithGroup.style.display = 'block';
-                        if (registersGroup) registersGroup.style.display = 'block';
-                        document.getElementById('tb-bitwidth').value = currentDUT.bitwidth + '-bit';
-                        document.getElementById('tb-registers').value = currentDUT.depth + ' registers';
-                        document.getElementById('tb-module-name').value = `regfile_${currentDUT.bitwidth}bit`;
-                    } else {
-                        // ALU, Counter: Bitwidth
-                        if (bitwdithGroup) bitwdithGroup.style.display = 'block';
-                        document.getElementById('tb-bitwidth').value = currentDUT.bitwidth + '-bit';
-                        document.getElementById('tb-module-name').value = `${moduleType}_${currentDUT.bitwidth}bit`;
-                    }
+                const bitwdithGroup = document.getElementById('tb-bitwidth-group');
+                const registersGroup = document.getElementById('tb-registers-group');
+                const pipelineGroup = document.getElementById('tb-pipeline-group');
+
+                // Reset all fields
+                if (bitwdithGroup) bitwdithGroup.style.display = 'none';
+                if (registersGroup) registersGroup.style.display = 'none';
+                if (pipelineGroup) pipelineGroup.style.display = 'none';
+
+                if (moduleType === 'cpu') {
+                    // CPU: Pipeline
+                    if (pipelineGroup) pipelineGroup.style.display = 'block';
+                    document.getElementById('tb-pipeline').value = moduleInfo.pipelineStages + '-stage';
+                    document.getElementById('tb-module-name').value = `riscv_${moduleInfo.pipelineStages}stage`;
+                } else if (moduleType === 'regfile') {
+                    // RegFile: Bitwidth + Registers
+                    if (bitwdithGroup) bitwdithGroup.style.display = 'block';
+                    if (registersGroup) registersGroup.style.display = 'block';
+                    document.getElementById('tb-bitwidth').value = moduleInfo.bitwidth + '-bit';
+                    document.getElementById('tb-registers').value = moduleInfo.depth + ' registers';
+                    document.getElementById('tb-module-name').value = `regfile_${moduleInfo.bitwidth}bit`;
+                } else {
+                    // ALU, Counter, Other: Bitwidth
+                    if (bitwdithGroup) bitwdithGroup.style.display = 'block';
+                    document.getElementById('tb-bitwidth').value = moduleInfo.bitwidth + '-bit';
+                    document.getElementById('tb-module-name').value = `${moduleType}_${moduleInfo.bitwidth}bit`;
                 }
             } else {
                 bddStatus.classList.remove('visible');
@@ -3206,17 +3263,25 @@
             setTbLoading(true);
             updateStepStatus(3, 'in-progress');
 
+            // Get module info from DUT or BDD (for upload-only case)
+            const moduleInfo = currentDUT || {
+                moduleType: currentBDD.moduleType || 'other',
+                bitwidth: currentBDD.bitwidth || 8,
+                depth: currentBDD.depth || 32,
+                pipelineStages: currentBDD.pipelineStages || 5
+            };
+
             const payload = {
                 bdd_filepath: currentBDD.filepath,
-                dut_info: currentDUT ? {
-                    module_type: currentDUT.moduleType,
-                    module_name: currentDUT.moduleType === 'cpu'
-                        ? `riscv_${currentDUT.pipelineStages}stage`
-                        : `${currentDUT.moduleType}_${currentDUT.bitwidth}bit`,
-                    bitwidth: currentDUT.bitwidth,
-                    depth: currentDUT.depth,
-                    pipeline_stages: currentDUT.pipelineStages
-                } : {}
+                dut_info: {
+                    module_type: moduleInfo.moduleType,
+                    module_name: moduleInfo.moduleType === 'cpu'
+                        ? `riscv_${moduleInfo.pipelineStages}stage`
+                        : `${moduleInfo.moduleType}_${moduleInfo.bitwidth}bit`,
+                    bitwidth: moduleInfo.bitwidth,
+                    depth: moduleInfo.depth,
+                    pipeline_stages: moduleInfo.pipelineStages
+                }
             };
 
             try {
