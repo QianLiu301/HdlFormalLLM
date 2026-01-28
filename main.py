@@ -164,6 +164,15 @@ try:
 except ImportError as e:
     print(f"⚠️ CPU module not available: {e}")
 
+# DUT Interface Checker (Bug Detection)
+HAS_DUT_CHECKER = False
+try:
+    from dut_interface_checker import InterfaceBugDetector, BugSeverity
+    HAS_DUT_CHECKER = True
+    print("✅ DUT Interface Checker module loaded")
+except ImportError as e:
+    print(f"⚠️ DUT Interface Checker not available: {e}")
+
 # 在其他模块导入之后添加
 HAS_TESTBENCH_MODULE = False
 
@@ -239,7 +248,7 @@ if HAS_SIMULATION_MODULE:
 # ============================================================================
 @app.route('/api/upload-dut', methods=['POST'])
 def upload_dut():
-    """Handle Verilog file upload and parsing."""
+    """Handle Verilog file upload and parsing with Bug Detection."""
     if not HAS_PARSER:
         return jsonify({'success': False, 'error': 'Verilog parser not available'}), 500
 
@@ -257,7 +266,7 @@ def upload_dut():
         file_content = file.read()
         filename = secure_filename(file.filename)
 
-        # ========== 新增：保存文件到指定目录 ==========
+        # ========== 保存文件到指定目录 ==========
         upload_dir = PROJECT_ROOT / 'generated' / 'uploaded'
         upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -268,7 +277,7 @@ def upload_dut():
         # 解析文件 - 保留原有逻辑
         result = verilog_parser.parse_file(filename, file_content)
 
-        # ========== 新增：更新 last_generated_hw 状态 ==========
+        # 更新 last_generated_hw 状态
         module_name = result.get('module', {}).get('name', 'unknown') if isinstance(result.get('module'),
                                                                                     dict) else result.get('name',
                                                                                                           'unknown')
@@ -279,16 +288,77 @@ def upload_dut():
         last_generated_hw['llm'] = 'uploaded'
         last_generated_hw['module_type'] = detected_module_type
 
-        # ========== 关键修改：保留 verilog_parser 返回的 saved_path ==========
         content = file_content.decode('utf-8', errors='replace')
 
-        # 注意: verilog_parser.parse_file 已经将文件保存到 output/dut/uploaded/ 目录
-        # 并返回了正确的 saved_path，我们不应该覆盖它
-        # result['saved_path'] 已经由 verilog_parser 设置为 output/dut/uploaded/filename_timestamp.v
-        result['filepath'] = str(filepath)  # 这是 generated/uploaded/ 的备份路径
+        result['filepath'] = str(filepath)
         result['full_content'] = content
         result['preview'] = content[:1000] + ('...' if len(content) > 1000 else '')
         result['llm'] = 'uploaded'
+
+        # ========== 新增：DUT Bug 检测 ==========
+        if HAS_DUT_CHECKER and result.get('success'):
+            try:
+                # 从解析结果获取bitwidth
+                modules = result.get('modules', [])
+                bitwidth = 8  # 默认
+                detected_type = 'other'
+
+                if modules:
+                    first_module = modules[0]
+                    bitwidth = first_module.get('bitwidth', 8)
+                    detected_type = first_module.get('detected_type', 'other')
+
+                # 只对ALU类型进行检测（目前先做ALU）
+                if detected_type == 'alu':
+                    detector = InterfaceBugDetector(content, bitwidth)
+                    bugs = detector.check_all()
+
+                    # 构建Bug检测报告
+                    bug_report = {
+                        'checked': True,
+                        'module_type': detected_type,
+                        'total_bugs': len(bugs),
+                        'has_critical': any(b.severity == BugSeverity.CRITICAL for b in bugs),
+                        'has_warning': any(b.severity == BugSeverity.WARNING for b in bugs),
+                        'should_block': any(b.severity == BugSeverity.CRITICAL for b in bugs),
+                        'bugs': []
+                    }
+
+                    for bug in bugs:
+                        bug_report['bugs'].append({
+                            'type': bug.bug_type,
+                            'severity': bug.severity.value,
+                            'port': bug.port_name,
+                            'line': bug.line_number,
+                            'expected': bug.expected,
+                            'actual': bug.actual,
+                            'code': bug.raw_line,
+                            'explanation': bug.explanation,
+                            'impact': bug.impact
+                        })
+
+                    result['bug_detection'] = bug_report
+
+                    # 如果有Critical Bug，添加警告信息
+                    if bug_report['has_critical']:
+                        result['validation_warning'] = (
+                            f"检测到 {sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} 个严重Bug！"
+                            f"这些Bug可能导致验证结果不可靠。"
+                        )
+                else:
+                    # 非ALU类型，标记为未检测
+                    result['bug_detection'] = {
+                        'checked': False,
+                        'module_type': detected_type,
+                        'message': f'Bug检测目前仅支持ALU类型，检测到的类型为: {detected_type}'
+                    }
+
+            except Exception as bug_check_error:
+                print(f"⚠️ Bug检测过程出错: {bug_check_error}")
+                result['bug_detection'] = {
+                    'checked': False,
+                    'error': str(bug_check_error)
+                }
 
         return jsonify(result)
 
