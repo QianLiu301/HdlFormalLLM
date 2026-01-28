@@ -1045,7 +1045,7 @@
                             <p>Complete Step 1 first to generate or upload hardware.</p>
                         </div>
                     </div>
-                </div>
+
                 <div class="card">
                     <div class="card-title">⚡ Configuration</div>
                     <div class="form-row">
@@ -1122,7 +1122,7 @@
                         <button class="btn btn-secondary btn-sm" onclick="resetBDD()">🔄 Reset</button>
                     </div>
                 </div>
-            </div>
+                </div>
             <!-- Upload Mode for Step 2 -->
             <div class="mode-content" id="bdd-mode-upload">
                 <div class="upload-area" id="bdd-upload-area"
@@ -2185,17 +2185,21 @@
                 return;
             }
 
-            // Set current BDD info
+            // Set current BDD info (this is the key state variable Step 3 checks)
             currentBddFilename = uploadedBddData.filename;
+            currentBDD = {
+                filename: uploadedBddData.filename,
+                filepath: uploadedBddData.filepath,
+                llm: 'uploaded'
+            };
 
             // Update Step 2 status
             updateStepStatus(2, 'completed');
             updatePipelineIndicator(2, 'completed');
             updatePipelineIndicator(3, 'active');
 
-            // Update Step 3 BDD source status
-            document.getElementById('tb-bdd-filename').textContent = uploadedBddData.filename;
-            document.getElementById('tb-bdd-llm').textContent = 'Uploaded';
+            // Update Step 3 state (this shows/hides the BDD source status and no-bdd warning)
+            updateTbTabState();
 
             // Expand Step 3
             document.getElementById('step-3').classList.remove('collapsed');
