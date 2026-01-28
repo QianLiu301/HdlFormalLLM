@@ -1724,6 +1724,7 @@
         let currentBddFilename = null;
         let currentDUT = null;
         let uploadedFileData = null;
+        let uploadedBddData = null;
         let parsedModules = [];
         let selectedModuleIndex = 0;
 
@@ -1869,6 +1870,63 @@
             const files = e.dataTransfer.files;
             if (files.length > 0) {
                 processFile(files[0]);
+            }
+        });
+
+        // ============================================================
+        // Step 2 BDD Upload Area - Drag & Drop Support
+        // ============================================================
+        const bddUploadArea = document.getElementById('bdd-upload-area');
+
+        bddUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            bddUploadArea.classList.add('dragover');
+        });
+
+        bddUploadArea.addEventListener('dragleave', () => {
+            bddUploadArea.classList.remove('dragover');
+        });
+
+        bddUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            bddUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.toLowerCase().endsWith('.feature')) {
+                    handleBddFileSelect({ target: { files: [file] } });
+                } else {
+                    showError('bdd-upload', 'Invalid file type. Only .feature files allowed');
+                }
+            }
+        });
+
+        // ============================================================
+        // Step 3 Testbench Upload Area - Drag & Drop Support
+        // ============================================================
+        const tbUploadArea = document.getElementById('tb-upload-area');
+
+        tbUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            tbUploadArea.classList.add('dragover');
+        });
+
+        tbUploadArea.addEventListener('dragleave', () => {
+            tbUploadArea.classList.remove('dragover');
+        });
+
+        tbUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            tbUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.toLowerCase();
+                if (ext.endsWith('.v') || ext.endsWith('.sv')) {
+                    handleTbFileSelect({ target: { files: [file] } });
+                } else {
+                    showError('tb-upload', 'Invalid file type. Only .v and .sv files allowed');
+                }
             }
         });
 
@@ -2049,6 +2107,100 @@
             document.getElementById('step-4').classList.remove('collapsed');
 
             showSuccess('tb-upload', '✅ Testbench configured! Proceed to Step 4 to run simulation.');
+        }
+
+        // ============================================================
+        // Step 2 BDD File Upload Handling
+        // ============================================================
+        function handleBddFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            hideError('bdd-upload');
+            hideSuccess('bdd-upload');
+
+            // Validate extension
+            if (!file.name.toLowerCase().endsWith('.feature')) {
+                showError('bdd-upload', 'Invalid file type. Only .feature files allowed');
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('bdd-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            uploadBddFile(file);
+        }
+
+        async function uploadBddFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-bdd', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('bdd-upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store uploaded data
+                uploadedBddData = data;
+
+                // Update UI
+                document.getElementById('bdd-uploaded-filename').textContent = data.filename;
+                document.getElementById('bdd-uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+                document.getElementById('bdd-detected-feature-name').textContent = data.feature_name || 'Unknown';
+                document.getElementById('bdd-detected-scenario-count').textContent = data.scenario_count || 0;
+                document.getElementById('bdd-upload-preview').textContent = data.preview || '';
+
+                // Show result
+                document.getElementById('bdd-upload-result').classList.add('visible');
+                showSuccess('bdd-upload', 'BDD feature file uploaded successfully!');
+
+            } catch (error) {
+                showError('bdd-upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function removeBddUploadedFile() {
+            uploadedBddData = null;
+            document.getElementById('bdd-upload-result').classList.remove('visible');
+            document.getElementById('bdd-upload-input').value = '';
+            hideSuccess('bdd-upload');
+            hideError('bdd-upload');
+        }
+
+        function confirmBddUpload() {
+            if (!uploadedBddData) {
+                showError('bdd-upload', 'No file uploaded');
+                return;
+            }
+
+            // Set current BDD info
+            currentBddFilename = uploadedBddData.filename;
+
+            // Update Step 2 status
+            updateStepStatus(2, 'completed');
+            updatePipelineIndicator(2, 'completed');
+            updatePipelineIndicator(3, 'active');
+
+            // Update Step 3 BDD source status
+            document.getElementById('tb-bdd-filename').textContent = uploadedBddData.filename;
+            document.getElementById('tb-bdd-llm').textContent = 'Uploaded';
+
+            // Expand Step 3
+            document.getElementById('step-3').classList.remove('collapsed');
+
+            showSuccess('bdd-upload', '✅ BDD configured! Proceed to Step 3 to generate testbench.');
         }
 
         function updateDetectedInfo(module) {
