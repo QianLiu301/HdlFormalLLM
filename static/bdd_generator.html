@@ -2091,6 +2091,7 @@
             filename: uploadedFileData.filename || uploadedFileData.saved_path.split('/').pop(),
             savedPath: uploadedFileData.saved_path,
             source: 'upload',
+            llm: uploadedFileData.llm || 'uploaded',
             moduleName_verilog: selectedModule.name,
             ports: selectedModule.ports
         };
@@ -3168,9 +3169,16 @@
             // Construct paths
             const tbPath = `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}`;
 
-            // DUT path: check LLM-specific directory
-            const llmName = currentDUT?.llm || currentBDD?.llm || 'default';
-            const dutPath = `output/dut/${llmName}/${currentDUT.filename}`;
+           // DUT path: 对于上传的文件，直接使用 savedPath；对于生成的文件，构建路径
+            let dutPath;
+            if (currentDUT.source === 'upload' && currentDUT.savedPath) {
+                // 上传的文件：直接使用后端返回的保存路径
+                dutPath = currentDUT.savedPath;
+            } else {
+                // 生成的文件：使用 LLM 目录结构
+                const llmName = currentDUT?.llm || currentBDD?.llm || 'default';
+                dutPath = `output/dut/${llmName}/${currentDUT.filename}`;
+            }
 
             try {
                 const response = await fetch('/api/run-simulation', {

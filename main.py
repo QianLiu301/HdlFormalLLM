@@ -279,11 +279,13 @@ def upload_dut():
         last_generated_hw['llm'] = 'uploaded'
         last_generated_hw['module_type'] = detected_module_type
 
-        # ========== 关键修改：使用 saved_path 而不是 filepath ==========
+        # ========== 关键修改：保留 verilog_parser 返回的 saved_path ==========
         content = file_content.decode('utf-8', errors='replace')
 
-        result['saved_path'] = str(filepath)  # 前端期望的字段名
-        result['filepath'] = str(filepath)  # 保留这个也没关系
+        # 注意: verilog_parser.parse_file 已经将文件保存到 output/dut/uploaded/ 目录
+        # 并返回了正确的 saved_path，我们不应该覆盖它
+        # result['saved_path'] 已经由 verilog_parser 设置为 output/dut/uploaded/filename_timestamp.v
+        result['filepath'] = str(filepath)  # 这是 generated/uploaded/ 的备份路径
         result['full_content'] = content
         result['preview'] = content[:1000] + ('...' if len(content) > 1000 else '')
         result['llm'] = 'uploaded'
