@@ -208,6 +208,50 @@
         .no-dut-warning-text h4 { font-size: 13px; font-weight: 600; color: var(--accent-orange); margin-bottom: 2px; }
         .no-dut-warning-text p { font-size: 12px; color: var(--text-secondary); }
 
+        /* Bug Detection Results */
+        .bug-detection-panel { margin-top: 16px; border-radius: 10px; overflow: hidden; }
+        .bug-detection-panel.has-critical { border: 2px solid var(--error); }
+        .bug-detection-panel.has-warning { border: 2px solid var(--warning); }
+        .bug-detection-panel.no-bugs { border: 2px solid var(--success); }
+        .bug-detection-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; user-select: none; }
+        .bug-detection-header.critical { background: rgba(220, 38, 38, 0.1); }
+        .bug-detection-header.warning { background: rgba(245, 158, 11, 0.1); }
+        .bug-detection-header.success { background: rgba(0, 168, 132, 0.1); }
+        .bug-detection-icon { font-size: 24px; }
+        .bug-detection-summary { flex: 1; }
+        .bug-detection-summary h4 { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+        .bug-detection-summary.critical h4 { color: var(--error); }
+        .bug-detection-summary.warning h4 { color: var(--warning); }
+        .bug-detection-summary.success h4 { color: var(--success); }
+        .bug-detection-summary p { font-size: 12px; color: var(--text-secondary); }
+        .bug-detection-toggle { font-size: 18px; color: var(--text-secondary); transition: transform 0.3s; }
+        .bug-detection-panel.collapsed .bug-detection-toggle { transform: rotate(-90deg); }
+        .bug-detection-panel.collapsed .bug-detection-body { display: none; }
+        .bug-detection-body { padding: 0 16px 16px; }
+        .bug-list { list-style: none; padding: 0; margin: 0; }
+        .bug-item { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+        .bug-item:last-child { margin-bottom: 0; }
+        .bug-item-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
+        .bug-item-header:hover { background: var(--bg-tertiary); }
+        .bug-severity-badge { padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+        .bug-severity-badge.critical { background: rgba(220, 38, 38, 0.15); color: var(--error); }
+        .bug-severity-badge.warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+        .bug-severity-badge.info { background: rgba(37, 99, 235, 0.15); color: var(--accent-blue); }
+        .bug-item-title { flex: 1; font-size: 13px; font-weight: 500; }
+        .bug-line-badge { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 8px; background: var(--bg-tertiary); border-radius: 4px; color: var(--text-secondary); }
+        .bug-item-toggle { font-size: 14px; color: var(--text-secondary); transition: transform 0.2s; }
+        .bug-item.collapsed .bug-item-toggle { transform: rotate(-90deg); }
+        .bug-item.collapsed .bug-item-details { display: none; }
+        .bug-item-details { padding: 12px 14px; border-top: 1px solid var(--border-color); background: var(--bg-secondary); }
+        .bug-detail-row { display: flex; margin-bottom: 8px; font-size: 12px; }
+        .bug-detail-row:last-child { margin-bottom: 0; }
+        .bug-detail-label { width: 80px; color: var(--text-secondary); font-weight: 500; flex-shrink: 0; }
+        .bug-detail-value { flex: 1; color: var(--text-primary); }
+        .bug-detail-value.code { font-family: 'JetBrains Mono', monospace; background: var(--bg-primary); padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-color); overflow-x: auto; white-space: nowrap; }
+        .bug-impact { background: rgba(220, 38, 38, 0.05); border-left: 3px solid var(--error); padding: 10px 12px; margin-top: 10px; border-radius: 0 6px 6px 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+        .bug-not-checked { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: var(--bg-secondary); border-radius: 8px; font-size: 13px; color: var(--text-secondary); }
+        .bug-not-checked-icon { font-size: 18px; }
+
         /* Synced indicator */
         .synced-indicator { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); margin-top: 6px; }
         .synced-indicator::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
@@ -892,6 +936,9 @@
                                 <span class="detected-info-value" id="detected-outputs">result, zero, overflow</span>
                             </div>
                         </div>
+
+                        <!-- Bug Detection Results -->
+                        <div id="bug-detection-container"></div>
 
                         <!-- Override Type -->
                         <div class="card">
@@ -1901,9 +1948,24 @@
                 // Display detected info
                 updateDetectedInfo(parsedModules[0]);
 
+                // Display Bug Detection Results (new feature)
+                if (data.bug_detection) {
+                    displayBugDetectionResults(data.bug_detection);
+                } else {
+                    // Clear any previous bug detection results
+                    const bugContainer = document.getElementById('bug-detection-container');
+                    if (bugContainer) bugContainer.innerHTML = '';
+                }
+
                 // Show result
                 document.getElementById('upload-result').classList.add('visible');
-                showSuccess('upload', 'File parsed successfully!');
+
+                // Show appropriate success/warning message
+                if (data.bug_detection && data.bug_detection.has_critical) {
+                    showError('upload', data.validation_warning || '检测到严重Bug，请查看详情');
+                } else {
+                    showSuccess('upload', 'File parsed successfully!');
+                }
 
             } catch (error) {
                 showError('upload', 'Network error: ' + error.message);
@@ -2040,6 +2102,134 @@
         // Trigger override type change to update the display
         onOverrideTypeChange();
     }
+
+        // ========== Bug Detection Results Display ==========
+        function displayBugDetectionResults(bugDetection) {
+            const container = document.getElementById('bug-detection-container');
+            if (!container) return;
+
+            // Clear previous content
+            container.innerHTML = '';
+
+            // If not checked, show info message
+            if (!bugDetection || !bugDetection.checked) {
+                const message = bugDetection?.message || 'Bug检测仅支持特定模块类型';
+                container.innerHTML = `
+                    <div class="bug-not-checked">
+                        <span class="bug-not-checked-icon">ℹ️</span>
+                        <span>${message}</span>
+                    </div>
+                `;
+                return;
+            }
+
+            // Determine panel state
+            const hasCritical = bugDetection.has_critical;
+            const hasWarning = bugDetection.has_warning;
+            const totalBugs = bugDetection.total_bugs || 0;
+
+            let panelClass = 'no-bugs';
+            let headerClass = 'success';
+            let icon = '✅';
+            let title = 'DUT接口验证通过';
+            let subtitle = '未检测到接口规范问题';
+
+            if (hasCritical) {
+                panelClass = 'has-critical';
+                headerClass = 'critical';
+                icon = '🚨';
+                title = `检测到 ${totalBugs} 个接口Bug`;
+                subtitle = '存在严重问题，可能导致验证结果不可靠';
+            } else if (hasWarning) {
+                panelClass = 'has-warning';
+                headerClass = 'warning';
+                icon = '⚠️';
+                title = `检测到 ${totalBugs} 个潜在问题`;
+                subtitle = '建议检查以下警告';
+            }
+
+            // Build bug list HTML
+            let bugListHTML = '';
+            if (bugDetection.bugs && bugDetection.bugs.length > 0) {
+                bugListHTML = `
+                    <div class="bug-detection-body">
+                        <ul class="bug-list">
+                            ${bugDetection.bugs.map((bug, index) => `
+                                <li class="bug-item collapsed" id="bug-item-${index}">
+                                    <div class="bug-item-header" onclick="toggleBugItem(${index})">
+                                        <span class="bug-severity-badge ${bug.severity.toLowerCase()}">${bug.severity}</span>
+                                        <span class="bug-item-title">${bug.type.replace(/_/g, ' ')}: ${bug.port}</span>
+                                        ${bug.line > 0 ? `<span class="bug-line-badge">Line ${bug.line}</span>` : ''}
+                                        <span class="bug-item-toggle">▼</span>
+                                    </div>
+                                    <div class="bug-item-details">
+                                        <div class="bug-detail-row">
+                                            <span class="bug-detail-label">端口</span>
+                                            <span class="bug-detail-value">${bug.port}</span>
+                                        </div>
+                                        <div class="bug-detail-row">
+                                            <span class="bug-detail-label">预期</span>
+                                            <span class="bug-detail-value">${bug.expected}</span>
+                                        </div>
+                                        <div class="bug-detail-row">
+                                            <span class="bug-detail-label">实际</span>
+                                            <span class="bug-detail-value">${bug.actual}</span>
+                                        </div>
+                                        ${bug.code ? `
+                                        <div class="bug-detail-row">
+                                            <span class="bug-detail-label">代码</span>
+                                            <span class="bug-detail-value code">${escapeHtml(bug.code)}</span>
+                                        </div>
+                                        ` : ''}
+                                        ${bug.impact ? `
+                                        <div class="bug-impact">
+                                            <strong>影响：</strong>${bug.impact}
+                                        </div>
+                                        ` : ''}
+                                    </div>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = `
+                <div class="bug-detection-panel ${panelClass}">
+                    <div class="bug-detection-header ${headerClass}" onclick="toggleBugDetectionPanel()">
+                        <span class="bug-detection-icon">${icon}</span>
+                        <div class="bug-detection-summary ${headerClass}">
+                            <h4>${title}</h4>
+                            <p>${subtitle}</p>
+                        </div>
+                        ${totalBugs > 0 ? '<span class="bug-detection-toggle">▼</span>' : ''}
+                    </div>
+                    ${bugListHTML}
+                </div>
+            `;
+        }
+
+        function toggleBugDetectionPanel() {
+            const panel = document.querySelector('.bug-detection-panel');
+            if (panel) {
+                panel.classList.toggle('collapsed');
+            }
+        }
+
+        function toggleBugItem(index) {
+            const item = document.getElementById(`bug-item-${index}`);
+            if (item) {
+                item.classList.toggle('collapsed');
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        // ========== End Bug Detection ==========
 
         function removeUploadedFile() {
             uploadedFileData = null;
