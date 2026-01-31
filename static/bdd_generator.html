@@ -1045,7 +1045,7 @@
                             <p>Complete Step 1 first to generate or upload hardware.</p>
                         </div>
                     </div>
-                </div>
+
                 <div class="card">
                     <div class="card-title">⚡ Configuration</div>
                     <div class="form-row">
@@ -1122,7 +1122,7 @@
                         <button class="btn btn-secondary btn-sm" onclick="resetBDD()">🔄 Reset</button>
                     </div>
                 </div>
-            </div>
+                </div>
             <!-- Upload Mode for Step 2 -->
             <div class="mode-content" id="bdd-mode-upload">
                 <div class="upload-area" id="bdd-upload-area"
@@ -1724,6 +1724,7 @@
         let currentBddFilename = null;
         let currentDUT = null;
         let uploadedFileData = null;
+        let uploadedBddData = null;
         let parsedModules = [];
         let selectedModuleIndex = 0;
 
@@ -1872,6 +1873,63 @@
             }
         });
 
+        // ============================================================
+        // Step 2 BDD Upload Area - Drag & Drop Support
+        // ============================================================
+        const bddUploadArea = document.getElementById('bdd-upload-area');
+
+        bddUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            bddUploadArea.classList.add('dragover');
+        });
+
+        bddUploadArea.addEventListener('dragleave', () => {
+            bddUploadArea.classList.remove('dragover');
+        });
+
+        bddUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            bddUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.toLowerCase().endsWith('.feature')) {
+                    handleBddFileSelect({ target: { files: [file] } });
+                } else {
+                    showError('bdd-upload', 'Invalid file type. Only .feature files allowed');
+                }
+            }
+        });
+
+        // ============================================================
+        // Step 3 Testbench Upload Area - Drag & Drop Support
+        // ============================================================
+        const tbUploadArea = document.getElementById('tb-upload-area');
+
+        tbUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            tbUploadArea.classList.add('dragover');
+        });
+
+        tbUploadArea.addEventListener('dragleave', () => {
+            tbUploadArea.classList.remove('dragover');
+        });
+
+        tbUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            tbUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.toLowerCase();
+                if (ext.endsWith('.v') || ext.endsWith('.sv')) {
+                    handleTbFileSelect({ target: { files: [file] } });
+                } else {
+                    showError('tb-upload', 'Invalid file type. Only .v and .sv files allowed');
+                }
+            }
+        });
+
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (file) {
@@ -1962,7 +2020,7 @@
 
                 // Show appropriate success/warning message
                 if (data.bug_detection && data.bug_detection.has_critical) {
-                    showError('upload', data.validation_warning || '检测到严重Bug，请查看详情');
+                    showError('upload', data.validation_warning || 'Critical bug detected.Please view details.');
                 } else {
                     showSuccess('upload', 'File parsed successfully!');
                 }
@@ -2051,6 +2109,104 @@
             showSuccess('tb-upload', '✅ Testbench configured! Proceed to Step 4 to run simulation.');
         }
 
+        // ============================================================
+        // Step 2 BDD File Upload Handling
+        // ============================================================
+        function handleBddFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            hideError('bdd-upload');
+            hideSuccess('bdd-upload');
+
+            // Validate extension
+            if (!file.name.toLowerCase().endsWith('.feature')) {
+                showError('bdd-upload', 'Invalid file type. Only .feature files allowed');
+                return;
+            }
+
+            // Validate size
+            if (file.size > 1024 * 1024) {
+                showError('bdd-upload', `File too large: ${(file.size / 1024 / 1024).toFixed(2)}MB. Maximum: 1MB`);
+                return;
+            }
+
+            uploadBddFile(file);
+        }
+
+        async function uploadBddFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload-bdd', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    showError('bdd-upload', data.error || 'Upload failed');
+                    return;
+                }
+
+                // Store uploaded data
+                uploadedBddData = data;
+
+                // Update UI
+                document.getElementById('bdd-uploaded-filename').textContent = data.filename;
+                document.getElementById('bdd-uploaded-filesize').textContent =
+                    `${(file.size / 1024).toFixed(1)} KB • Uploaded successfully`;
+                document.getElementById('bdd-detected-feature-name').textContent = data.feature_name || 'Unknown';
+                document.getElementById('bdd-detected-scenario-count').textContent = data.scenario_count || 0;
+                document.getElementById('bdd-upload-preview').textContent = data.preview || '';
+
+                // Show result
+                document.getElementById('bdd-upload-result').classList.add('visible');
+                showSuccess('bdd-upload', 'BDD feature file uploaded successfully!');
+
+            } catch (error) {
+                showError('bdd-upload', 'Network error: ' + error.message);
+            }
+        }
+
+        function removeBddUploadedFile() {
+            uploadedBddData = null;
+            document.getElementById('bdd-upload-result').classList.remove('visible');
+            document.getElementById('bdd-upload-input').value = '';
+            hideSuccess('bdd-upload');
+            hideError('bdd-upload');
+        }
+
+        function confirmBddUpload() {
+            if (!uploadedBddData) {
+                showError('bdd-upload', 'No file uploaded');
+                return;
+            }
+
+            // Set current BDD info (this is the key state variable Step 3 checks)
+            currentBddFilename = uploadedBddData.filename;
+            currentBDD = {
+                filename: uploadedBddData.filename,
+                filepath: uploadedBddData.filepath,
+                llm: 'uploaded'
+            };
+
+            // Update Step 2 status
+            updateStepStatus(2, 'completed');
+            updatePipelineIndicator(2, 'completed');
+            updatePipelineIndicator(3, 'active');
+
+            // Update Step 3 state (this shows/hides the BDD source status and no-bdd warning)
+            updateTbTabState();
+
+            // Expand Step 3
+            document.getElementById('step-3').classList.remove('collapsed');
+
+            showSuccess('bdd-upload', '✅ BDD configured! Proceed to Step 3 to generate testbench.');
+        }
+
         function updateDetectedInfo(module) {
         // Basic info
         document.getElementById('detected-module-name').textContent = module.name;
@@ -2113,7 +2269,7 @@
 
             // If not checked, show info message
             if (!bugDetection || !bugDetection.checked) {
-                const message = bugDetection?.message || 'Bug检测仅支持特定模块类型';
+                const message = bugDetection?.message || 'Bug detection is only supported for specific module types.';
                 container.innerHTML = `
                     <div class="bug-not-checked">
                         <span class="bug-not-checked-icon">ℹ️</span>
@@ -2131,21 +2287,21 @@
             let panelClass = 'no-bugs';
             let headerClass = 'success';
             let icon = '✅';
-            let title = 'DUT接口验证通过';
-            let subtitle = '未检测到接口规范问题';
+            let title = 'DUT interface verification passed.';
+            let subtitle = 'No interface specification issues detected.';
 
             if (hasCritical) {
                 panelClass = 'has-critical';
                 headerClass = 'critical';
                 icon = '🚨';
-                title = `检测到 ${totalBugs} 个接口Bug`;
-                subtitle = '存在严重问题，可能导致验证结果不可靠';
+                title = `Detected ${totalBugs} API bug(s).`;
+                subtitle = 'Critical issues found; validation results may be unreliable.';
             } else if (hasWarning) {
                 panelClass = 'has-warning';
                 headerClass = 'warning';
                 icon = '⚠️';
-                title = `检测到 ${totalBugs} 个潜在问题`;
-                subtitle = '建议检查以下警告';
+                title = `Detected ${totalBugs} Potential problems.`;
+                subtitle = 'We recommend checking the following warnings.';
             }
 
             // Build bug list HTML
@@ -2164,26 +2320,26 @@
                                     </div>
                                     <div class="bug-item-details">
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">端口</span>
+                                            <span class="bug-detail-label">port</span>
                                             <span class="bug-detail-value">${bug.port}</span>
                                         </div>
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">预期</span>
+                                            <span class="bug-detail-label">expected</span>
                                             <span class="bug-detail-value">${bug.expected}</span>
                                         </div>
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">实际</span>
+                                            <span class="bug-detail-label">actual</span>
                                             <span class="bug-detail-value">${bug.actual}</span>
                                         </div>
                                         ${bug.code ? `
                                         <div class="bug-detail-row">
-                                            <span class="bug-detail-label">代码</span>
+                                            <span class="bug-detail-label">code</span>
                                             <span class="bug-detail-value code">${escapeHtml(bug.code)}</span>
                                         </div>
                                         ` : ''}
                                         ${bug.impact ? `
                                         <div class="bug-impact">
-                                            <strong>影响：</strong>${bug.impact}
+                                            <strong>impact：</strong>${bug.impact}
                                         </div>
                                         ` : ''}
                                     </div>

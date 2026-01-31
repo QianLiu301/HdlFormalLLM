@@ -347,21 +347,18 @@ def upload_dut():
                     if bug_report['has_critical']:
                         type_names = {'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'RISC-V CPU'}
                         result['validation_warning'] = (
-                            f"{type_names.get(detected_type, detected_type)} 检测到 "
-                            f"{sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} 个严重Bug！"
-                            f"这些Bug可能导致验证结果不可靠。"
+                            f"Found {sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} critical bugs!"
+                            f"Validation reliability may be compromised by these bugs."
                         )
                 else:
                     result['bug_detection'] = {
                         'checked': False,
                         'module_type': detected_type,
-                        'message': f'Bug检测目前支持 ALU/Counter/RegFile/CPU，检测到的类型为: {detected_type}'
+                        'message': f'Bug detection currently only supports ALU types; detected type: {detected_type}'
                     }
 
             except Exception as bug_check_error:
-                print(f"⚠️ Bug检测过程出错: {bug_check_error}")
-                import traceback
-                traceback.print_exc()
+                print(f"⚠️ Error during bug detection: {bug_check_error}")
                 result['bug_detection'] = {
                     'checked': False,
                     'error': str(bug_check_error)
