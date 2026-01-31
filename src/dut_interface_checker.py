@@ -158,15 +158,215 @@ class ALUSpecification:
         }
 
 
-class InterfaceBugDetector:
-    """接口Bug检测器"""
+class CounterSpecification:
+    """Counter的Golden Specification"""
 
-    def __init__(self, dut_code: str, bitwidth: int = 8):
+    @staticmethod
+    def get_expected_interface(bitwidth: int) -> Dict[str, dict]:
+        """返回预期的Counter接口规范"""
+        return {
+            'clk': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Clock signal'
+            },
+            'rst_n': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Active-low reset'
+            },
+            'enable': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Count enable'
+            },
+            'load': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Load preset value'
+            },
+            'load_value': {
+                'direction': PortDirection.INPUT,
+                'width': bitwidth,
+                'description': f'Preset value to load ({bitwidth}-bit)'
+            },
+            'mode': {
+                'direction': PortDirection.INPUT,
+                'width': 2,
+                'description': 'Counter mode (2-bit)'
+            },
+            'count': {
+                'direction': PortDirection.OUTPUT,
+                'width': bitwidth,
+                'description': f'Current count value ({bitwidth}-bit)'
+            },
+            'overflow': {
+                'direction': PortDirection.OUTPUT,
+                'width': 1,
+                'description': 'Overflow flag'
+            },
+            'zero': {
+                'direction': PortDirection.OUTPUT,
+                'width': 1,
+                'description': 'Zero flag'
+            }
+        }
+
+
+class RegFileSpecification:
+    """Register File的Golden Specification"""
+
+    @staticmethod
+    def get_expected_interface(bitwidth: int, depth: int = 32) -> Dict[str, dict]:
+        """返回预期的Register File接口规范"""
+        import math
+        addr_width = max(1, int(math.ceil(math.log2(depth))))
+
+        return {
+            'clk': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Clock signal'
+            },
+            'rst_n': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Active-low reset'
+            },
+            'raddr1': {
+                'direction': PortDirection.INPUT,
+                'width': addr_width,
+                'description': f'Read address 1 ({addr_width}-bit)'
+            },
+            'rdata1': {
+                'direction': PortDirection.OUTPUT,
+                'width': bitwidth,
+                'description': f'Read data 1 ({bitwidth}-bit)'
+            },
+            'raddr2': {
+                'direction': PortDirection.INPUT,
+                'width': addr_width,
+                'description': f'Read address 2 ({addr_width}-bit)'
+            },
+            'rdata2': {
+                'direction': PortDirection.OUTPUT,
+                'width': bitwidth,
+                'description': f'Read data 2 ({bitwidth}-bit)'
+            },
+            'wen': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Write enable'
+            },
+            'waddr': {
+                'direction': PortDirection.INPUT,
+                'width': addr_width,
+                'description': f'Write address ({addr_width}-bit)'
+            },
+            'wdata': {
+                'direction': PortDirection.INPUT,
+                'width': bitwidth,
+                'description': f'Write data ({bitwidth}-bit)'
+            }
+        }
+
+
+class CPUSpecification:
+    """RISC-V CPU的Golden Specification"""
+
+    @staticmethod
+    def get_expected_interface(bitwidth: int = 32) -> Dict[str, dict]:
+        """返回预期的CPU接口规范 (RV32I)"""
+        return {
+            'clk': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Clock signal'
+            },
+            'rst_n': {
+                'direction': PortDirection.INPUT,
+                'width': 1,
+                'description': 'Active-low reset'
+            },
+            # Instruction Memory Interface
+            'imem_addr': {
+                'direction': PortDirection.OUTPUT,
+                'width': 32,
+                'description': 'Instruction memory address'
+            },
+            'imem_data': {
+                'direction': PortDirection.INPUT,
+                'width': 32,
+                'description': 'Instruction memory data'
+            },
+            # Data Memory Interface
+            'dmem_addr': {
+                'direction': PortDirection.OUTPUT,
+                'width': 32,
+                'description': 'Data memory address'
+            },
+            'dmem_wdata': {
+                'direction': PortDirection.OUTPUT,
+                'width': 32,
+                'description': 'Data memory write data'
+            },
+            'dmem_wen': {
+                'direction': PortDirection.OUTPUT,
+                'width': 1,
+                'description': 'Data memory write enable'
+            },
+            'dmem_be': {
+                'direction': PortDirection.OUTPUT,
+                'width': 4,
+                'description': 'Data memory byte enable'
+            },
+            'dmem_rdata': {
+                'direction': PortDirection.INPUT,
+                'width': 32,
+                'description': 'Data memory read data'
+            },
+            # Debug Interface (optional, so marked as WARNING not CRITICAL if missing)
+            'debug_pc': {
+                'direction': PortDirection.OUTPUT,
+                'width': 32,
+                'description': 'Debug: Program Counter',
+                'optional': True
+            },
+            'debug_inst': {
+                'direction': PortDirection.OUTPUT,
+                'width': 32,
+                'description': 'Debug: Current Instruction',
+                'optional': True
+            }
+        }
+
+
+class InterfaceBugDetector:
+    """接口Bug检测器 - 支持ALU/Counter/RegFile/CPU"""
+
+    def __init__(self, dut_code: str, bitwidth: int = 8,
+                 module_type: str = 'alu', depth: int = 32):
         self.parser = VerilogInterfaceParser(dut_code)
         self.bitwidth = bitwidth
-        self.expected_spec = ALUSpecification.get_expected_interface(bitwidth)
+        self.module_type = module_type
+        self.depth = depth
+        self.expected_spec = self._get_spec(module_type, bitwidth, depth)
         self.actual_ports = self.parser.extract_ports()
         self.bugs: List[InterfaceBug] = []
+
+    @staticmethod
+    def _get_spec(module_type: str, bitwidth: int, depth: int = 32) -> Dict[str, dict]:
+        """根据模块类型获取对应的Golden Specification"""
+        specs = {
+            'alu': lambda: ALUSpecification.get_expected_interface(bitwidth),
+            'counter': lambda: CounterSpecification.get_expected_interface(bitwidth),
+            'regfile': lambda: RegFileSpecification.get_expected_interface(bitwidth, depth),
+            'cpu': lambda: CPUSpecification.get_expected_interface(bitwidth),
+        }
+        getter = specs.get(module_type)
+        if getter:
+            return getter()
+        return {}
 
     def check_all(self) -> List[InterfaceBug]:
         """执行所有检查"""
@@ -217,16 +417,17 @@ class InterfaceBugDetector:
         """检查缺失的端口"""
         for port_name, expected in self.expected_spec.items():
             if port_name not in self.actual_ports:
+                is_optional = expected.get('optional', False)
                 self.bugs.append(InterfaceBug(
                     bug_type="MISSING_PORT",
-                    severity=BugSeverity.CRITICAL,
+                    severity=BugSeverity.WARNING if is_optional else BugSeverity.CRITICAL,
                     port_name=port_name,
                     expected=f"{expected['direction'].value} [{expected['width'] - 1}:0] {port_name}",
                     actual="(not found)",
                     line_number=-1,
                     raw_line="",
-                    explanation=f"Required port '{port_name}' is missing from DUT",
-                    impact=f"Testbench cannot connect to {port_name}, simulation will fail"
+                    explanation=f"{'Optional' if is_optional else 'Required'} port '{port_name}' is missing from DUT",
+                    impact=f"Testbench cannot connect to {port_name}, simulation will {'have warnings' if is_optional else 'fail'}"
                 ))
 
     def _check_extra_ports(self):
