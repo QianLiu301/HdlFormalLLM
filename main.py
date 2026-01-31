@@ -164,6 +164,15 @@ try:
 except ImportError as e:
     print(f"⚠️ CPU module not available: {e}")
 
+# DUT Interface Checker (Bug Detection)
+HAS_DUT_CHECKER = False
+try:
+    from dut_interface_checker import InterfaceBugDetector, BugSeverity, CounterSpecification, RegFileSpecification, CPUSpecification
+    HAS_DUT_CHECKER = True
+    print("✅ DUT Interface Checker module loaded")
+except ImportError as e:
+    print(f"⚠️ DUT Interface Checker not available: {e}")
+
 # 在其他模块导入之后添加
 HAS_TESTBENCH_MODULE = False
 
@@ -239,7 +248,7 @@ if HAS_SIMULATION_MODULE:
 # ============================================================================
 @app.route('/api/upload-dut', methods=['POST'])
 def upload_dut():
-    """Handle Verilog file upload and parsing."""
+    """Handle Verilog file upload and parsing with Bug Detection."""
     if not HAS_PARSER:
         return jsonify({'success': False, 'error': 'Verilog parser not available'}), 500
 
@@ -257,7 +266,7 @@ def upload_dut():
         file_content = file.read()
         filename = secure_filename(file.filename)
 
-        # ========== 新增：保存文件到指定目录 ==========
+        # ========== 保存文件到指定目录 ==========
         upload_dir = PROJECT_ROOT / 'generated' / 'uploaded'
         upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -268,7 +277,7 @@ def upload_dut():
         # 解析文件 - 保留原有逻辑
         result = verilog_parser.parse_file(filename, file_content)
 
-        # ========== 新增：更新 last_generated_hw 状态 ==========
+        # 更新 last_generated_hw 状态
         module_name = result.get('module', {}).get('name', 'unknown') if isinstance(result.get('module'),
                                                                                     dict) else result.get('name',
                                                                                                           'unknown')
@@ -279,14 +288,81 @@ def upload_dut():
         last_generated_hw['llm'] = 'uploaded'
         last_generated_hw['module_type'] = detected_module_type
 
-        # ========== 关键修改：使用 saved_path 而不是 filepath ==========
         content = file_content.decode('utf-8', errors='replace')
 
-        result['saved_path'] = str(filepath)  # 前端期望的字段名
-        result['filepath'] = str(filepath)  # 保留这个也没关系
+        result['filepath'] = str(filepath)
         result['full_content'] = content
         result['preview'] = content[:1000] + ('...' if len(content) > 1000 else '')
         result['llm'] = 'uploaded'
+
+        # ========== DUT Bug 检测 (支持 ALU / Counter / RegFile / CPU) ==========
+        if HAS_DUT_CHECKER and result.get('success'):
+            try:
+                modules = result.get('modules', [])
+                bitwidth = 8
+                detected_type = 'other'
+                depth = 32
+
+                if modules:
+                    first_module = modules[0]
+                    bitwidth = first_module.get('bitwidth', 8)
+                    detected_type = first_module.get('detected_type', 'other')
+                    depth = first_module.get('num_registers', 32)
+
+                supported_types = ['alu', 'counter', 'regfile', 'cpu']
+
+                if detected_type in supported_types:
+                    detector = InterfaceBugDetector(
+                        content, bitwidth,
+                        module_type=detected_type,
+                        depth=depth
+                    )
+                    bugs = detector.check_all()
+
+                    bug_report = {
+                        'checked': True,
+                        'module_type': detected_type,
+                        'total_bugs': len(bugs),
+                        'has_critical': any(b.severity == BugSeverity.CRITICAL for b in bugs),
+                        'has_warning': any(b.severity == BugSeverity.WARNING for b in bugs),
+                        'should_block': any(b.severity == BugSeverity.CRITICAL for b in bugs),
+                        'bugs': []
+                    }
+
+                    for bug in bugs:
+                        bug_report['bugs'].append({
+                            'type': bug.bug_type,
+                            'severity': bug.severity.value,
+                            'port': bug.port_name,
+                            'line': bug.line_number,
+                            'expected': bug.expected,
+                            'actual': bug.actual,
+                            'code': bug.raw_line,
+                            'explanation': bug.explanation,
+                            'impact': bug.impact
+                        })
+
+                    result['bug_detection'] = bug_report
+
+                    if bug_report['has_critical']:
+                        type_names = {'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'RISC-V CPU'}
+                        result['validation_warning'] = (
+                            f"Found {sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} critical bugs!"
+                            f"Validation reliability may be compromised by these bugs."
+                        )
+                else:
+                    result['bug_detection'] = {
+                        'checked': False,
+                        'module_type': detected_type,
+                        'message': f'Bug detection currently only supports ALU types; detected type: {detected_type}'
+                    }
+
+            except Exception as bug_check_error:
+                print(f"⚠️ Error during bug detection: {bug_check_error}")
+                result['bug_detection'] = {
+                    'checked': False,
+                    'error': str(bug_check_error)
+                }
 
         return jsonify(result)
 
@@ -435,6 +511,7 @@ def upload_testbench():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
 def make_sse_message(msg_type, **kwargs):
     """Helper to create SSE message"""
     data = {"type": msg_type}
