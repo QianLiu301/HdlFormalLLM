@@ -249,25 +249,28 @@ class GeminiProvider(LLMProvider):
             print(f"⚠️  Gemini REST API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None):
         """
         Streaming API call for Gemini
-        Uses streamGenerateContent endpoint
+        Uses streamGenerateContent endpoint with alt=sse for proper SSE format
         """
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?key={self.api_key}"
-
+        # 使用 alt=sse 获取标准 SSE 格式，避免 JSON 数组解析问题
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}"
+            f":streamGenerateContent?alt=sse&key={self.api_key}"
+        )
+ 
         payload = {
-            "contents": [{
-                "parts": [{
-                    "text": prompt
-                }]
-            }],
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
-                "temperature": 0.7
+                "temperature": 0.3  # 与 REST 保持一致，代码生成用低温度
             }
         }
-
+ 
+        if system_prompt:
+            payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
+ 
         try:
             proxies = self._get_proxies()
             response = requests.post(
@@ -275,57 +278,42 @@ class GeminiProvider(LLMProvider):
                 json=payload,
                 proxies=proxies,
                 stream=True,
-                timeout=120
+                timeout=300  # 增大超时
             )
             response.raise_for_status()
-
+ 
+            # 使用 SSE 格式解析 (alt=sse)，每行以 "data: " 开头
             buffer = ""
-            for chunk in response.iter_content(chunk_size=1024):
-                if chunk:
-                    buffer += chunk.decode('utf-8')
-
-                    # Parse JSON array chunks from Gemini
-                    while True:
-                        try:
-                            if buffer.startswith('['):
-                                buffer = buffer[1:]
-                            if buffer.startswith(','):
-                                buffer = buffer[1:]
-                            buffer = buffer.strip()
-
-                            if not buffer or buffer == ']':
-                                break
-
-                            bracket_count = 0
-                            end_pos = -1
-                            for i, char in enumerate(buffer):
-                                if char == '{':
-                                    bracket_count += 1
-                                elif char == '}':
-                                    bracket_count -= 1
-                                    if bracket_count == 0:
-                                        end_pos = i + 1
-                                        break
-
-                            if end_pos > 0:
-                                json_str = buffer[:end_pos]
-                                buffer = buffer[end_pos:]
-
-                                data = json.loads(json_str)
-                                if 'candidates' in data:
-                                    for candidate in data['candidates']:
-                                        if 'content' in candidate:
-                                            parts = candidate['content'].get('parts', [])
-                                            for part in parts:
-                                                if 'text' in part:
-                                                    yield part['text']
-                            else:
-                                break
-                        except json.JSONDecodeError:
-                            break
-
+            for chunk in response.iter_content(chunk_size=4096, decode_unicode=True):
+                if not chunk:
+                    continue
+                buffer += chunk
+ 
+                # 按行处理 SSE events
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+ 
+                    if not line or not line.startswith('data: '):
+                        continue
+ 
+                    json_str = line[6:]  # 去掉 "data: " 前缀
+                    if not json_str:
+                        continue
+ 
+                    try:
+                        data = json.loads(json_str)
+                        if 'candidates' in data:
+                            for candidate in data['candidates']:
+                                if 'content' in candidate:
+                                    for part in candidate['content'].get('parts', []):
+                                        if 'text' in part:
+                                            yield part['text']
+                    except json.JSONDecodeError:
+                        continue
+ 
         except Exception as e:
-            print(f"⚠️ Gemini streaming failed: {e}")
+            print(f"⚠️ Gemini streaming failed: {e}, falling back to REST API")
             result = self._call_api_rest(prompt, max_tokens, system_prompt)
             if result:
                 yield result
