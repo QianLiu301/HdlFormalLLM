@@ -167,7 +167,7 @@ except ImportError as e:
 # DUT Interface Checker (Bug Detection)
 HAS_DUT_CHECKER = False
 try:
-    from dut_interface_checker import InterfaceBugDetector, BugSeverity
+    from dut_interface_checker import InterfaceBugDetector, BugSeverity, CounterSpecification, RegFileSpecification, CPUSpecification
     HAS_DUT_CHECKER = True
     print("✅ DUT Interface Checker module loaded")
 except ImportError as e:
@@ -295,25 +295,30 @@ def upload_dut():
         result['preview'] = content[:1000] + ('...' if len(content) > 1000 else '')
         result['llm'] = 'uploaded'
 
-        # ========== 新增：DUT Bug 检测 ==========
+        # ========== DUT Bug 检测 (支持 ALU / Counter / RegFile / CPU) ==========
         if HAS_DUT_CHECKER and result.get('success'):
             try:
-                # 从解析结果获取bitwidth
                 modules = result.get('modules', [])
-                bitwidth = 8  # 默认
+                bitwidth = 8
                 detected_type = 'other'
+                depth = 32
 
                 if modules:
                     first_module = modules[0]
                     bitwidth = first_module.get('bitwidth', 8)
                     detected_type = first_module.get('detected_type', 'other')
+                    depth = first_module.get('num_registers', 32)
 
-                # 只对ALU类型进行检测（目前先做ALU）
-                if detected_type == 'alu':
-                    detector = InterfaceBugDetector(content, bitwidth)
+                supported_types = ['alu', 'counter', 'regfile', 'cpu']
+
+                if detected_type in supported_types:
+                    detector = InterfaceBugDetector(
+                        content, bitwidth,
+                        module_type=detected_type,
+                        depth=depth
+                    )
                     bugs = detector.check_all()
 
-                    # 构建Bug检测报告
                     bug_report = {
                         'checked': True,
                         'module_type': detected_type,
@@ -339,14 +344,13 @@ def upload_dut():
 
                     result['bug_detection'] = bug_report
 
-                    # 如果有Critical Bug，添加警告信息
                     if bug_report['has_critical']:
+                        type_names = {'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'RISC-V CPU'}
                         result['validation_warning'] = (
                             f"Found {sum(1 for b in bugs if b.severity == BugSeverity.CRITICAL)} critical bugs!"
                             f"Validation reliability may be compromised by these bugs."
                         )
                 else:
-                    # 非ALU类型，标记为未检测
                     result['bug_detection'] = {
                         'checked': False,
                         'module_type': detected_type,
