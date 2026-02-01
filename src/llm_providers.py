@@ -1483,6 +1483,574 @@ Generate a concise Feature description (2-4 sentences):
         return "Test ALU operation with various input values and verify correct output"
 
 
+class GrokProvider(LLMProvider):
+    """
+    xAI Grok API Provider
+
+    Large context window (131K tokens), suitable for complex CPU-level HDL generation.
+    How to get API key:
+    1. Visit: https://console.x.ai/
+    2. Sign up and get API key
+
+    Models: grok-3, grok-3-mini, grok-2
+    API: OpenAI-compatible (v1/chat/completions)
+    """
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "grok-3-mini"):
+        self.api_key = api_key or os.getenv("XAI_API_KEY") or os.getenv("GROK_API_KEY")
+        self.model = model
+        self.api_url = "https://api.x.ai/v1/chat/completions"
+
+        if not self.api_key:
+            raise ValueError("Grok API key not provided. Get key at: https://console.x.ai/")
+
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a helpful assistant that generates clear, concise BDD scenario descriptions for hardware verification."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=120, proxies=proxies)
+            response.raise_for_status()
+            result = response.json()
+            return result['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            print(f"⚠️  Grok API request failed: {e}")
+            return self._fallback_description(prompt)
+
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(self.api_url, headers=headers, json=payload, proxies=proxies, stream=True, timeout=300)
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"⚠️ Grok streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
+
+    def generate_scenario_description(self, operation_name: str, operation_code: str, operation_description: str, bitwidth: int) -> str:
+        prompt = f"""Generate a clear BDD scenario description for testing a {bitwidth}-bit ALU operation.
+
+Operation Details:
+- Name: {operation_name}
+- Opcode: {operation_code}
+- Description: {operation_description}
+- Bitwidth: {bitwidth} bits
+
+Requirements:
+1. Write in Gherkin/BDD style
+2. Be specific about the operation being tested
+3. Keep it concise (1-2 sentences)
+4. Focus on functional behavior
+
+Generate the scenario description:
+"""
+        return self._call_api(prompt, max_tokens=150)
+
+    def generate_feature_description(self, bitwidth: int, operations_count: int, operations_list: List[str]) -> str:
+        prompt = f"""Generate a BDD Feature description for a {bitwidth}-bit ALU verification suite.
+
+ALU Details:
+- Bitwidth: {bitwidth} bits
+- Total Operations: {operations_count}
+- Operations: {', '.join(operations_list[:10])}
+
+Generate a concise Feature description (2-4 sentences):
+"""
+        return self._call_api(prompt, max_tokens=200)
+
+    def _fallback_description(self, prompt: str) -> str:
+        if "JSON" in prompt or "json" in prompt or '"operation"' in prompt:
+            print("   🔧 [FALLBACK] Returning JSON format for intent parsing")
+            return self._fallback_intent_json(prompt)
+        return "Test ALU operation with various input values and verify correct output"
+
+
+class QwenProvider(LLMProvider):
+    """
+    Alibaba Qwen API Provider
+
+    Strong code generation capabilities, free tier available.
+    No proxy needed for Chinese users.
+    How to get API key:
+    1. Visit: https://dashscope.console.aliyun.com/
+    2. Sign up and get API key
+
+    Models: qwen-coder-plus, qwen-max, qwen-plus, qwen-turbo
+    API: OpenAI-compatible (v1/chat/completions)
+    """
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "qwen-coder-plus"):
+        self.api_key = api_key or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        self.model = model
+        self.api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+
+        if not self.api_key:
+            raise ValueError("Qwen API key not provided. Get key at: https://dashscope.console.aliyun.com/")
+
+    def _get_proxies(self) -> None:
+        """Qwen (Alibaba Cloud) does not need proxy for Chinese users"""
+        return None
+
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a helpful assistant that generates clear, concise BDD scenario descriptions for hardware verification."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7
+        }
+
+        try:
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            print(f"⚠️  Qwen API request failed: {e}")
+            return self._fallback_description(prompt)
+
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        try:
+            response = requests.post(self.api_url, headers=headers, json=payload, stream=True, timeout=180)
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"⚠️ Qwen streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
+
+    def generate_scenario_description(self, operation_name: str, operation_code: str, operation_description: str, bitwidth: int) -> str:
+        prompt = f"""Generate a clear BDD scenario description for testing a {bitwidth}-bit ALU operation.
+
+Operation Details:
+- Name: {operation_name}
+- Opcode: {operation_code}
+- Description: {operation_description}
+- Bitwidth: {bitwidth} bits
+
+Requirements:
+1. Write in Gherkin/BDD style
+2. Be specific about the operation being tested
+3. Keep it concise (1-2 sentences)
+4. Focus on functional behavior
+
+Generate the scenario description:
+"""
+        return self._call_api(prompt, max_tokens=150)
+
+    def generate_feature_description(self, bitwidth: int, operations_count: int, operations_list: List[str]) -> str:
+        prompt = f"""Generate a BDD Feature description for a {bitwidth}-bit ALU verification suite.
+
+ALU Details:
+- Bitwidth: {bitwidth} bits
+- Total Operations: {operations_count}
+- Operations: {', '.join(operations_list[:10])}
+
+Generate a concise Feature description (2-4 sentences):
+"""
+        return self._call_api(prompt, max_tokens=200)
+
+    def _fallback_description(self, prompt: str) -> str:
+        if "JSON" in prompt or "json" in prompt or '"operation"' in prompt:
+            print("   🔧 [FALLBACK] Returning JSON format for intent parsing")
+            return self._fallback_intent_json(prompt)
+        return "Test ALU operation with various input values and verify correct output"
+
+
+class MistralProvider(LLMProvider):
+    """
+    Mistral AI API Provider
+
+    Strong code generation, Codestral model specialized for code tasks.
+    How to get API key:
+    1. Visit: https://console.mistral.ai/
+    2. Sign up and get API key
+
+    Models: codestral-latest, mistral-large-latest, mistral-small-latest
+    API: OpenAI-compatible (v1/chat/completions)
+    """
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "codestral-latest"):
+        self.api_key = api_key or os.getenv("MISTRAL_API_KEY")
+        self.model = model
+        self.api_url = "https://api.mistral.ai/v1/chat/completions"
+
+        if not self.api_key:
+            raise ValueError("Mistral API key not provided. Get key at: https://console.mistral.ai/")
+
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a helpful assistant that generates clear, concise BDD scenario descriptions for hardware verification."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=60, proxies=proxies)
+            response.raise_for_status()
+            result = response.json()
+            return result['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            print(f"⚠️  Mistral API request failed: {e}")
+            return self._fallback_description(prompt)
+
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(self.api_url, headers=headers, json=payload, proxies=proxies, stream=True, timeout=180)
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"⚠️ Mistral streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
+
+    def generate_scenario_description(self, operation_name: str, operation_code: str, operation_description: str, bitwidth: int) -> str:
+        prompt = f"""Generate a clear BDD scenario description for testing a {bitwidth}-bit ALU operation.
+
+Operation Details:
+- Name: {operation_name}
+- Opcode: {operation_code}
+- Description: {operation_description}
+- Bitwidth: {bitwidth} bits
+
+Requirements:
+1. Write in Gherkin/BDD style
+2. Be specific about the operation being tested
+3. Keep it concise (1-2 sentences)
+4. Focus on functional behavior
+
+Generate the scenario description:
+"""
+        return self._call_api(prompt, max_tokens=150)
+
+    def generate_feature_description(self, bitwidth: int, operations_count: int, operations_list: List[str]) -> str:
+        prompt = f"""Generate a BDD Feature description for a {bitwidth}-bit ALU verification suite.
+
+ALU Details:
+- Bitwidth: {bitwidth} bits
+- Total Operations: {operations_count}
+- Operations: {', '.join(operations_list[:10])}
+
+Generate a concise Feature description (2-4 sentences):
+"""
+        return self._call_api(prompt, max_tokens=200)
+
+    def _fallback_description(self, prompt: str) -> str:
+        if "JSON" in prompt or "json" in prompt or '"operation"' in prompt:
+            print("   🔧 [FALLBACK] Returning JSON format for intent parsing")
+            return self._fallback_intent_json(prompt)
+        return "Test ALU operation with various input values and verify correct output"
+
+
+class TogetherProvider(LLMProvider):
+    """
+    Together AI API Provider
+
+    Aggregation platform with access to many open-source models via one API.
+    How to get API key:
+    1. Visit: https://api.together.xyz/
+    2. Sign up and get API key
+
+    Models: meta-llama/Llama-3.3-70B-Instruct-Turbo, deepseek-ai/DeepSeek-V3,
+            Qwen/Qwen2.5-Coder-32B-Instruct, mistralai/Mixtral-8x22B-Instruct-v0.1
+    API: OpenAI-compatible (v1/chat/completions)
+    """
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo"):
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        self.model = model
+        self.api_url = "https://api.together.xyz/v1/chat/completions"
+
+        if not self.api_key:
+            raise ValueError("Together AI API key not provided. Get key at: https://api.together.xyz/")
+
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a helpful assistant that generates clear, concise BDD scenario descriptions for hardware verification."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=60, proxies=proxies)
+            response.raise_for_status()
+            result = response.json()
+            return result['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            print(f"⚠️  Together AI API request failed: {e}")
+            return self._fallback_description(prompt)
+
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(self.api_url, headers=headers, json=payload, proxies=proxies, stream=True, timeout=180)
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            print(f"⚠️ Together AI streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
+
+    def generate_scenario_description(self, operation_name: str, operation_code: str, operation_description: str, bitwidth: int) -> str:
+        prompt = f"""Generate a clear BDD scenario description for testing a {bitwidth}-bit ALU operation.
+
+Operation Details:
+- Name: {operation_name}
+- Opcode: {operation_code}
+- Description: {operation_description}
+- Bitwidth: {bitwidth} bits
+
+Requirements:
+1. Write in Gherkin/BDD style
+2. Be specific about the operation being tested
+3. Keep it concise (1-2 sentences)
+4. Focus on functional behavior
+
+Generate the scenario description:
+"""
+        return self._call_api(prompt, max_tokens=150)
+
+    def generate_feature_description(self, bitwidth: int, operations_count: int, operations_list: List[str]) -> str:
+        prompt = f"""Generate a BDD Feature description for a {bitwidth}-bit ALU verification suite.
+
+ALU Details:
+- Bitwidth: {bitwidth} bits
+- Total Operations: {operations_count}
+- Operations: {', '.join(operations_list[:10])}
+
+Generate a concise Feature description (2-4 sentences):
+"""
+        return self._call_api(prompt, max_tokens=200)
+
+    def _fallback_description(self, prompt: str) -> str:
+        if "JSON" in prompt or "json" in prompt or '"operation"' in prompt:
+            print("   🔧 [FALLBACK] Returning JSON format for intent parsing")
+            return self._fallback_intent_json(prompt)
+        return "Test ALU operation with various input values and verify correct output"
+
+
 class LocalLLMProvider(LLMProvider):
     """
     Local Template Provider - FREE and NO API NEEDED!
@@ -1534,6 +2102,8 @@ class LLMFactory:
             'google': GeminiProvider,
             'groq': GroqProvider,
             'deepseek': DeepSeekProvider,
+            'qwen': QwenProvider,
+            'tongyi': QwenProvider,
             'local': LocalLLMProvider,
 
             # PAID providers
@@ -1542,6 +2112,12 @@ class LLMFactory:
             'chatgpt': OpenAIProvider,
             'claude': ClaudeProvider,
             'anthropic': ClaudeProvider,
+            'grok': GrokProvider,
+            'xai': GrokProvider,
+            'mistral': MistralProvider,
+            'codestral': MistralProvider,
+            'together': TogetherProvider,
+            'together_ai': TogetherProvider,
         }
 
         provider_type = provider_type.lower()
@@ -1575,6 +2151,14 @@ class LLMFactory:
                     print(f"💰 Using OpenAI (PAID) - Model: {model}")
             elif provider_type in ['claude', 'anthropic']:
                 print("💰 Using Claude (PAID)")
+            elif provider_type in ['grok', 'xai']:
+                print("💰 Using Grok/xAI (131K context, ideal for complex HDL)")
+            elif provider_type in ['qwen', 'tongyi']:
+                print("🆓 Using Qwen (FREE tier, no proxy needed)")
+            elif provider_type in ['mistral', 'codestral']:
+                print("💰 Using Mistral/Codestral (code-specialized)")
+            elif provider_type in ['together', 'together_ai']:
+                print("🆓 Using Together AI (multi-model platform)")
 
             return provider
         except Exception as e:
@@ -1590,11 +2174,15 @@ class LLMFactory:
                 "gemini": "Google Gemini - 60 req/min (Get key: https://makersuite.google.com/app/apikey)",
                 "groq": "Groq - Fast and free (Get key: https://console.groq.com/keys)",
                 "deepseek": "DeepSeek - Chinese LLM (Get key: https://platform.deepseek.com/)",
+                "qwen": "Qwen - Alibaba, strong code gen (Get key: https://dashscope.console.aliyun.com/)",
+                "together": "Together AI - Multi-model platform (Get key: https://api.together.xyz/)",
                 "local": "Local Templates - No API needed"
             },
             "PAID": {
                 "openai": "OpenAI GPT (GPT-5 series including gpt-5.1-codex) - Requires credits",
-                "claude": "Anthropic Claude - Requires credits"
+                "claude": "Anthropic Claude - Requires credits",
+                "grok": "xAI Grok - 131K context, ideal for complex HDL (Get key: https://console.x.ai/)",
+                "mistral": "Mistral/Codestral - Code-specialized (Get key: https://console.mistral.ai/)"
             }
         }
 
@@ -1635,6 +2223,22 @@ class LLMConfig:
             },
             "claude": {
                 "model": "claude-sonnet-4-20250514",
+                "api_key": ""
+            },
+            "grok": {
+                "model": "grok-3-mini",
+                "api_key": ""
+            },
+            "qwen": {
+                "model": "qwen-coder-plus",
+                "api_key": ""
+            },
+            "mistral": {
+                "model": "codestral-latest",
+                "api_key": ""
+            },
+            "together": {
+                "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
                 "api_key": ""
             }
         }
