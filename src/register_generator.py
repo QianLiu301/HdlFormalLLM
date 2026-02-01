@@ -65,7 +65,11 @@ class RegFileGenerator:
                 OpenAIProvider,
                 ClaudeProvider,
                 GroqProvider,
-                DeepSeekProvider
+                DeepSeekProvider,
+                GrokProvider,
+                QwenProvider,
+                MistralProvider,
+                TogetherProvider
             )
 
             providers = {
@@ -75,6 +79,12 @@ class RegFileGenerator:
                 'claude': ClaudeProvider,
                 'groq': GroqProvider,
                 'deepseek': DeepSeekProvider,
+                'grok': GrokProvider,
+                'xai': GrokProvider,
+                'qwen': QwenProvider,
+                'mistral': MistralProvider,
+                'codestral': MistralProvider,
+                'together': TogetherProvider,
             }
 
             if self.llm_provider not in providers:
