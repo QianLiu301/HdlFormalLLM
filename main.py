@@ -55,7 +55,11 @@ def load_config():
         'DEEPSEEK_API_KEY': 'deepseek',
         'OPENAI_API_KEY': 'openai',
         'ANTHROPIC_API_KEY': 'anthropic',
-        'GEMINI_API_KEY': 'gemini'
+        'GEMINI_API_KEY': 'gemini',
+        'XAI_API_KEY': 'grok',
+        'QWEN_API_KEY': 'qwen',
+        'MISTRAL_API_KEY': 'mistral',
+        'TOGETHER_API_KEY': 'together'
     }
 
     for env_var, provider in env_keys.items():
@@ -105,7 +109,11 @@ def setup_api_keys():
         'deepseek': 'DEEPSEEK_API_KEY',
         'openai': 'OPENAI_API_KEY',
         'anthropic': 'ANTHROPIC_API_KEY',
-        'gemini': 'GEMINI_API_KEY'
+        'gemini': 'GEMINI_API_KEY',
+        'grok': 'XAI_API_KEY',
+        'qwen': 'QWEN_API_KEY',
+        'mistral': 'MISTRAL_API_KEY',
+        'together': 'TOGETHER_API_KEY'
     }
 
     for provider, env_var in key_mapping.items():
@@ -913,6 +921,10 @@ def parse_hardware_natural_language(input_text):
         'openai': ['openai', 'gpt', 'chatgpt'],
         'claude': ['claude', 'anthropic'],
         'gemini': ['gemini', 'google'],
+        'grok': ['grok', 'xai'],
+        'qwen': ['qwen', 'tongyi', 'alibaba'],
+        'mistral': ['mistral', 'codestral'],
+        'together': ['together'],
     }
 
     for provider, keywords in llm_keywords.items():
