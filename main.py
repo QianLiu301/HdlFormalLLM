@@ -50,6 +50,12 @@ def load_config():
         except Exception as e:
             print(f"⚠️ Config file error: {e}")
 
+    # Extract API keys from "providers" structure into flat "api_keys" dict
+    providers_config = config.get('providers', {})
+    for provider_name, provider_data in providers_config.items():
+        if isinstance(provider_data, dict) and provider_data.get('api_key'):
+            config['api_keys'][provider_name] = provider_data['api_key']
+
     env_keys = {
         'GROQ_API_KEY': 'groq',
         'DEEPSEEK_API_KEY': 'deepseek',
@@ -109,6 +115,7 @@ def setup_api_keys():
         'deepseek': 'DEEPSEEK_API_KEY',
         'openai': 'OPENAI_API_KEY',
         'anthropic': 'ANTHROPIC_API_KEY',
+        'claude': 'ANTHROPIC_API_KEY',
         'gemini': 'GEMINI_API_KEY',
         'grok': 'XAI_API_KEY',
         'qwen': 'QWEN_API_KEY',
@@ -120,10 +127,30 @@ def setup_api_keys():
         if api_keys.get(provider) and not api_keys[provider].startswith('your_'):
             os.environ[env_var] = api_keys[provider]
 
+    # Display status with model info
+    display_mapping = {
+        'GROQ': 'GROQ_API_KEY',
+        'DEEPSEEK': 'DEEPSEEK_API_KEY',
+        'OPENAI': 'OPENAI_API_KEY',
+        'CLAUDE': 'ANTHROPIC_API_KEY',
+        'GEMINI': 'GEMINI_API_KEY',
+        'GROK': 'XAI_API_KEY',
+        'QWEN': 'QWEN_API_KEY',
+        'MISTRAL': 'MISTRAL_API_KEY',
+        'TOGETHER': 'TOGETHER_API_KEY'
+    }
+
+    # Build provider->model mapping from config
+    providers_cfg = CONFIG.get('providers', {})
     print("🔑 API Keys status:")
-    for provider, env_var in key_mapping.items():
+    for display_name, env_var in display_mapping.items():
         status = "✅" if os.environ.get(env_var) else "❌"
-        print(f"   {status} {provider.upper()}")
+        # Get model name from providers config
+        provider_key = display_name.lower()
+        model_name = ""
+        if provider_key in providers_cfg and providers_cfg[provider_key].get('model'):
+            model_name = f" (model: {providers_cfg[provider_key]['model']})"
+        print(f"   {status} {display_name}{model_name}")
 
 setup_api_keys()
 
