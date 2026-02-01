@@ -748,7 +748,7 @@ def generate_hardware_stream():
 
             # Dynamic token budget based on module complexity
             if module_type == 'cpu':
-                max_tokens = 12000
+                max_tokens = 20000
             elif module_type == 'regfile':
                 max_tokens = 8000
             elif module_type == 'alu':
