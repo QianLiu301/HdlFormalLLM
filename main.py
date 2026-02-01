@@ -746,8 +746,18 @@ def generate_hardware_stream():
             llm = generator.llm
             full_content = ""
 
+            # Dynamic token budget based on module complexity
+            if module_type == 'cpu':
+                max_tokens = 12000
+            elif module_type == 'regfile':
+                max_tokens = 8000
+            elif module_type == 'alu':
+                max_tokens = 5000 + (bitwidth // 16) * 1000
+            else:
+                max_tokens = 6000 + (bitwidth // 16) * 500
+
             if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt, max_tokens=3000):
+                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
@@ -755,7 +765,7 @@ def generate_hardware_stream():
                 yield make_sse_message("info", message="Using standard mode...")
                 response = llm._call_api(
                     prompt,
-                    max_tokens=3000,
+                    max_tokens=max_tokens,
                     system_prompt="You are an expert Verilog hardware designer."
                 )
                 if response:
@@ -1030,14 +1040,18 @@ def generate_alu_stream():
             llm = generator.llm
             full_content = ""
 
+            # Dynamic token budget for ALU
+            max_tokens = 5000 + (bitwidth // 16) * 1000 + len(operations) * 200
+
             if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt, max_tokens=3000):
+                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
             else:
                 yield make_sse_message("info", message="Using standard mode...")
-                response = llm._call_api(prompt, max_tokens=3000, system_prompt="You are an expert Verilog hardware designer.")
+                response = llm._call_api(prompt, max_tokens=max_tokens,
+                                         system_prompt="You are an expert Verilog hardware designer.")
                 if response:
                     full_content = response
                     for i in range(0, len(full_content), 100):
