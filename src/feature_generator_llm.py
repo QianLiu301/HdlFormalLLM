@@ -88,7 +88,11 @@ try:
         OpenAIProvider,
         ClaudeProvider,
         GeminiProvider,
-        LocalLLMProvider
+        LocalLLMProvider,
+        GrokProvider,
+        QwenProvider,
+        MistralProvider,
+        TogetherProvider
     )
     HAS_LLM = True
 except ImportError:
@@ -113,6 +117,10 @@ class FeatureGeneratorLLM:
         'ClaudeProvider': 'claude',
         'GeminiProvider': 'gemini',
         'LocalLLMProvider': 'local',
+        'GrokProvider': 'grok',
+        'QwenProvider': 'qwen',
+        'MistralProvider': 'mistral',
+        'TogetherProvider': 'together',
     }
 
     # Default operations for different levels
