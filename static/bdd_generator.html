@@ -790,6 +790,10 @@
                                     <option value="openai">OpenAI</option>
                                     <option value="claude">Claude</option>
                                     <option value="gemini">Gemini</option>
+                                    <option value="grok">Grok (xAI)</option>
+                                    <option value="qwen">Qwen</option>
+                                    <option value="mistral">Mistral</option>
+                                    <option value="together">Together AI</option>
                                 </select>
                             </div>
                             <div class="form-group" id="hw-model-group" style="display: none;">
@@ -1057,6 +1061,10 @@
                                 <option value="openai">OpenAI</option>
                                 <option value="claude">Claude</option>
                                 <option value="gemini">Gemini</option>
+                                <option value="grok">Grok (xAI)</option>
+                                <option value="qwen">Qwen</option>
+                                <option value="mistral">Mistral</option>
+                                <option value="together">Together AI</option>
                             </select>
                         </div>
                         <div class="form-group" id="bdd-model-group" style="display: none;">
@@ -2550,14 +2558,60 @@
         // ============================================================
         // LLM Change
         // ============================================================
+        const modelOptions = {
+            'openai': [
+                {value: 'gpt-5-mini', text: 'GPT-5 Mini (Recommended)'},
+                {value: 'gpt-5', text: 'GPT-5'},
+                {value: 'gpt-5.1', text: 'GPT-5.1'}
+            ],
+            'grok': [
+                {value: 'grok-3-mini', text: 'Grok-3 Mini (Recommended)'},
+                {value: 'grok-3', text: 'Grok-3'},
+                {value: 'grok-2', text: 'Grok-2'}
+            ],
+            'qwen': [
+                {value: 'qwen-coder-plus', text: 'Qwen Coder Plus (Recommended)'},
+                {value: 'qwen-max', text: 'Qwen Max'},
+                {value: 'qwen-plus', text: 'Qwen Plus'},
+                {value: 'qwen-turbo', text: 'Qwen Turbo'}
+            ],
+            'mistral': [
+                {value: 'codestral-latest', text: 'Codestral (Recommended)'},
+                {value: 'mistral-large-latest', text: 'Mistral Large'},
+                {value: 'mistral-small-latest', text: 'Mistral Small'}
+            ],
+            'together': [
+                {value: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', text: 'Llama 3.3 70B (Recommended)'},
+                {value: 'deepseek-ai/DeepSeek-V3', text: 'DeepSeek V3'},
+                {value: 'Qwen/Qwen2.5-Coder-32B-Instruct', text: 'Qwen 2.5 Coder 32B'}
+            ]
+        };
+
+        function updateModelSelect(selectId, groupId, llm) {
+            const group = document.getElementById(groupId);
+            const select = document.getElementById(selectId);
+            if (modelOptions[llm]) {
+                select.innerHTML = '';
+                modelOptions[llm].forEach(opt => {
+                    const o = document.createElement('option');
+                    o.value = opt.value;
+                    o.textContent = opt.text;
+                    select.appendChild(o);
+                });
+                group.style.display = 'block';
+            } else {
+                group.style.display = 'none';
+            }
+        }
+
         function onHwLlmChange() {
             const llm = document.getElementById('hw-llm').value;
-            document.getElementById('hw-model-group').style.display = llm === 'openai' ? 'block' : 'none';
+            updateModelSelect('hw-model', 'hw-model-group', llm);
         }
 
         function onBddLlmChange() {
             const llm = document.getElementById('bdd-llm').value;
-            document.getElementById('bdd-model-group').style.display = llm === 'openai' ? 'block' : 'none';
+            updateModelSelect('bdd-model', 'bdd-model-group', llm);
         }
 
         // ============================================================
