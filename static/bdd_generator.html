@@ -3248,8 +3248,6 @@
             const warnings = data.warnings || [];
             const warningsEl = document.getElementById(prefix + '-warnings');
                 warningsEl.innerHTML = '';
-            }
-        }
             if (warnings.length > 0) {
                 warningsEl.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--accent-orange);margin-bottom:8px;">Synthesis Warnings</div>' +
                     warnings.map(w => `<div class="yosys-warning-item"><span>⚠️</span><span>${w}</span></div>`).join('');
