@@ -775,7 +775,8 @@ class TestbenchGenerator:
             # Determine output path
             # Try to get LLM name from path
             llm_name = 'default'
-            if bdd_path.parent.name in ['groq', 'deepseek', 'openai', 'claude', 'gemini']:
+            if bdd_path.parent.name in ['groq', 'deepseek', 'openai', 'claude', 'gemini',
+                                        'qwen', 'together', 'mistral', 'grok', 'local', 'uploaded']:
                 llm_name = bdd_path.parent.name
 
             output_dir = self.output_base_dir / llm_name
