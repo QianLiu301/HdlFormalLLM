@@ -208,6 +208,32 @@
         .no-dut-warning-text h4 { font-size: 13px; font-weight: 600; color: var(--accent-orange); margin-bottom: 2px; }
         .no-dut-warning-text p { font-size: 12px; color: var(--text-secondary); }
 
+         /* Yosys Analysis */
+        .yosys-section { margin-top: 16px; border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; display: none; }
+        .yosys-section.visible { display: block; }
+        .yosys-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: linear-gradient(135deg, rgba(124,58,237,0.08), rgba(124,58,237,0.02)); border-bottom: 1px solid var(--border-color); cursor: pointer; user-select: none; }
+        .yosys-header h4 { flex: 1; font-size: 14px; font-weight: 600; color: var(--accent-purple); }
+        .yosys-header .yosys-toggle { font-size: 16px; color: var(--text-secondary); transition: transform 0.3s; }
+        .yosys-section.collapsed .yosys-toggle { transform: rotate(-90deg); }
+        .yosys-section.collapsed .yosys-body { display: none; }
+        .yosys-body { padding: 16px; }
+        .yosys-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px; }
+        .yosys-stat-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; text-align: center; }
+        .yosys-stat-card .stat-value { font-size: 22px; font-weight: 700; color: var(--accent-purple); font-family: 'JetBrains Mono', monospace; }
+        .yosys-stat-card .stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .yosys-cells-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+        .yosys-cells-table th { text-align: left; padding: 8px 10px; background: var(--bg-secondary); border-bottom: 2px solid var(--border-color); font-weight: 600; color: var(--text-secondary); font-size: 11px; text-transform: uppercase; }
+        .yosys-cells-table td { padding: 6px 10px; border-bottom: 1px solid var(--border-color); font-family: 'JetBrains Mono', monospace; }
+        .yosys-cells-table td:last-child { text-align: right; font-weight: 600; color: var(--accent-purple); }
+        .yosys-diagram { margin-top: 12px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: #fff; }
+        .yosys-diagram-title { padding: 10px 14px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+        .yosys-diagram-content { padding: 12px; overflow-x: auto; text-align: center; max-height: 500px; overflow-y: auto; }
+        .yosys-diagram-content svg { max-width: 100%; height: auto; }
+        .yosys-warnings { margin-top: 12px; }
+        .yosys-warning-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; background: rgba(245, 158, 11, 0.06); border-radius: 6px; margin-bottom: 6px; font-size: 12px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+        .yosys-loading { text-align: center; padding: 30px; color: var(--text-secondary); }
+        .yosys-loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border-color); border-top-color: var(--accent-purple); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+
         /* Bug Detection Results */
         .bug-detection-panel { margin-top: 16px; border-radius: 10px; overflow: hidden; }
         .bug-detection-panel.has-critical { border: 2px solid var(--error); }
@@ -857,7 +883,41 @@
                             <button class="btn btn-secondary btn-sm" id="hw-download" onclick="downloadHardware()">📥
                                 Download .v
                             </button>
+                            <button class="btn btn-secondary btn-sm" id="hw-analyze-btn" onclick="analyzeDUT()">🔬
+                                Yosys Analysis
+                            </button>
                             <button class="btn btn-secondary btn-sm" onclick="resetHardware()">🔄 Reset</button>
+                        </div>
+                    </div>
+
+                    <!-- Yosys Analysis Result -->
+                    <div class="yosys-section" id="yosys-section">
+                        <div class="yosys-header" onclick="toggleYosys()">
+                            <span>🔬</span>
+                            <h4>Yosys Synthesis Analysis</h4>
+                            <span class="yosys-toggle">▼</span>
+                        </div>
+                        <div class="yosys-body" id="yosys-body">
+                            <div class="yosys-loading" id="yosys-loading">
+                                <div class="spinner"></div>
+                                <span>Running Yosys synthesis...</span>
+                            </div>
+                            <div id="yosys-content" style="display:none;">
+                                <!-- Stats Grid -->
+                                <div class="yosys-stats" id="yosys-stats"></div>
+
+                                <!-- Cell Breakdown Table -->
+                                <div id="yosys-cells-container"></div>
+
+                                <!-- Circuit Diagram -->
+                                <div class="yosys-diagram" id="yosys-diagram" style="display:none;">
+                                    <div class="yosys-diagram-title">Circuit Schematic (Gate-Level)</div>
+                                    <div class="yosys-diagram-content" id="yosys-svg"></div>
+                                </div>
+
+                                <!-- Warnings -->
+                                <div class="yosys-warnings" id="yosys-warnings"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -993,9 +1053,38 @@
                             </div>
                         </div>
 
-                        <button class="btn btn-primary" onclick="confirmUpload()">
-                            ✅ Use This File as DUT
-                        </button>
+                                               <div class="action-buttons" style="margin-top: 12px;">
+                            <button class="btn btn-primary" onclick="confirmUpload()">
+                                ✅ Use This File as DUT
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="upload-analyze-btn" onclick="analyzeDUT()">🔬
+                                Yosys Analysis
+                            </button>
+                        </div>
+
+                        <!-- Yosys Analysis for uploaded files -->
+                        <div class="yosys-section" id="yosys-upload-section">
+                            <div class="yosys-header" onclick="document.getElementById('yosys-upload-section').classList.toggle('collapsed')">
+                                <span>🔬</span>
+                                <h4>Yosys Synthesis Analysis</h4>
+                                <span class="yosys-toggle">▼</span>
+                            </div>
+                            <div class="yosys-body">
+                                <div class="yosys-loading" id="yosys-upload-loading">
+                                    <div class="spinner"></div>
+                                    <span>Running Yosys synthesis...</span>
+                                </div>
+                                <div id="yosys-upload-content" style="display:none;">
+                                    <div class="yosys-stats" id="yosys-upload-stats"></div>
+                                    <div id="yosys-upload-cells-container"></div>
+                                    <div class="yosys-diagram" id="yosys-upload-diagram" style="display:none;">
+                                        <div class="yosys-diagram-title">Circuit Schematic (Gate-Level)</div>
+                                        <div class="yosys-diagram-content" id="yosys-upload-svg"></div>
+                                    </div>
+                                    <div class="yosys-warnings" id="yosys-upload-warnings"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3019,8 +3108,154 @@
             updatePipelineIndicator(1, 'active');
             updatePipelineIndicator(2, '');
 
+            // Reset Yosys section
+            document.getElementById('yosys-section').classList.remove('visible');
+
             // ✅ 新增: 重置 Examples 为默认
             updateBddExamples('default');
+        }
+
+        // ============================================================
+        // Yosys Analysis
+        // ============================================================
+        function toggleYosys() {
+            document.getElementById('yosys-section').classList.toggle('collapsed');
+        }
+
+        async function analyzeDUT() {
+            // Determine which file to analyze
+            let filename, llm, moduleName;
+            let isUpload = false;
+
+            if (currentDUT && currentHwFilename) {
+                // Generated DUT
+                filename = currentHwFilename;
+                llm = currentDUT.llm || 'default';
+                moduleName = currentDUT.moduleName_verilog || null;
+            } else if (uploadedFileData && uploadedFileData.saved_path) {
+                // Uploaded DUT (before confirm)
+                isUpload = true;
+                filename = uploadedFileData.filename || uploadedFileData.saved_path.split('/').pop();
+                llm = 'uploaded';
+                moduleName = parsedModules.length > 0 ? parsedModules[0].name : null;
+            } else {
+                showError('hw', 'No DUT available to analyze');
+                return;
+            }
+
+            // Select the right DOM elements based on mode
+            const prefix = isUpload ? 'yosys-upload' : 'yosys';
+            const section = document.getElementById(prefix + '-section') || document.getElementById('yosys-section');
+            const loading = document.getElementById(prefix + '-loading') || document.getElementById('yosys-loading');
+            const content = document.getElementById(prefix + '-content') || document.getElementById('yosys-content');
+
+            // Show section with loading state
+            section.classList.add('visible');
+            section.classList.remove('collapsed');
+            loading.style.display = 'block';
+            loading.innerHTML = '<div class="spinner"></div><span>Running Yosys synthesis...</span>';
+            content.style.display = 'none';
+
+            // Disable buttons
+            const btns = document.querySelectorAll('#hw-analyze-btn, #upload-analyze-btn');
+            btns.forEach(b => { b.disabled = true; b.textContent = '🔬 Analyzing...'; });
+
+            try {
+                const response = await fetch('/api/analyze-dut', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ filename, llm, module_name: moduleName })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Analysis failed');
+                }
+
+                renderYosysResults(data, prefix);
+                loading.style.display = 'none';
+                content.style.display = 'block';
+
+            } catch (error) {
+                loading.innerHTML = `<div style="color: var(--error);">Analysis failed: ${error.message}</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
+                        Make sure Yosys and Graphviz are installed:<br>
+                        <code>apt-get install yosys graphviz</code>
+                    </div>`;
+            } finally {
+                btns.forEach(b => { b.disabled = false; b.textContent = '🔬 Yosys Analysis'; });
+            }
+        }
+
+        function renderYosysResults(data, prefix) {
+            prefix = prefix || 'yosys';
+            const stats = data.stats || {};
+
+            // Render stats grid
+            const statsHtml = `
+                <div class="yosys-stat-card">
+                    <div class="stat-value">${stats.cell_total || 0}</div>
+                    <div class="stat-label">Total Cells</div>
+                </div>
+                <div class="yosys-stat-card">
+                    <div class="stat-value">${stats.wires || 0}</div>
+                    <div class="stat-label">Wires</div>
+                </div>
+                <div class="yosys-stat-card">
+                    <div class="stat-value">${stats.wire_bits || 0}</div>
+                    <div class="stat-label">Wire Bits</div>
+                </div>
+                <div class="yosys-stat-card">
+                    <div class="stat-value">${stats.memories || 0}</div>
+                    <div class="stat-label">Memories</div>
+                </div>
+                <div class="yosys-stat-card">
+                    <div class="stat-value">${stats.memory_bits || 0}</div>
+                    <div class="stat-label">Memory Bits</div>
+                </div>
+            `;
+            document.getElementById(prefix + '-stats').innerHTML = statsHtml;
+
+            // Render cells table
+            const cells = stats.cells || {};
+            const cellEntries = Object.entries(cells).sort((a, b) => b[1] - a[1]);
+            const cellsContainer = document.getElementById(prefix + '-cells-container');
+
+            if (cellEntries.length > 0) {
+                let tableHtml = `<table class="yosys-cells-table">
+                    <thead><tr><th>Cell Type</th><th>Count</th></tr></thead><tbody>`;
+                for (const [cellType, count] of cellEntries) {
+                    const displayName = cellType.replace(/^\$_?/, '').replace(/_$/, '');
+                    tableHtml += `<tr><td>${displayName}</td><td>${count}</td></tr>`;
+                }
+                tableHtml += '</tbody></table>';
+                cellsContainer.innerHTML = tableHtml;
+            } else {
+                cellsContainer.innerHTML = '';
+            }
+
+            // Render SVG diagram
+            const diagramEl = document.getElementById(prefix + '-diagram');
+            if (data.svg_content) {
+                document.getElementById(prefix + '-svg').innerHTML = data.svg_content;
+                diagramEl.style.display = 'block';
+            } else {
+                diagramEl.style.display = 'none';
+            }
+
+            // Render warnings
+            const warnings = data.warnings || [];
+            const warningsEl = document.getElementById(prefix + '-warnings');
+                warningsEl.innerHTML = '';
+            }
+        }
+            if (warnings.length > 0) {
+                warningsEl.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--accent-orange);margin-bottom:8px;">Synthesis Warnings</div>' +
+                    warnings.map(w => `<div class="yosys-warning-item"><span>⚠️</span><span>${w}</span></div>`).join('');
+            } else {
+                warningsEl.innerHTML = '';
+            }
         }
 
         function resetBDD() {

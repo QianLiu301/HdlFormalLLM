@@ -1,9 +1,11 @@
 # 使用 Python 基础镜像
 FROM python:3.11-slim
 
-# 安装系统依赖和 iverilog
+# 安装系统依赖: iverilog, yosys, graphviz
 RUN apt-get update && apt-get install -y \
     iverilog \
+    yosys \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
@@ -19,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 创建 output 目录
-RUN mkdir -p output/dut output/bdd output/testbench output/results output/quality_reports
+RUN mkdir -p output/dut output/bdd output/testbench output/results output/quality_reports output/yosys
 
 # 暴露端口
 EXPOSE 10000
