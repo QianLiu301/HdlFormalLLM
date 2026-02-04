@@ -863,6 +863,90 @@ def generate_hardware_stream():
     )
 
 
+# ============================================================================
+# Yosys Analysis API
+# ============================================================================
+@app.route('/api/analyze-dut', methods=['POST'])
+def analyze_dut():
+    """Analyze DUT with Yosys: synthesize, get stats, generate circuit diagram."""
+    try:
+        from yosys_analyzer import YosysAnalyzer
+
+        data = request.json
+        filename = data.get('filename')
+        llm_name = data.get('llm', 'default')
+        module_name = data.get('module_name')
+
+        if not filename:
+            return jsonify({'success': False, 'error': 'No filename provided'}), 400
+
+        # Find the DUT file
+        dut_path = None
+
+        # Check LLM-specific directory first
+        candidate = PROJECT_ROOT / 'output' / 'dut' / llm_name / filename
+        if candidate.exists():
+            dut_path = candidate
+
+        # Check uploaded directory
+        if not dut_path:
+            candidate = PROJECT_ROOT / 'output' / 'dut' / 'uploaded' / filename
+            if candidate.exists():
+                dut_path = candidate
+
+        # Search all DUT subdirectories
+        if not dut_path:
+            dut_base = PROJECT_ROOT / 'output' / 'dut'
+            if dut_base.exists():
+                for sub in dut_base.iterdir():
+                    if sub.is_dir():
+                        candidate = sub / filename
+                        if candidate.exists():
+                            dut_path = candidate
+                            break
+
+        if not dut_path:
+            return jsonify({'success': False, 'error': f'DUT file not found: {filename}'}), 404
+
+        print(f"\n{'='*60}")
+        print(f"🔬 Yosys Analysis: {dut_path.name}")
+        print(f"{'='*60}")
+
+        analyzer = YosysAnalyzer(project_root=str(PROJECT_ROOT))
+        result = analyzer.analyze(str(dut_path), module_name=module_name)
+
+        if result['success']:
+            print(f"   ✅ Synthesis successful")
+            print(f"   📊 Cells: {result['stats'].get('cell_total', 0)}")
+            print(f"   📊 Wires: {result['stats'].get('wires', 0)}")
+
+        return jsonify(result)
+
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'Yosys analyzer module not available'
+        }), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/yosys-status')
+def yosys_status():
+    """Check if Yosys is available on the system."""
+    import shutil
+    yosys_path = shutil.which('yosys')
+    dot_path = shutil.which('dot')
+    return jsonify({
+        'yosys_available': yosys_path is not None,
+        'graphviz_available': dot_path is not None,
+        'yosys_path': yosys_path,
+        'graphviz_path': dot_path
+    })
+
+
 @app.route('/api/download-hardware/<filename>')
 def download_hardware(filename):
     """Download generated hardware file"""
