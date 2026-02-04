@@ -201,6 +201,9 @@ class RegFileGenerator:
                 print(f"   Raw response preview: {response[:200]}...")
                 return None
 
+            # Fix common syntax errors (missing begin/end in case branches)
+            verilog_code = self._fix_verilog_syntax(verilog_code)
+
             # Validate
             if self._validate_verilog(verilog_code, bitwidth, depth):
                 print(f"✅ Verilog validation passed")
@@ -303,12 +306,114 @@ wen=1, waddr=0, wdata=0xFFFF
 // Next cycle: registers[0] still = 0 (write ignored)
 ```
 
+## IMPORTANT Verilog Syntax Rule
+When a case branch has MORE THAN ONE statement, you MUST wrap them in begin/end blocks.
+
 ## Output Format
 Generate ONLY the Verilog code. No explanations.
 Start with `module` and end with `endmodule`.
 """
 
         return prompt
+
+    def _fix_verilog_syntax(self, verilog_code: str) -> str:
+        """Fix common Verilog syntax errors from LLM generation (missing begin/end in case branches)"""
+        verilog_code = re.sub(r'```verilog\s*', '', verilog_code)
+        verilog_code = re.sub(r'```v\s*', '', verilog_code)
+        verilog_code = re.sub(r'```\s*', '', verilog_code)
+
+        lines = verilog_code.split('\n')
+        fixed_lines = []
+        i = 0
+        while i < len(lines):
+            stripped = lines[i].strip()
+            if re.match(r'\s*case\s*\(', stripped):
+                case_block = [lines[i]]
+                i += 1
+                depth = 1
+                while i < len(lines) and depth > 0:
+                    case_block.append(lines[i])
+                    s = lines[i].strip()
+                    if re.match(r'case\s*\(', s):
+                        depth += 1
+                    elif s.startswith('endcase'):
+                        depth -= 1
+                    i += 1
+                fixed_block = self._fix_case_block(case_block)
+                fixed_lines.extend(fixed_block)
+                continue
+            fixed_lines.append(lines[i])
+            i += 1
+        return '\n'.join(fixed_lines)
+
+    def _fix_case_block(self, case_lines: list) -> list:
+        """Fix begin/end in a case...endcase block"""
+        if len(case_lines) < 3:
+            return case_lines
+        label_re = re.compile(
+            r"^(\s*)"
+            r"(\d+'[bBhHdD][0-9a-fA-F_xXzZ]+|default)"
+            r"\s*:\s*(begin\b)?(.*?)$"
+        )
+        result = [case_lines[0]]
+        i = 1
+        while i < len(case_lines):
+            line = case_lines[i]
+            stripped = line.strip()
+            if stripped.startswith('endcase'):
+                result.append(line)
+                i += 1
+                continue
+            m = label_re.match(line)
+            if m:
+                indent, label, has_begin, rest = m.group(1), m.group(2), m.group(3), m.group(4).strip()
+                if has_begin:
+                    result.append(line)
+                    i += 1
+                    bd = 1
+                    while i < len(case_lines) and bd > 0:
+                        s = case_lines[i].strip()
+                        if s == 'begin' or s.startswith('begin '):
+                            bd += 1
+                        elif s == 'end' or s.startswith('end ') or s.startswith('end//'):
+                            bd -= 1
+                        result.append(case_lines[i])
+                        i += 1
+                    continue
+                is_comment = rest.startswith('//')
+                inline_stmt = rest if rest and not is_comment else None
+                comment = rest if is_comment else ''
+                branch_stmts = []
+                if inline_stmt:
+                    branch_stmts.append(f"{indent}    {inline_stmt}")
+                j = i + 1
+                while j < len(case_lines):
+                    check = case_lines[j].strip()
+                    if check.startswith('endcase') or label_re.match(case_lines[j]):
+                        break
+                    if check:
+                        branch_stmts.append(case_lines[j])
+                    j += 1
+                stmt_count = sum(1 for s in branch_stmts if s.strip() and not s.strip().startswith('//'))
+                if stmt_count > 1:
+                    result.append(f"{indent}{label}: begin {comment}".rstrip())
+                    for bl in branch_stmts:
+                        result.append(bl)
+                    result.append(f"{indent}end")
+                elif branch_stmts:
+                    if inline_stmt:
+                        result.append(line)
+                    else:
+                        result.append(f"{indent}{label}: {comment}".rstrip())
+                        for bl in branch_stmts:
+                            result.append(bl)
+                else:
+                    result.append(line)
+                i = j
+                continue
+            result.append(line)
+            i += 1
+        return result
 
     def _extract_verilog(self, response: str) -> Optional[str]:
         """Extract Verilog code from LLM response (with truncation handling)"""

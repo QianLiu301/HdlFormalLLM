@@ -372,6 +372,11 @@ REQUIREMENTS:
    - Use meaningful signal names
    - Proper indentation
 
+IMPORTANT VERILOG SYNTAX RULE:
+   - When a case branch has MORE THAN ONE statement, you MUST wrap them
+     in begin/end blocks. Failure to do so causes syntax errors.
+   - Example: 4'b0000: begin ... end  (NOT 4'b0000: stmt1; stmt2;)
+
 EXAMPLE STRUCTURE:
 ```verilog
 module {module_name} (
@@ -389,18 +394,26 @@ module {module_name} (
     // Combinational logic for operations
     reg [{bitwidth-1}:0] temp_result;
     reg temp_overflow;
-    
+
     always @(*) begin
         temp_overflow = 1'b0;
         case (opcode)
-            4'b0000: // ADD
-                ...
-            4'b0001: // SUB
-                ...
-            ...
+            4'b0000: begin // ADD
+                temp_result = a + b;
+                temp_overflow = (a[{bitwidth-1}] & b[{bitwidth-1}] & ~temp_result[{bitwidth-1}]) |
+                                (~a[{bitwidth-1}] & ~b[{bitwidth-1}] & temp_result[{bitwidth-1}]);
+            end
+            4'b0001: begin // SUB
+                temp_result = a - b;
+                temp_overflow = (a[{bitwidth-1}] & ~b[{bitwidth-1}] & ~temp_result[{bitwidth-1}]) |
+                                (~a[{bitwidth-1}] & b[{bitwidth-1}] & temp_result[{bitwidth-1}]);
+            end
+            4'b0010: temp_result = a & b;  // AND (single statement, no begin/end needed)
+            4'b0011: temp_result = a | b;  // OR
+            default: temp_result = {bitwidth}'b0;
         endcase
     end
-    
+
     // Sequential logic for output registers
     always @(posedge clk) begin
         if (rst) begin
@@ -484,7 +497,7 @@ Start with `module` and end with `endmodule`.
         verilog_code = re.sub(r'```\s*', '', verilog_code)
 
         # 修复 case 分支缺少 begin/end 的问题
-        # 匹配: 4'b0000: // comment 后面跟着多行语句（没有 begin）
+        # 策略：找到所有 case...endcase 块，逐个修复内部分支
 
         lines = verilog_code.split('\n')
         fixed_lines = []
@@ -494,53 +507,140 @@ Start with `module` and end with `endmodule`.
             line = lines[i]
             stripped = line.strip()
 
-            # 检测 case 分支行（如 4'b0000: 或 default:）
-            case_match = re.match(r"(\s*)(4'b[01]+|[0-9]+'[bhd][0-9a-fA-F]+|default)\s*:\s*(//.*)?$", line)
+            # 检测 case 语句开始
+            if re.match(r'\s*case\s*\(', stripped):
+                # 收集整个 case...endcase 块
+                case_block = [line]
+                i += 1
+                depth = 1
+                while i < len(lines) and depth > 0:
+                    case_block.append(lines[i])
+                    s = lines[i].strip()
+                    if re.match(r'case\s*\(', s):
+                        depth += 1
+                    elif s.startswith('endcase'):
+                        depth -= 1
+                    i += 1
 
-            if case_match:
-                indent = case_match.group(1)
-                case_label = case_match.group(2)
-                comment = case_match.group(3) or ''
-
-                # 查看下一行
-                if i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-
-                    # 如果下一行不是 begin，检查是否需要添加
-                    if not next_line.startswith('begin'):
-                        # 收集这个分支的所有行
-                        branch_lines = []
-                        j = i + 1
-                        while j < len(lines):
-                            check = lines[j].strip()
-                            # 遇到下一个分支或 endcase 就停止
-                            if (re.match(r"(4'b[01]+|[0-9]+'[bhd][0-9a-fA-F]+|default)\s*:", check) or
-                                    check == 'endcase' or check.startswith('endcase')):
-                                break
-                            if check:  # 非空行
-                                branch_lines.append(lines[j])
-                            j += 1
-
-                        # 如果有多行语句，添加 begin/end
-                        if len(branch_lines) > 1:
-                            fixed_lines.append(f"{indent}{case_label}: begin {comment}")
-                            for bl in branch_lines:
-                                fixed_lines.append(bl)
-                            fixed_lines.append(f"{indent}end")
-                            i = j
-                            continue
-                        elif len(branch_lines) == 1:
-                            # 单行可以不需要 begin/end，但为了安全还是加上
-                            fixed_lines.append(f"{indent}{case_label}: begin {comment}")
-                            fixed_lines.append(branch_lines[0])
-                            fixed_lines.append(f"{indent}end")
-                            i = j
-                            continue
+                # 修复 case 块内部
+                fixed_block = self._fix_case_block(case_block)
+                fixed_lines.extend(fixed_block)
+                continue
 
             fixed_lines.append(line)
             i += 1
 
         return '\n'.join(fixed_lines)
+
+    def _fix_case_block(self, case_lines: list) -> list:
+        """Fix begin/end in a case...endcase block"""
+        if len(case_lines) < 3:
+            return case_lines
+
+        # 正则：匹配 case 分支标签行
+        # 支持: 4'b0000: 或 4'b0000: // comment 或 default: 等
+        label_re = re.compile(
+            r"^(\s*)"                                          # 缩进
+            r"("                                               # 标签组
+            r"\d+'[bBhHdD][0-9a-fA-F_xXzZ]+"                  # 如 4'b0000, 8'hFF
+            r"|default"                                        # 或 default
+            r")"
+            r"\s*:\s*"                                         # 冒号
+            r"(begin\b)?"                                      # 可选的 begin
+            r"(.*)"                                            # 其余内容（注释或单行语句）
+            r"$"
+        )
+
+        result = [case_lines[0]]  # case(...) 行直接保留
+        i = 1
+
+        while i < len(case_lines):
+            line = case_lines[i]
+            stripped = line.strip()
+
+            # 最后一行是 endcase，直接保留
+            if stripped.startswith('endcase'):
+                result.append(line)
+                i += 1
+                continue
+
+            m = label_re.match(line)
+            if m:
+                indent = m.group(1)
+                label = m.group(2)
+                has_begin = m.group(3)
+                rest = m.group(4).strip()
+
+                if has_begin:
+                    # 已有 begin，原样保留到对应的 end
+                    result.append(line)
+                    i += 1
+                    begin_depth = 1
+                    while i < len(case_lines) and begin_depth > 0:
+                        s = case_lines[i].strip()
+                        if s == 'begin' or s.startswith('begin '):
+                            begin_depth += 1
+                        elif s == 'end' or s.startswith('end ') or s.startswith('end//'):
+                            begin_depth -= 1
+                        result.append(case_lines[i])
+                        i += 1
+                    continue
+
+                # 没有 begin - 收集此分支的语句
+                # rest 可能是: 空、注释、或一条内联语句
+                is_comment = rest.startswith('//')
+                inline_stmt = rest if rest and not is_comment else None
+                comment = rest if is_comment else ''
+
+                branch_stmts = []
+                if inline_stmt:
+                    # 标签行上有内联语句，如 4'b0010: temp_result = a & b;
+                    branch_stmts.append(f"{indent}    {inline_stmt}")
+
+                # 收集后续属于此分支的行
+                j = i + 1
+                while j < len(case_lines):
+                    check = case_lines[j].strip()
+                    # 遇到下一个标签或 endcase 就停止
+                    if check.startswith('endcase') or label_re.match(case_lines[j]):
+                        break
+                    if check and not (not branch_stmts and check.startswith('//')):
+                        # 将非空行（含注释行）视为分支内容
+                        branch_stmts.append(case_lines[j])
+                    elif check:
+                        branch_stmts.append(case_lines[j])
+                    j += 1
+
+                # 计算实际语句数（排除纯注释行）
+                stmt_count = sum(1 for s in branch_stmts
+                                 if s.strip() and not s.strip().startswith('//'))
+
+                if stmt_count > 1:
+                    # 多条语句 - 必须添加 begin/end
+                    result.append(f"{indent}{label}: begin {comment}".rstrip())
+                    for bl in branch_stmts:
+                        result.append(bl)
+                    result.append(f"{indent}end")
+                elif branch_stmts:
+                    # 单条语句 - 不需要 begin/end
+                    if inline_stmt:
+                        result.append(line)
+                    else:
+                        result.append(f"{indent}{label}: {comment}".rstrip())
+                        for bl in branch_stmts:
+                            result.append(bl)
+                else:
+                    # 空分支
+                    result.append(line)
+
+                i = j
+                continue
+
+            # 非标签行，直接保留
+            result.append(line)
+            i += 1
+
+        return result
 
     def _fix_module_name(self, verilog_code: str, expected_name: str) -> str:
         """
