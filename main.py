@@ -1309,7 +1309,11 @@ def get_llm_list():
             {'id': 'deepseek', 'name': 'DeepSeek', 'description': 'Chinese LLM'},
             {'id': 'openai', 'name': 'OpenAI', 'description': 'GPT-5 Series'},
             {'id': 'claude', 'name': 'Claude', 'description': 'Anthropic'},
-            {'id': 'gemini', 'name': 'Gemini', 'description': 'Google'}
+            {'id': 'gemini', 'name': 'Gemini', 'description': 'Google'},
+            {'id': 'qwen', 'name': 'Qwen', 'description': 'Alibaba Tongyi'},
+            {'id': 'together', 'name': 'Together', 'description': 'Together AI'},
+            {'id': 'mistral', 'name': 'Mistral', 'description': 'Mistral/Codestral'},
+            {'id': 'grok', 'name': 'Grok', 'description': 'xAI'}
         ],
         'openai_models': [
             {'id': 'gpt-5-mini', 'name': 'GPT-5 Mini'},
