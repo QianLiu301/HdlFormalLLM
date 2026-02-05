@@ -950,6 +950,22 @@ def yosys_status():
         })
 
 
+@app.route('/api/download-yosys/<path:filepath>')
+def download_yosys(filepath):
+    """Download Yosys output file (DOT, SVG, JSON)."""
+    import re as _re
+    # Sanitize: only allow files under output/yosys/
+    if '..' in filepath or not _re.match(r'^[\w\-/\\.]+\.(dot|svg|json|txt)$', filepath):
+        return jsonify({'error': 'Invalid file path'}), 400
+    full_path = PROJECT_ROOT / 'output' / 'yosys' / filepath
+    if not full_path.exists():
+        return jsonify({'error': 'File not found'}), 404
+    return send_from_directory(
+        str(full_path.parent.absolute()), full_path.name,
+        as_attachment=True, download_name=full_path.name
+    )
+
+
 @app.route('/api/download-hardware/<filename>')
 def download_hardware(filename):
     """Download generated hardware file"""
