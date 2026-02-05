@@ -6,16 +6,95 @@ Uses Yosys to:
 1. Synthesize Verilog code and check for errors
 2. Generate circuit schematic (SVG via Graphviz)
 3. Extract resource statistics (cells, wires, etc.)
+
+Supports Windows (OSS CAD Suite) and Linux (apt-get install yosys graphviz).
+
+Configuration via environment variables:
+  YOSYS_BIN       - Full path to yosys executable
+  DOT_BIN         - Full path to graphviz dot executable
+  OSS_CAD_SUITE   - Root directory of OSS CAD Suite (auto-detects bin/)
 """
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
+
+
+# Common Windows installation paths for auto-detection
+_WINDOWS_SEARCH_PATHS = [
+    Path(r"D:\dws\oss-cad-suite"),
+    Path(r"C:\oss-cad-suite"),
+    Path(r"D:\oss-cad-suite"),
+    Path(r"C:\Program Files\oss-cad-suite"),
+    Path(r"D:\Program Files\oss-cad-suite"),
+]
+
+_GRAPHVIZ_WINDOWS_PATHS = [
+    Path(r"C:\Program Files\Graphviz\bin"),
+    Path(r"C:\Program Files (x86)\Graphviz\bin"),
+    Path(r"D:\Program Files\Graphviz\bin"),
+]
+
+
+def _find_tool(tool_name: str, env_var: str, extra_search: Optional[List[Path]] = None) -> Optional[str]:
+    """Find an executable tool by checking env vars, PATH, and common locations.
+
+    Args:
+        tool_name: Name of the executable (e.g. 'yosys', 'dot')
+        env_var: Environment variable for explicit path (e.g. 'YOSYS_BIN')
+        extra_search: Additional directories to search
+
+    Returns:
+        Full path to the executable, or None if not found
+    """
+    is_win = platform.system() == 'Windows'
+    exe = f"{tool_name}.exe" if is_win else tool_name
+
+    # 1) Check explicit environment variable
+    env_path = os.environ.get(env_var)
+    if env_path:
+        p = Path(env_path)
+        if p.is_file():
+            return str(p)
+        # Maybe they pointed to a directory
+        if p.is_dir() and (p / exe).is_file():
+            return str(p / exe)
+
+    # 2) Check OSS_CAD_SUITE env var
+    oss_root = os.environ.get('OSS_CAD_SUITE')
+    if oss_root:
+        p = Path(oss_root) / 'bin' / exe
+        if p.is_file():
+            return str(p)
+
+    # 3) Check system PATH
+    found = shutil.which(tool_name)
+    if found:
+        return found
+
+    # 4) Auto-detect on Windows: scan common install locations
+    if is_win:
+        search_dirs = list(_WINDOWS_SEARCH_PATHS)
+        if extra_search:
+            search_dirs.extend(extra_search)
+        for root in search_dirs:
+            candidate = root / 'bin' / exe
+            if candidate.is_file():
+                return str(candidate)
+        # Also search Graphviz-specific paths for dot
+        if tool_name == 'dot':
+            for gv_dir in _GRAPHVIZ_WINDOWS_PATHS:
+                candidate = gv_dir / exe
+                if candidate.is_file():
+                    return str(candidate)
+
+    return None
 
 
 class YosysAnalyzer:
@@ -25,29 +104,57 @@ class YosysAnalyzer:
         self.project_root = Path(project_root) if project_root else Path.cwd()
         self.output_dir = self.project_root / "output" / "yosys"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Locate tools
+        self.yosys_bin = _find_tool('yosys', 'YOSYS_BIN')
+        self.dot_bin = _find_tool('dot', 'DOT_BIN')
         self.yosys_available = self._check_yosys()
 
+        # Build env for subprocess calls (add tool dirs to PATH)
+        self._tool_env = os.environ.copy()
+        extra_paths = []
+        if self.yosys_bin:
+            extra_paths.append(str(Path(self.yosys_bin).parent))
+        if self.dot_bin:
+            extra_paths.append(str(Path(self.dot_bin).parent))
+        if extra_paths:
+            sep = ';' if platform.system() == 'Windows' else ':'
+            self._tool_env['PATH'] = sep.join(extra_paths) + sep + self._tool_env.get('PATH', '')
+
     def _check_yosys(self) -> bool:
-        """Check if yosys and graphviz (dot) are available."""
+        """Check if yosys is available and working."""
+        if not self.yosys_bin:
+            return False
         try:
             result = subprocess.run(
-                ['yosys', '-V'],
+                [self.yosys_bin, '-V'],
                 capture_output=True, text=True, timeout=10
             )
             return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return False
 
     def _check_graphviz(self) -> bool:
-        """Check if graphviz dot is available."""
+        """Check if graphviz dot is available and working."""
+        if not self.dot_bin:
+            return False
         try:
             result = subprocess.run(
-                ['dot', '-V'],
+                [self.dot_bin, '-V'],
                 capture_output=True, text=True, timeout=10
             )
             return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return False
+
+    def get_tool_info(self) -> Dict:
+        """Return info about detected tool paths (for status endpoint)."""
+        return {
+            'yosys_available': self.yosys_available,
+            'graphviz_available': self._check_graphviz(),
+            'yosys_path': self.yosys_bin,
+            'graphviz_path': self.dot_bin,
+        }
 
     def analyze(self, verilog_path: str, module_name: Optional[str] = None) -> Dict:
         """
@@ -61,6 +168,13 @@ class YosysAnalyzer:
             Dictionary with synthesis results, stats, and SVG diagram path
         """
         if not self.yosys_available:
+            if platform.system() == 'Windows':
+                return {
+                    'success': False,
+                    'error': ('Yosys not found. Set environment variable OSS_CAD_SUITE '
+                              'to your oss-cad-suite directory (e.g. D:\\dws\\oss-cad-suite), '
+                              'or set YOSYS_BIN to the full path of yosys.exe, then restart the app.')
+                }
             return {
                 'success': False,
                 'error': 'Yosys is not installed. Install with: apt-get install yosys graphviz'
@@ -125,11 +239,12 @@ write_json {json_path}
         try:
             # Run Yosys
             result = subprocess.run(
-                ['yosys', '-p', yosys_script],
+                [self.yosys_bin, '-p', yosys_script],
                 capture_output=True,
                 text=True,
                 timeout=60,
-                cwd=str(self.project_root)
+                cwd=str(self.project_root),
+                env=self._tool_env
             )
 
             yosys_log = result.stdout + result.stderr
@@ -156,13 +271,14 @@ write_json {json_path}
 
             # Convert DOT to SVG using graphviz
             svg_content = None
-            if dot_path.exists() and self._check_graphviz():
+            if dot_path.exists() and self.dot_bin and self._check_graphviz():
                 try:
                     dot_result = subprocess.run(
-                        ['dot', '-Tsvg', str(dot_path)],
+                        [self.dot_bin, '-Tsvg', str(dot_path)],
                         capture_output=True,
                         text=True,
-                        timeout=30
+                        timeout=30,
+                        env=self._tool_env
                     )
                     if dot_result.returncode == 0:
                         svg_content = dot_result.stdout
