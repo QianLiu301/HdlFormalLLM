@@ -356,6 +356,8 @@ Start with `module` and end with `endmodule`.
 5. Pipeline registers MUST be 'reg' type
 6. NEVER assign to a 'wire' inside an 'always' block
 7. When a case branch has MORE THAN ONE statement, you MUST wrap them in begin/end blocks
+8. Use Verilog-2001 ONLY. Do NOT use SystemVerilog (no `logic`, no inline for-loop declarations)
+9. For loops: declare `integer i;` BEFORE the for statement, then use `for (i = 0; ...)`
 
 ## Verilog Number Format Rules (MUST FOLLOW)
 - funct3 is 3 bits: use 3'b000, 3'b001, 3'b100, 3'b110, 3'b111 (binary format)
@@ -401,6 +403,44 @@ Start with `module` and end with `endmodule`.
                 continue
             fixed_lines.append(lines[i])
             i += 1
+        result = '\n'.join(fixed_lines)
+
+        # 修复 SystemVerilog 内联 for 循环变量声明
+        result = self._fix_for_loop_declarations(result)
+
+        return result
+
+    def _fix_for_loop_declarations(self, verilog_code: str) -> str:
+        """Fix SystemVerilog inline for-loop variable declarations for Verilog-2001 compatibility.
+
+        Converts:  for (integer i = 0; i < N; i = i + 1)
+        To:        integer i;
+                   for (i = 0; i < N; i = i + 1)
+        """
+        lines = verilog_code.split('\n')
+        fixed_lines = []
+        declared_vars = set()
+
+        for line in lines:
+            m = re.search(r'\bfor\s*\(\s*(integer|int|genvar)\s+(\w+)\s*=', line)
+            if m:
+                var_type = m.group(1)
+                var_name = m.group(2)
+                indent_match = re.match(r'^(\s*)', line)
+                indent = indent_match.group(1) if indent_match else ''
+                verilog_type = 'integer' if var_type in ('integer', 'int') else var_type
+                if var_name not in declared_vars:
+                    fixed_lines.append(f"{indent}{verilog_type} {var_name};")
+                    declared_vars.add(var_name)
+                fixed_line = re.sub(
+                    r'\bfor\s*\(\s*(integer|int|genvar)\s+(\w+)\s*=',
+                    r'for (\2 =',
+                    line
+                )
+                fixed_lines.append(fixed_line)
+            else:
+                fixed_lines.append(line)
+
         return '\n'.join(fixed_lines)
 
     def _fix_case_block(self, case_lines: list) -> list:

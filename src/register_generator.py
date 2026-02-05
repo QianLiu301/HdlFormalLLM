@@ -306,8 +306,14 @@ wen=1, waddr=0, wdata=0xFFFF
 // Next cycle: registers[0] still = 0 (write ignored)
 ```
 
-## IMPORTANT Verilog Syntax Rule
-When a case branch has MORE THAN ONE statement, you MUST wrap them in begin/end blocks.
+## IMPORTANT Verilog Syntax Rules (MUST FOLLOW)
+1. When a case branch has MORE THAN ONE statement, you MUST wrap them in begin/end blocks.
+2. Use Verilog-2001 syntax ONLY. Do NOT use SystemVerilog features.
+3. For loops MUST declare the loop variable OUTSIDE the for statement:
+   CORRECT:   integer i;  for (i = 0; i < N; i = i + 1) begin ... end
+   WRONG:     for (integer i = 0; i < N; i = i + 1) begin ... end
+4. Do NOT use `logic` type - use `reg` and `wire` only.
+5. Use `reg [W-1:0] name;` not `logic [W-1:0] name;`
 
 ## Output Format
 Generate ONLY the Verilog code. No explanations.
@@ -344,6 +350,44 @@ Start with `module` and end with `endmodule`.
                 continue
             fixed_lines.append(lines[i])
             i += 1
+        result = '\n'.join(fixed_lines)
+
+        # 修复 SystemVerilog 内联 for 循环变量声明
+        result = self._fix_for_loop_declarations(result)
+
+        return result
+
+    def _fix_for_loop_declarations(self, verilog_code: str) -> str:
+        """Fix SystemVerilog inline for-loop variable declarations for Verilog-2001 compatibility.
+
+        Converts:  for (integer i = 0; i < N; i = i + 1)
+        To:        integer i;
+                   for (i = 0; i < N; i = i + 1)
+        """
+        lines = verilog_code.split('\n')
+        fixed_lines = []
+        declared_vars = set()
+
+        for line in lines:
+            m = re.search(r'\bfor\s*\(\s*(integer|int|genvar)\s+(\w+)\s*=', line)
+            if m:
+                var_type = m.group(1)
+                var_name = m.group(2)
+                indent_match = re.match(r'^(\s*)', line)
+                indent = indent_match.group(1) if indent_match else ''
+                verilog_type = 'integer' if var_type in ('integer', 'int') else var_type
+                if var_name not in declared_vars:
+                    fixed_lines.append(f"{indent}{verilog_type} {var_name};")
+                    declared_vars.add(var_name)
+                fixed_line = re.sub(
+                    r'\bfor\s*\(\s*(integer|int|genvar)\s+(\w+)\s*=',
+                    r'for (\2 =',
+                    line
+                )
+                fixed_lines.append(fixed_line)
+            else:
+                fixed_lines.append(line)
+
         return '\n'.join(fixed_lines)
 
     def _fix_case_block(self, case_lines: list) -> list:
