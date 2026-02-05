@@ -916,6 +916,9 @@
                                     <div class="yosys-diagram-content" id="yosys-svg"></div>
                                 </div>
 
+                                <!-- Download DOT -->
+                                <div id="yosys-download" style="display:none; margin-top:12px;"></div>
+
                                 <!-- Warnings -->
                                 <div class="yosys-warnings" id="yosys-warnings"></div>
                             </div>
@@ -1082,6 +1085,7 @@
                                         <div class="yosys-diagram-title">Circuit Schematic (Gate-Level)</div>
                                         <div class="yosys-diagram-content" id="yosys-upload-svg"></div>
                                     </div>
+                                    <div id="yosys-upload-download" style="display:none; margin-top:12px;"></div>
                                     <div class="yosys-warnings" id="yosys-upload-warnings"></div>
                                 </div>
                             </div>
@@ -3245,6 +3249,27 @@
                 diagramEl.style.display = 'none';
             }
 
+            // Render download buttons
+            const downloadEl = document.getElementById(prefix + '-download');
+            if (downloadEl) {
+                let downloadHtml = '';
+                if (data.dot_available && data.dot_path) {
+                    const dotUrl = '/api/download-yosys/' + encodeURIComponent(data.dot_path.replace('output/yosys/', ''));
+                    downloadHtml += `<a href="${dotUrl}" class="btn" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-size:13px;text-decoration:none;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);cursor:pointer;margin-right:8px;" download>` +
+                        `<span style="font-size:15px;">&#128196;</span> Download .dot</a>`;
+                }
+                if (data.svg_content) {
+                    downloadHtml += `<button onclick="downloadSvgContent('${prefix}')" class="btn" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-size:13px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);cursor:pointer;">` +
+                        `<span style="font-size:15px;">&#128202;</span> Download .svg</button>`;
+                }
+                if (downloadHtml) {
+                    downloadEl.innerHTML = downloadHtml;
+                    downloadEl.style.display = 'block';
+                } else {
+                    downloadEl.style.display = 'none';
+                }
+            }
+
             // Render warnings
             const warnings = data.warnings || [];
             const warningsEl = document.getElementById(prefix + '-warnings');
@@ -3255,6 +3280,19 @@
             } else {
                 warningsEl.innerHTML = '';
             }
+        }
+
+        function downloadSvgContent(prefix) {
+            const svgEl = document.getElementById(prefix + '-svg');
+            if (!svgEl) return;
+            const svgContent = svgEl.innerHTML;
+            const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'circuit.svg';
+            a.click();
+            URL.revokeObjectURL(url);
         }
 
         function resetBDD() {
