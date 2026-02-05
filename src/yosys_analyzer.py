@@ -107,7 +107,7 @@ class YosysAnalyzer:
 
         # Build Yosys script
         yosys_script = f"""
-read_verilog {vpath}
+read_verilog -sv {vpath}
 hierarchy -top {module_name}
 proc
 opt
