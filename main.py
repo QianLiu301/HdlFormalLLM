@@ -936,15 +936,18 @@ def analyze_dut():
 @app.route('/api/yosys-status')
 def yosys_status():
     """Check if Yosys is available on the system."""
-    import shutil
-    yosys_path = shutil.which('yosys')
-    dot_path = shutil.which('dot')
-    return jsonify({
-        'yosys_available': yosys_path is not None,
-        'graphviz_available': dot_path is not None,
-        'yosys_path': yosys_path,
-        'graphviz_path': dot_path
-    })
+    try:
+        from yosys_analyzer import YosysAnalyzer
+        analyzer = YosysAnalyzer(project_root=str(PROJECT_ROOT))
+        return jsonify(analyzer.get_tool_info())
+    except Exception as e:
+        return jsonify({
+            'yosys_available': False,
+            'graphviz_available': False,
+            'yosys_path': None,
+            'graphviz_path': None,
+            'error': str(e)
+        })
 
 
 @app.route('/api/download-hardware/<filename>')
