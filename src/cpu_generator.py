@@ -292,11 +292,18 @@ module {module_name} (
 ## Implementation Requirements
 
 ### 1. Pipeline Registers
-Create pipeline registers between each stage:
-- IF/ID register: instruction, PC
-- ID/EX register: control signals, register data, immediates
-- EX/MEM register: ALU result, write data, control signals
-- MEM/WB register: memory data, ALU result, control signals
+Create pipeline registers between each stage. EVERY signal listed below MUST be declared as `reg` and propagated through the pipeline:
+- IF/ID register: instruction (ifid_inst), PC (ifid_pc)
+- ID/EX register: rs1_data, rs2_data, rs1, rs2, rd, imm, control signals (regwrite, memread, memwrite, alu_src, branch, jump, alu_op)
+- EX/MEM register: alu_result, mem_data (rs2 forwarded), rd, control signals (regwrite, memread, memwrite)
+- MEM/WB register: mem_data, alu_result, rd, control signals (regwrite, memread)
+
+CRITICAL: In the WB stage, `memwb_memread` is needed to select between memory data and ALU result:
+```verilog
+reg memwb_memread;  // MUST be declared
+// In pipeline update: memwb_memread <= exmem_memread;
+// In writeback: result = memwb_memread ? memwb_mem_data : memwb_alu_result;
+```
 
 ### 2. Register File
 - 32 registers x 32 bits
@@ -411,6 +418,9 @@ Start with `module` and end with `endmodule`.
         # 修复 always 块内部的 integer 声明（移到模块级别）
         result = self._fix_integer_in_always(result)
 
+        # 修复未声明的流水线寄存器信号
+        result = self._fix_undeclared_pipeline_signals(result)
+
         return result
 
     def _fix_integer_in_always(self, verilog_code: str) -> str:
@@ -510,6 +520,118 @@ Start with `module` and end with `endmodule`.
                 fixed_lines.append(line)
 
         return '\n'.join(fixed_lines)
+
+    def _fix_undeclared_pipeline_signals(self, verilog_code: str) -> str:
+        """Fix undeclared pipeline register signals.
+
+        LLMs sometimes use pipeline signals (e.g., memwb_memread) in logic
+        but forget to declare them as reg or propagate them through the pipeline.
+        This detects such cases and adds missing declarations and assignments.
+        """
+        # Pipeline stage prefixes and their source stages
+        pipeline_chain = {
+            'memwb': 'exmem',
+            'exmem': 'idex',
+        }
+
+        # Find all declared reg/wire signals
+        declared = set()
+        for m in re.finditer(r'\b(?:reg|wire)\b[^;]*\b(\w+)\s*(?:,\s*(\w+)\s*)*;', verilog_code):
+            declared.add(m.group(1))
+            if m.group(2):
+                declared.add(m.group(2))
+        # Also catch multi-signal declarations like "reg a, b, c;"
+        for m in re.finditer(r'\b(?:reg|wire)\b(?:\s*\[[^\]]*\])?\s+([\w\s,]+);', verilog_code):
+            for name in m.group(1).split(','):
+                name = name.strip()
+                if name and re.match(r'^\w+$', name):
+                    declared.add(name)
+
+        # Find all used pipeline signals (prefixed with pipeline stage names)
+        pipeline_prefixes = list(pipeline_chain.keys()) + list(pipeline_chain.values())
+        used_pipeline_signals = set()
+        for prefix in pipeline_prefixes:
+            for m in re.finditer(rf'\b({prefix}_\w+)\b', verilog_code):
+                used_pipeline_signals.add(m.group(1))
+
+        # Find undeclared pipeline signals
+        undeclared = used_pipeline_signals - declared
+        if not undeclared:
+            return verilog_code
+
+        print(f"   🔧 Fixing undeclared pipeline signals: {undeclared}")
+
+        lines = verilog_code.split('\n')
+
+        # Find where to insert declarations (after last reg/wire declaration before first always)
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if re.match(r'\s*(reg|wire)\s+', stripped):
+                insert_idx = i + 1
+            if re.match(r'\s*always\s*@', stripped):
+                break
+
+        # For each undeclared signal, determine width and add declaration
+        new_declarations = []
+        new_assignments = []
+        for sig in sorted(undeclared):
+            # Determine bit width by looking at similar signals in same pipeline stage
+            prefix = sig.split('_')[0]
+            suffix = '_'.join(sig.split('_')[1:])
+
+            # Check if a corresponding signal exists in another pipeline stage
+            width = ''
+            for other_prefix in pipeline_prefixes:
+                other_sig = f"{other_prefix}_{suffix}"
+                if other_sig in declared and other_sig != sig:
+                    # Find its width declaration
+                    width_match = re.search(rf'\b(?:reg|wire)\s+(\[[^\]]+\])\s+[^;]*\b{re.escape(other_sig)}\b', verilog_code)
+                    if width_match:
+                        width = width_match.group(1) + ' '
+                    break
+
+            new_declarations.append(f"    reg {width}{sig};")
+
+            # Add pipeline propagation assignment if source stage signal exists
+            if prefix in pipeline_chain:
+                source_prefix = pipeline_chain[prefix]
+                source_sig = f"{source_prefix}_{suffix}"
+                if source_sig in declared or source_sig in used_pipeline_signals:
+                    new_assignments.append((sig, source_sig))
+
+        # Insert declarations
+        if new_declarations:
+            for j, decl in enumerate(new_declarations):
+                lines.insert(insert_idx + j, decl)
+
+        result = '\n'.join(lines)
+
+        # Add pipeline assignments: find the block where other signals of same stage are assigned
+        for target_sig, source_sig in new_assignments:
+            prefix = target_sig.split('_')[0]
+            # Find an existing assignment like "prefix_xxx <= source_prefix_xxx;"
+            pattern = rf'({re.escape(prefix)}_\w+\s*<=\s*{re.escape(pipeline_chain[prefix])}_\w+\s*;)'
+            match = re.search(pattern, result)
+            if match:
+                existing_line = match.group(1)
+                indent_match = re.search(rf'^(\s*){re.escape(existing_line)}', result, re.MULTILINE)
+                indent = indent_match.group(1) if indent_match else '            '
+                assignment = f"{indent}{target_sig} <= {source_sig};"
+                # Insert after the matched line
+                result = result.replace(existing_line, existing_line + '\n' + assignment, 1)
+
+            # Also add reset: find reset block with "prefix_xxx <= N'b0;"
+            reset_pattern = rf'({re.escape(prefix)}_\w+\s*<=\s*\d+\'b0\s*;)'
+            reset_match = re.search(reset_pattern, result)
+            if reset_match:
+                existing_reset = reset_match.group(1)
+                indent_match = re.search(rf'^(\s*){re.escape(existing_reset)}', result, re.MULTILINE)
+                indent = indent_match.group(1) if indent_match else '            '
+                reset_line = f"{indent}{target_sig} <= 1'b0;"
+                result = result.replace(existing_reset, existing_reset + '\n' + reset_line, 1)
+
+        return result
 
     def _fix_case_block(self, case_lines: list) -> list:
         """Fix begin/end in a case...endcase block"""
