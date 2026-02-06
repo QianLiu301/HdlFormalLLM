@@ -5,7 +5,7 @@ Upload DUT API - Add this to your main.py
 This code provides the /api/upload-dut endpoint for handling
 Verilog file uploads.
 
-Authors: Rolf Drechsler, Qian Liu
+Authors: Rolf Drechsler, Qian Liu,Luca Müller
 Paper: https://arxiv.org/abs/2512.17814
 
 USAGE:
