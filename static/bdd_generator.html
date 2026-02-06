@@ -3807,18 +3807,21 @@
 
         // Check simulation tools on page load
         async function checkSimulationTools() {
+            const statusInfo = document.getElementById('sim-tools-info');
+            const statusBadge = document.getElementById('sim-tools-badge');
+            const toolsUnavailable = document.getElementById('sim-tools-unavailable');
+            const localInstructions = document.getElementById('sim-local-instructions');
+            const configCard = document.getElementById('sim-config-card');
+            const simBtn = document.getElementById('sim-btn');
+
             try {
                 const response = await fetch('/api/check-simulation-tools');
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}`);
+                }
                 const data = await response.json();
 
                 simToolsAvailable = data.can_simulate;
-
-                const statusInfo = document.getElementById('sim-tools-info');
-                const statusBadge = document.getElementById('sim-tools-badge');
-                const toolsUnavailable = document.getElementById('sim-tools-unavailable');
-                const localInstructions = document.getElementById('sim-local-instructions');
-                const configCard = document.getElementById('sim-config-card');
-                const simBtn = document.getElementById('sim-btn');
 
                 if (data.can_simulate) {
                     statusInfo.textContent = 'iverilog & vvp available';
@@ -3842,11 +3845,21 @@
                     simBtn.style.display = 'none';
                 }
 
-                document.getElementById('sim-tools-status').classList.add('visible');
-
             } catch (error) {
-                console.error('Failed to check simulation tools:', error);
+                console.warn('Failed to check simulation tools:', error.message || error);
+                simToolsAvailable = false;
+                statusInfo.textContent = 'Cannot connect to server';
+                statusBadge.textContent = 'Error';
+                statusBadge.className = 'dut-status-badge';
+                statusBadge.style.background = 'var(--error)';
+                statusBadge.style.color = 'white';
+                toolsUnavailable.style.display = 'flex';
+                localInstructions.style.display = 'block';
+                configCard.style.display = 'none';
+                simBtn.style.display = 'none';
             }
+
+            document.getElementById('sim-tools-status').classList.add('visible');
         }
 
         function switchSimMode(mode) {
