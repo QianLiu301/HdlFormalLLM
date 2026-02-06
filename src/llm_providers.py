@@ -1051,20 +1051,26 @@ class OpenAIProvider(LLMProvider):
             else:
                 print(f"🔄 [DEBUG] Retry {retry_count}/{self.max_retries} - max_tokens: {max_tokens}")
 
-            # 构建消息
-            default_system = """You are a helpful assistant that generates BDD scenario descriptions.
-You MUST respond with valid JSON only. Do not include any text outside the JSON structure."""
+                # 构建消息
+                default_system = """You are a helpful assistant that generates BDD scenario descriptions.
+            You MUST respond with valid JSON only. Do not include any text outside the JSON structure."""
 
-            messages = [
-                {
-                    "role": "system",
-                    "content": system_prompt or default_system
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
+                system_content = system_prompt or default_system
+
+                # OpenAI requires the word "json" in messages when using response_format json_object
+                if 'json' not in system_content.lower() and 'json' not in prompt.lower():
+                    system_content += "\nYou MUST respond with valid JSON only."
+
+                messages = [
+                    {
+                        "role": "system",
+                        "content": system_content
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
 
             # 根据模型选择参数
             if self._is_gpt5_model(self.model):
