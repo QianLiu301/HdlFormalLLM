@@ -219,9 +219,14 @@ class YosysAnalyzer:
         svg_path = out_dir / "circuit.svg"
         stat_path = out_dir / "stats.txt"
 
+        # Use forward slashes for all paths in Yosys script (Windows backslashes break Yosys)
+        v = vpath.as_posix()
+        jp = json_path.as_posix()
+        dp = (out_dir / 'circuit').as_posix()
+
         # Build Yosys script
         yosys_script = f"""
-read_verilog {vpath}
+read_verilog -sv {v}
 hierarchy -top {module_name}
 proc
 opt
@@ -232,8 +237,8 @@ opt
 techmap
 opt
 stat -top {module_name}
-show -format dot -prefix {out_dir / 'circuit'} -width {module_name}
-write_json {json_path}
+show -format dot -prefix {dp} -width {module_name}
+write_json {jp}
 """
 
         try:
@@ -288,7 +293,7 @@ write_json {json_path}
                             [self.dot_bin, '-Tsvg', str(dot_path)],
                             capture_output=True,
                             text=True,
-                            timeout=30,
+                            timeout=120,
                             env=self._tool_env
                         )
                         if dot_result.returncode == 0 and dot_result.stdout.strip():
@@ -310,9 +315,9 @@ write_json {json_path}
             # Parse warnings from log
             warnings = self._parse_warnings(yosys_log)
 
-            # Determine dot filename for download
+            # Determine dot filename for download (always use forward slashes for URL)
             dot_filename = dot_path.name if dot_path.exists() else None
-            dot_relative = str(dot_path.relative_to(self.project_root)) if dot_path.exists() else None
+            dot_relative = dot_path.relative_to(self.project_root).as_posix() if dot_path.exists() else None
 
             return {
                 'success': True,
