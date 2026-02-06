@@ -224,22 +224,42 @@ class YosysAnalyzer:
         jp = json_path.as_posix()
         dp = (out_dir / 'circuit').as_posix()
 
-        # Build Yosys script
-        yosys_script = f"""
-read_verilog -sv {v}
-hierarchy -top {module_name}
-proc
-opt
-fsm
-opt
-memory
-opt
-techmap
-opt
-stat -top {module_name}
-show -format dot -prefix {dp} -width {module_name}
-write_json {jp}
-"""
+        # Estimate design complexity from file size
+        file_size = vpath.stat().st_size
+        is_complex = file_size > 5000  # >5KB likely a CPU or complex design
+
+        if is_complex:
+            # Lightweight: skip techmap (slow for CPUs), skip show (huge DOT)
+            yosys_script = f"""
+        read_verilog -sv {v}
+        hierarchy -top {module_name}
+        proc
+        opt
+        fsm
+        opt
+        memory
+        opt
+        stat -top {module_name}
+        write_json {jp}
+        """
+            print(f"   ⚡ Complex design ({file_size} bytes), using lightweight mode (no techmap/show)")
+        else:
+            # Full: include techmap and circuit diagram
+            yosys_script = f"""
+        read_verilog -sv {v}
+        hierarchy -top {module_name}
+        proc
+        opt
+        fsm
+        opt
+        memory
+        opt
+        techmap
+        opt
+        stat -top {module_name}
+        show -format dot -prefix {dp} -width {module_name}
+        write_json {jp}
+        """
 
         try:
             # Run Yosys
@@ -247,7 +267,7 @@ write_json {jp}
                 [self.yosys_bin, '-p', yosys_script],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=180,
                 cwd=str(self.project_root),
                 env=self._tool_env
             )
@@ -285,8 +305,11 @@ write_json {jp}
 
             if dot_path.exists():
                 dot_content = dot_path.read_text(encoding='utf-8')
+                dot_size = dot_path.stat().st_size
 
-                if self.dot_bin and self._check_graphviz():
+                if dot_size > 500_000:  # >500KB DOT file, skip SVG (too large for graphviz)
+                    print(f"   ⚠️ DOT file too large ({dot_size} bytes), skipping SVG generation")
+                elif self.dot_bin and self._check_graphviz():
                     try:
                         print(f"   Converting DOT to SVG with: {self.dot_bin}")
                         dot_result = subprocess.run(
@@ -332,8 +355,9 @@ write_json {jp}
                 'log_path': str(stat_path),
             }
 
+
         except subprocess.TimeoutExpired:
-            return {'success': False, 'error': 'Yosys synthesis timed out (60s limit)'}
+            return {'success': False, 'error': 'Yosys synthesis timed out (180s limit). Design may be too complex.'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
