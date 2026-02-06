@@ -355,7 +355,60 @@ Start with `module` and end with `endmodule`.
         # 修复 SystemVerilog 内联 for 循环变量声明
         result = self._fix_for_loop_declarations(result)
 
+        # 修复 always 块内部的 integer 声明（移到模块级别）
+        result = self._fix_integer_in_always(result)
+
         return result
+
+    def _fix_integer_in_always(self, verilog_code: str) -> str:
+        """Move integer declarations from inside always blocks to module level."""
+        lines = verilog_code.split('\n')
+        fixed_lines = []
+        integers_to_declare = []
+        in_always = False
+        always_depth = 0
+        module_end_idx = -1
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            if module_end_idx == -1 and (stripped.startswith('reg ') or
+                                          stripped.startswith('wire ') or
+                                          stripped.startswith('assign ') or
+                                          stripped.startswith('always') or
+                                          stripped.startswith('localparam') or
+                                          stripped.startswith('parameter')):
+                module_end_idx = len(fixed_lines)
+
+            if re.match(r'\s*always\s*@', stripped):
+                in_always = True
+                always_depth = 0
+
+            if in_always:
+                always_depth += stripped.count('begin')
+                always_depth -= stripped.count('end')
+                if always_depth <= 0 and 'end' in stripped:
+                    in_always = False
+
+                int_match = re.match(r'^(\s*)integer\s+(\w+)\s*;', line)
+                if int_match:
+                    var_name = int_match.group(2)
+                    if var_name not in integers_to_declare:
+                        integers_to_declare.append(var_name)
+                    i += 1
+                    continue
+
+            fixed_lines.append(line)
+            i += 1
+
+        if integers_to_declare and module_end_idx > 0:
+            declarations = [f"    integer {var};" for var in integers_to_declare]
+            for j, decl in enumerate(declarations):
+                fixed_lines.insert(module_end_idx + j, decl)
+
+        return '\n'.join(fixed_lines)
 
     def _fix_for_loop_declarations(self, verilog_code: str) -> str:
         """Fix SystemVerilog inline for-loop variable declarations for Verilog-2001 compatibility.
