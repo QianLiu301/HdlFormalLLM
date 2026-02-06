@@ -3166,11 +3166,16 @@
             btns.forEach(b => { b.disabled = true; b.textContent = '🔬 Analyzing...'; });
 
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 200000); // 200s timeout
+
                 const response = await fetch('/api/analyze-dut', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ filename, llm, module_name: moduleName })
+                    body: JSON.stringify({ filename, llm, module_name: moduleName }),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
 
                 const data = await response.json();
 
@@ -3183,7 +3188,11 @@
                 content.style.display = 'block';
 
             } catch (error) {
-                loading.innerHTML = `<div style="color: var(--error);">Analysis failed: ${error.message}</div>
+                const isTimeout = error.name === 'AbortError';
+                const msg = isTimeout
+                    ? 'Analysis timed out. CPU designs may take longer — try again or simplify the design.'
+                    : `Analysis failed: ${error.message}`;
+                loading.innerHTML = `<div style="color: var(--error);">${msg}</div>
                     <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
                         Make sure Yosys and Graphviz are installed:<br>
                         <code>apt-get install yosys graphviz</code>
