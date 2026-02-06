@@ -8,7 +8,7 @@ This module parses uploaded Verilog files to extract:
 - Bitwidth information
 - Auto-detect module type (ALU, Counter, RegFile, CPU)
 
-Authors: Rolf Drechsler, Qian Liu
+Authors: Rolf Drechsler, Qian Liu, Luca Müller
 Paper: https://arxiv.org/abs/2512.17814
 """
 
