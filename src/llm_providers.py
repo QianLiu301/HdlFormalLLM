@@ -172,6 +172,7 @@ class GeminiProvider(LLMProvider):
             # 降级到旧的 REST API 方式
             self.model = model or "gemini-2.5-flash"
             self.use_sdk = False
+            print(f"🔷 [Gemini] Initialized with model: {self.model}")
             print("⚠️  Using REST API fallback. For better reliability, install: pip install -U google-genai")
 
         # 🔧 保存最近的 prompt 用于 fallback 解析
@@ -219,6 +220,7 @@ class GeminiProvider(LLMProvider):
     def _call_api_rest(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
         # 修正模型名称 (改为稳定版)
         model_name = self.model if "gemini" in self.model else "gemini-2.0-flash-exp"
+        print(f"🔷 [Gemini] Calling REST API - Model: {model_name}, max_tokens: {max_tokens}")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
 
         # 正确构建 payload，加入 system_instruction
@@ -255,6 +257,7 @@ class GeminiProvider(LLMProvider):
         Uses streamGenerateContent endpoint with alt=sse for proper SSE format
         """
         # 使用 alt=sse 获取标准 SSE 格式，避免 JSON 数组解析问题
+        print(f"🔷 [Gemini] Calling Stream API - Model: {self.model}, max_tokens: {max_tokens}")
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}"
             f":streamGenerateContent?alt=sse&key={self.api_key}"
