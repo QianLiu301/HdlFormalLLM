@@ -585,6 +585,7 @@ def generate_hardware():
     data = request.json
     module_type = data.get('module_type', 'alu')
     llm_name = data.get('llm', 'groq')
+    model = data.get('model')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
 
@@ -693,6 +694,7 @@ def generate_hardware_stream():
     data = request.json
     module_type = data.get('module_type', 'alu')
     llm_name = data.get('llm', 'groq')
+    model = data.get('model')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
 
@@ -774,6 +776,14 @@ def generate_hardware_stream():
             else:
                 yield make_sse_message("error", message=f"Unknown module type: {module_type}")
                 return
+            # Override model if specified (for Gemini/OpenAI model selection)
+            if model and llm_name in ('gemini', 'openai'):
+                try:
+                    from llm_providers import LLMFactory
+                    generator.llm = LLMFactory.create_provider(llm_name, model=model)
+                    print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
+                except Exception as e:
+                    print(f"⚠️  Failed to override model: {e}")
 
             yield make_sse_message("info", message=f"Calling {llm_name.upper()} API...")
 
@@ -1264,10 +1274,11 @@ def generate_bdd_stream():
                 debug=False
             )
 
-            if model and llm_name == 'openai':
+            if model and llm_name in ('openai', 'gemini'):
                 try:
-                    llm = LLMFactory.create_provider('openai', model=model)
+                    llm = LLMFactory.create_provider(llm_name, model=model)
                     generator.llm = llm
+                    print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
                 except Exception as e:
                     yield make_sse_message("error", message=str(e))
                     return
@@ -1341,12 +1352,13 @@ def generate_bdd():
             debug=True
         )
 
-        if model and llm_name == 'openai':
+        if model and llm_name in ('openai', 'gemini'):
             try:
-                llm = LLMFactory.create_provider('openai', model=model)
+                llm = LLMFactory.create_provider(llm_name, model=model)
                 generator.llm = llm
-            except:
-                pass
+                print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
+            except Exception as e:
+                print(f"⚠️  Failed to override model: {e}")
 
         feature_path = generator.generate_feature(user_input)
 
@@ -1408,20 +1420,24 @@ def get_llm_list():
     """Get available LLM providers and module types"""
     return jsonify({
         'llms': [
-            {'id': 'groq', 'name': 'Groq', 'description': 'Fast & Free'},
+            {'id': 'gemini', 'name': 'Gemini', 'description': 'Google'},
             {'id': 'deepseek', 'name': 'DeepSeek', 'description': 'Chinese LLM'},
             {'id': 'openai', 'name': 'OpenAI', 'description': 'GPT-5 Series'},
+            {'id': 'mistral', 'name': 'Mistral', 'description': 'Mistral/Codestral'},
             {'id': 'claude', 'name': 'Claude', 'description': 'Anthropic'},
-            {'id': 'gemini', 'name': 'Gemini', 'description': 'Google'},
             {'id': 'qwen', 'name': 'Qwen', 'description': 'Alibaba Tongyi'},
             {'id': 'together', 'name': 'Together', 'description': 'Together AI'},
-            {'id': 'mistral', 'name': 'Mistral', 'description': 'Mistral/Codestral'},
+            {'id': 'groq', 'name': 'Groq', 'description': 'Fast & Free'},
             {'id': 'grok', 'name': 'Grok', 'description': 'xAI'}
         ],
         'openai_models': [
             {'id': 'gpt-5-mini', 'name': 'GPT-5 Mini'},
             {'id': 'gpt-5', 'name': 'GPT-5'},
             {'id': 'gpt-5.1', 'name': 'GPT-5.1'}
+        ],
+        'gemini_models': [
+            {'id': 'gemini-3-flash-preview', 'name': 'Gemini 3 Flash Preview'},
+            {'id': 'gemini-2.5-flash', 'name': 'Gemini 2.5 Flash'}
         ],
         'bitwidths': [8, 16, 32, 64],
         'module_types': [

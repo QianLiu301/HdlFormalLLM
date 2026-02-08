@@ -824,15 +824,15 @@
                             <div class="form-group">
                                 <label>LLM Provider</label>
                                 <select id="hw-llm" onchange="onHwLlmChange()">
-                                    <option value="groq">Groq</option>
+                                    <option value="gemini">Gemini</option>
+                                    <option value="mistral">Mistral</option>
                                     <option value="deepseek">DeepSeek</option>
                                     <option value="openai">OpenAI</option>
-                                    <option value="claude">Claude</option>
-                                    <option value="gemini">Gemini</option>
-<!--                                    <option value="grok">Grok (xAI)</option>-->
                                     <option value="qwen">Qwen</option>
-                                    <option value="mistral">Mistral</option>
                                     <option value="together">Together AI</option>
+                                    <option value="groq">Groq</option>
+                                    <!--                                    <option value="claude">Claude</option>-->
+                                    <!--                                    <option value="grok">Grok (xAI)</option>-->
                                 </select>
                             </div>
                             <div class="form-group" id="hw-model-group" style="display: none;">
@@ -1162,15 +1162,15 @@
                         <div class="form-group">
                             <label>LLM Provider</label>
                             <select id="bdd-llm" onchange="onBddLlmChange()">
-                                <option value="groq">Groq</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="mistral">Mistral</option>
                                 <option value="deepseek">DeepSeek</option>
                                 <option value="openai">OpenAI</option>
-                                <option value="claude">Claude</option>
-                                <option value="gemini">Gemini</option>
-<!--                                <option value="grok">Grok (xAI)</option>-->
+                                <!--                                <option value="claude">Claude</option>-->
+                                <!--                                <option value="grok">Grok (xAI)</option>-->
                                 <option value="qwen">Qwen</option>
-                                <option value="mistral">Mistral</option>
                                 <option value="together">Together AI</option>
+                                <option value="groq">Groq</option>
                             </select>
                         </div>
                         <div class="form-group" id="bdd-model-group" style="display: none;">
@@ -2665,6 +2665,10 @@
         // LLM Change
         // ============================================================
         const modelOptions = {
+            'gemini': [
+                {value: 'gemini-3-flash-preview', text: 'Gemini 3 Flash Preview'},
+                {value: 'gemini-2.5-flash', text: 'Gemini 2.5 Flash'}
+            ],
             'openai': [
                 {value: 'gpt-5-mini', text: 'GPT-5 Mini (Recommended)'},
                 {value: 'gpt-5', text: 'GPT-5'},
@@ -2676,13 +2680,13 @@
                 {value: 'grok-2', text: 'Grok-2'}
             ],
             'qwen': [
-                {value: 'qwen-coder-plus', text: 'Qwen Coder Plus (Recommended)'},
+                {value: 'qwen-coder-plus', text: 'Qwen Coder Plus'},
                 {value: 'qwen-max', text: 'Qwen Max'}
 <!--                {value: 'qwen-plus', text: 'Qwen Plus'},-->
 <!--                {value: 'qwen-turbo', text: 'Qwen Turbo'}-->
             ],
             'mistral': [
-                {value: 'codestral-latest', text: 'Codestral (Recommended)'},
+                {value: 'codestral-latest', text: 'Codestral'},
                 {value: 'mistral-large-latest', text: 'Mistral Large'},
                 {value: 'mistral-small-latest', text: 'Mistral Small'}
             ],
@@ -2757,7 +2761,7 @@
             const depth = document.getElementById('hw-depth').value;
             const pipelineStages = document.getElementById('hw-pipeline').value;
             const llm = document.getElementById('hw-llm').value;
-            const model = llm === 'openai' ? document.getElementById('hw-model').value : null;
+            const model = (llm === 'openai' || llm === 'gemini') ? document.getElementById('hw-model').value : null;
             const naturalInput = document.getElementById('hw-input').value.trim();
             const useStreaming = document.getElementById('hw-stream').checked;
 
@@ -2947,7 +2951,7 @@
         // ============================================================
         async function generateBDD() {
             const llm = document.getElementById('bdd-llm').value;
-            const model = llm === 'openai' ? document.getElementById('bdd-model').value : null;
+            const model = (llm === 'openai' || llm === 'gemini') ? document.getElementById('bdd-model').value : null;
             const input = document.getElementById('bdd-input').value.trim();
             const useStreaming = document.getElementById('bdd-stream').checked;
 
@@ -4276,6 +4280,8 @@
         // Initialize
         updateBddTabState();
         checkSimulationTools();
+         onHwLlmChange();
+        onBddLlmChange();
 
         function checkPassword() {
         // 临时使用的门禁密码
