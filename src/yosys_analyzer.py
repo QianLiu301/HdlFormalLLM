@@ -377,51 +377,64 @@ class YosysAnalyzer:
         for line in log.split('\n'):
             stripped = line.strip()
 
-            if 'Printing statistics.' in line or 'Statistics for' in line:
+            # Enter stat section
+            if 'Printing statistics.' in line or 'Statistics for' in line or re.match(r'===\s+\S+.*===', stripped):
                 in_stat_section = True
                 continue
 
-            if in_stat_section:
-                # Parse: "   Number of wires:               15"
-                m = re.match(r'Number of wires:\s+(\d+)', stripped)
-                if m:
-                    stats['wires'] = int(m.group(1))
-                    continue
+            if not in_stat_section:
+                continue
 
-                m = re.match(r'Number of wire bits:\s+(\d+)', stripped)
-                if m:
-                    stats['wire_bits'] = int(m.group(1))
-                    continue
+            # === Old format: "Number of wires:               277" ===
+            m = re.match(r'Number of (\w[\w\s]*?):\s+(\d+)', stripped)
+            if m:
+                label = m.group(1).strip().lower()
+                value = int(m.group(2))
+                if label == 'wires':
+                    stats['wires'] = value
+                elif label == 'wire bits':
+                    stats['wire_bits'] = value
+                elif label == 'memories':
+                    stats['memories'] = value
+                elif label == 'memory bits':
+                    stats['memory_bits'] = value
+                elif label == 'processes':
+                    stats['processes'] = value
+                elif label == 'cells':
+                    stats['cell_total'] = value
+                continue
 
-                m = re.match(r'Number of memories:\s+(\d+)', stripped)
-                if m:
-                    stats['memories'] = int(m.group(1))
-                    continue
+            # === New format: "277 wires" / "864 cells" / "348   $_AND_" ===
+            m = re.match(r'(\d+)\s+(.*)', stripped)
+            if m:
+                value = int(m.group(1))
+                label = m.group(2).strip()
 
-                m = re.match(r'Number of memory bits:\s+(\d+)', stripped)
-                if m:
-                    stats['memory_bits'] = int(m.group(1))
-                    continue
+                if label == 'wires':
+                    stats['wires'] = value
+                elif label == 'wire bits':
+                    stats['wire_bits'] = value
+                elif label == 'memories':
+                    stats['memories'] = value
+                elif label == 'memory bits':
+                    stats['memory_bits'] = value
+                elif label == 'processes':
+                    stats['processes'] = value
+                elif label == 'cells':
+                    stats['cell_total'] = value
+                elif label.startswith('$'):
+                    stats['cells'][label] = value
+                continue
 
-                m = re.match(r'Number of processes:\s+(\d+)', stripped)
-                if m:
-                    stats['processes'] = int(m.group(1))
-                    continue
+            # === Old format cell types: "$_AND_          348" ===
+            m = re.match(r'(\$\w+)\s+(\d+)', stripped)
+            if m:
+                stats['cells'][m.group(1)] = int(m.group(2))
+                continue
 
-                m = re.match(r'Number of cells:\s+(\d+)', stripped)
-                if m:
-                    stats['cell_total'] = int(m.group(1))
-                    continue
-
-                # Individual cell types: "$_AND_          12"
-                m = re.match(r'(\$?\w+)\s+(\d+)', stripped)
-                if m and m.group(1).startswith('$'):
-                    stats['cells'][m.group(1)] = int(m.group(2))
-                    continue
-
-                # End of stat section (blank line or new section)
-                if stripped == '' and stats['cell_total'] > 0:
-                    in_stat_section = False
+            # End of stat section
+            if stripped == '' and (stats['cell_total'] > 0 or stats['wires'] > 0):
+                in_stat_section = False
 
         return stats
 
