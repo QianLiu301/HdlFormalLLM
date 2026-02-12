@@ -153,6 +153,20 @@ class RegFileGenerator:
         # Create prompt
         prompt = self._create_regfile_prompt(bitwidth, depth, module_name)
 
+        # BDD-First: append BDD specification context if available
+        if hasattr(self, 'bdd_context') and self.bdd_context:
+            prompt += f"""
+
+IMPORTANT - BDD Specification Context (Specification-First Workflow):
+The generated hardware MUST satisfy the following BDD test specifications.
+Ensure all operations, flags, and behaviors described below are correctly implemented.
+
+{self.bdd_context}
+
+Make sure the module interface and behavior match the test expectations above.
+"""
+            print(f"📋 BDD spec context appended to prompt ({len(self.bdd_context)} chars)")
+
         if self.debug:
             print(f"\n📝 Prompt preview:")
             print(prompt[:500] + "...")

@@ -588,6 +588,8 @@ def generate_hardware():
     model = data.get('model')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
+    workflow_mode = data.get('workflow_mode', 'implementation')
+    bdd_filepath = data.get('bdd_filepath')
 
     # Parse natural language if provided
     if natural_input:
@@ -598,12 +600,26 @@ def generate_hardware():
         if parsed.get('module_type'):
             module_type = parsed['module_type']
 
+    # Load BDD context for specification-first workflow
+    bdd_context = None
+    if workflow_mode == 'specification' and bdd_filepath:
+        bdd_path = Path(bdd_filepath)
+        if bdd_path.exists():
+            try:
+                bdd_context = bdd_path.read_text(encoding='utf-8')
+                print(f"📋 BDD-First mode: loaded BDD spec ({len(bdd_context)} chars)")
+            except Exception as e:
+                print(f"⚠️  Failed to read BDD file: {e}")
+
     print(f"\n{'='*60}")
     print(f"🔧 Generating {bitwidth}-bit {module_type.upper()}")
     print(f"{'='*60}")
     print(f"   LLM: {llm_name.upper()}")
     print(f"   Module: {module_type}")
     print(f"   Bitwidth: {bitwidth}")
+    print(f"   Workflow: {workflow_mode}")
+    if bdd_context:
+        print(f"   BDD Context: {len(bdd_context)} chars loaded")
 
     try:
         if module_type == 'alu':
@@ -615,6 +631,7 @@ def generate_hardware():
                 project_root=str(PROJECT_ROOT),
                 debug=True
             )
+            generator.bdd_context = bdd_context  # BDD-First: pass spec context
             hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
         elif module_type == 'counter':
@@ -626,6 +643,7 @@ def generate_hardware():
                 project_root=str(PROJECT_ROOT),
                 debug=True
             )
+            generator.bdd_context = bdd_context  # BDD-First: pass spec context
             hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
 
         elif module_type == 'regfile':
@@ -638,6 +656,7 @@ def generate_hardware():
                 project_root=str(PROJECT_ROOT),
                 debug=True
             )
+            generator.bdd_context = bdd_context  # BDD-First: pass spec context
             hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 
         elif module_type == 'cpu':
@@ -650,6 +669,7 @@ def generate_hardware():
                 project_root=str(PROJECT_ROOT),
                 debug=True
             )
+            generator.bdd_context = bdd_context  # BDD-First: pass spec context
             hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
         else:
@@ -697,6 +717,19 @@ def generate_hardware_stream():
     model = data.get('model')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
+    workflow_mode = data.get('workflow_mode', 'implementation')
+    bdd_filepath = data.get('bdd_filepath')
+
+    # Load BDD context for specification-first workflow
+    bdd_context = None
+    if workflow_mode == 'specification' and bdd_filepath:
+        bdd_path = Path(bdd_filepath)
+        if bdd_path.exists():
+            try:
+                bdd_context = bdd_path.read_text(encoding='utf-8')
+                print(f"📋 BDD-First mode (stream): loaded BDD spec ({len(bdd_context)} chars)")
+            except Exception as e:
+                print(f"⚠️  Failed to read BDD file: {e}")
 
     # Parse natural language if provided
     if natural_input:
@@ -776,6 +809,21 @@ def generate_hardware_stream():
             else:
                 yield make_sse_message("error", message=f"Unknown module type: {module_type}")
                 return
+
+            # BDD-First: append BDD specification context to prompt
+            if bdd_context:
+                prompt += f"""
+
+IMPORTANT - BDD Specification Context (Specification-First Workflow):
+The generated hardware MUST satisfy the following BDD test specifications.
+Ensure all operations, flags, and behaviors described below are correctly implemented.
+
+{bdd_context}
+
+Make sure the module interface and behavior match the test expectations above.
+"""
+                yield make_sse_message("info", message="📋 BDD spec context injected into prompt...")
+
             # Override model if specified (for Gemini/OpenAI model selection)
             if model and llm_name in ('gemini', 'openai'):
                 try:
