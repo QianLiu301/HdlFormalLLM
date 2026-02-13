@@ -28,12 +28,14 @@ USAGE:
 
 from __future__ import annotations
 
+import os
+import json
+from pathlib import Path
 from typing import Dict, Optional, List
 
 # Reuse the existing FeatureGeneratorLLM for prompt creation & file saving
 try:
     from feature_generator_llm import FeatureGeneratorLLM
-
     HAS_BASE_GENERATOR = True
 except ImportError:
     HAS_BASE_GENERATOR = False
@@ -63,10 +65,10 @@ class BddSpecGenerator:
     }
 
     def __init__(
-            self,
-            llm_provider: str = 'groq',
-            project_root: Optional[str] = None,
-            debug: bool = True
+        self,
+        llm_provider: str = 'groq',
+        project_root: Optional[str] = None,
+        debug: bool = True
     ):
         """
         Initialize BDD Spec Generator.
@@ -93,14 +95,14 @@ class BddSpecGenerator:
         print(f"   LLM: {self._generator.llm_name}")
 
     def build_requirements(
-            self,
-            module_type: str = 'alu',
-            bitwidth: int = 16,
-            operations: Optional[List[str]] = None,
-            num_tests: int = 5,
-            depth: int = 32,
-            pipeline_stages: int = 5,
-            custom_requirements: str = ''
+        self,
+        module_type: str = 'alu',
+        bitwidth: int = 16,
+        operations: Optional[List[str]] = None,
+        num_tests: int = 5,
+        depth: int = 32,
+        pipeline_stages: int = 5,
+        custom_requirements: str = ''
     ) -> Dict:
         """
         Build a requirements dict from structured parameters.
@@ -158,14 +160,14 @@ class BddSpecGenerator:
         }
 
     def generate(
-            self,
-            module_type: str = 'alu',
-            bitwidth: int = 16,
-            operations: Optional[List[str]] = None,
-            num_tests: int = 5,
-            depth: int = 32,
-            pipeline_stages: int = 5,
-            custom_requirements: str = ''
+        self,
+        module_type: str = 'alu',
+        bitwidth: int = 16,
+        operations: Optional[List[str]] = None,
+        num_tests: int = 5,
+        depth: int = 32,
+        pipeline_stages: int = 5,
+        custom_requirements: str = ''
     ) -> Optional[str]:
         """
         Generate BDD Feature file from structured parameters.
@@ -184,9 +186,9 @@ class BddSpecGenerator:
             custom_requirements=custom_requirements
         )
 
-        print(f"\n{'=' * 70}")
+        print(f"\n{'='*70}")
         print(f"📋 BDD-First: Generating spec for {bitwidth}-bit {module_type.upper()}")
-        print(f"{'=' * 70}")
+        print(f"{'='*70}")
         print(f"   Operations: {', '.join(requirements['operations'])}")
         print(f"   Tests/op: {requirements['num_tests']}")
         if custom_requirements:
@@ -198,10 +200,10 @@ class BddSpecGenerator:
         # Append custom requirements to prompt if provided
         if custom_requirements:
             prompt += f"""
-
+ 
 ADDITIONAL REQUIREMENTS FROM USER:
 {custom_requirements}
-
+ 
 Incorporate these additional requirements into the test scenarios.
 """
 
@@ -224,14 +226,14 @@ Incorporate these additional requirements into the test scenarios.
         return str(feature_path)
 
     def generate_streaming(
-            self,
-            module_type: str = 'alu',
-            bitwidth: int = 16,
-            operations: Optional[List[str]] = None,
-            num_tests: int = 5,
-            depth: int = 32,
-            pipeline_stages: int = 5,
-            custom_requirements: str = ''
+        self,
+        module_type: str = 'alu',
+        bitwidth: int = 16,
+        operations: Optional[List[str]] = None,
+        num_tests: int = 5,
+        depth: int = 32,
+        pipeline_stages: int = 5,
+        custom_requirements: str = ''
     ):
         """
         Generate BDD Feature file with streaming support.
@@ -254,10 +256,10 @@ Incorporate these additional requirements into the test scenarios.
 
         if custom_requirements:
             prompt += f"""
-
+ 
 ADDITIONAL REQUIREMENTS FROM USER:
 {custom_requirements}
-
+ 
 Incorporate these additional requirements into the test scenarios.
 """
 

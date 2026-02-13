@@ -44,7 +44,7 @@
         .pipeline-step-indicator.active .num, .pipeline-step-indicator.completed .num { background: rgba(255,255,255,0.3); }
         .pipeline-arrow { color: var(--border-color); font-size: 18px; display: flex; align-items: center; }
 
-         /* Workflow Mode Switcher */
+        /* Workflow Mode Switcher */
         .workflow-mode-switcher { display: flex; justify-content: center; gap: 4px; margin-bottom: 8px; background: var(--bg-tertiary); padding: 4px; border-radius: 12px; max-width: 520px; margin-left: auto; margin-right: auto; }
         .workflow-mode-btn { flex: 1; padding: 10px 20px; background: transparent; border: none; border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
         .workflow-mode-btn:hover { color: var(--text-primary); background: rgba(0,0,0,0.03); }
@@ -772,7 +772,7 @@
             </div>
         </div>
 
-         <!-- Workflow Mode Switcher -->
+        <!-- Workflow Mode Switcher -->
         <div class="workflow-mode-switcher">
             <button class="workflow-mode-btn active" onclick="switchWorkflowMode('implementation')" id="wf-mode-impl-btn">
                 🔧 Implementation First
@@ -1992,7 +1992,7 @@
             section.classList.toggle('collapsed');
         }
 
-         // ============================================================
+        // ============================================================
         // Workflow Mode Switching (Implementation-First vs Specification-First)
         // ============================================================
         function switchWorkflowMode(mode) {
