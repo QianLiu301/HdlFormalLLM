@@ -44,6 +44,17 @@
         .pipeline-step-indicator.active .num, .pipeline-step-indicator.completed .num { background: rgba(255,255,255,0.3); }
         .pipeline-arrow { color: var(--border-color); font-size: 18px; display: flex; align-items: center; }
 
+         /* Workflow Mode Switcher */
+        .workflow-mode-switcher { display: flex; justify-content: center; gap: 4px; margin-bottom: 8px; background: var(--bg-tertiary); padding: 4px; border-radius: 12px; max-width: 520px; margin-left: auto; margin-right: auto; }
+        .workflow-mode-btn { flex: 1; padding: 10px 20px; background: transparent; border: none; border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
+        .workflow-mode-btn:hover { color: var(--text-primary); background: rgba(0,0,0,0.03); }
+        .workflow-mode-btn.active { background: var(--bg-primary); color: var(--accent-blue); box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15); }
+        .workflow-mode-btn.active.spec-active { color: var(--accent-purple); box-shadow: 0 2px 8px rgba(124, 58, 237, 0.15); }
+        .workflow-mode-desc { text-align: center; font-size: 12px; color: var(--text-secondary); margin-bottom: 32px; line-height: 1.5; }
+        .workflow-mode-desc .workflow-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 4px; }
+        .workflow-mode-desc .badge-impl { background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); }
+        .workflow-mode-desc .badge-spec { background: rgba(124, 58, 237, 0.1); color: var(--accent-purple); }
+
         /* Step Section */
         .step-section { margin-bottom: 32px; border: 1px solid var(--border-color); border-radius: 16px; overflow: hidden; background: var(--bg-primary); }
         .step-header { display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); cursor: pointer; user-select: none; }
@@ -759,6 +770,20 @@
             <div class="pipeline-step-indicator" id="indicator-4">
                 <span class="num">4</span> Simulation
             </div>
+        </div>
+
+         <!-- Workflow Mode Switcher -->
+        <div class="workflow-mode-switcher">
+            <button class="workflow-mode-btn active" onclick="switchWorkflowMode('implementation')" id="wf-mode-impl-btn">
+                🔧 Implementation First
+            </button>
+            <button class="workflow-mode-btn" onclick="switchWorkflowMode('specification')" id="wf-mode-spec-btn">
+                📋 Specification First
+            </button>
+        </div>
+        <div class="workflow-mode-desc" id="workflow-mode-desc">
+            Hardware → Tests: Write hardware first, then generate tests to verify it
+            <span class="workflow-badge badge-impl">Current</span>
         </div>
 
         <!-- Step 1: Hardware Generator -->
@@ -1835,6 +1860,7 @@
         // ============================================================
         // Global State
         // ============================================================
+        let currentWorkflowMode = 'implementation'; // 'implementation' or 'specification'
         let currentHwFilename = null;
         let currentBddFilename = null;
         let currentDUT = null;
@@ -1964,6 +1990,96 @@
         function toggleStep(stepNum) {
             const section = document.getElementById(`step-${stepNum}`);
             section.classList.toggle('collapsed');
+        }
+
+         // ============================================================
+        // Workflow Mode Switching (Implementation-First vs Specification-First)
+        // ============================================================
+        function switchWorkflowMode(mode) {
+            if (mode === currentWorkflowMode) return;
+            currentWorkflowMode = mode;
+
+            // Update toggle buttons
+            const implBtn = document.getElementById('wf-mode-impl-btn');
+            const specBtn = document.getElementById('wf-mode-spec-btn');
+            implBtn.classList.toggle('active', mode === 'implementation');
+            specBtn.classList.toggle('active', mode === 'specification');
+            implBtn.classList.remove('spec-active');
+            specBtn.classList.toggle('spec-active', mode === 'specification');
+
+            // Update description text
+            const desc = document.getElementById('workflow-mode-desc');
+            if (mode === 'implementation') {
+                desc.innerHTML = 'Hardware → Tests: Write hardware first, then generate tests to verify it <span class="workflow-badge badge-impl">Current</span>';
+            } else {
+                desc.innerHTML = 'Tests → Hardware: Define test specifications first, then generate hardware to satisfy them <span class="workflow-badge badge-spec">BDD-First</span>';
+            }
+
+            // Update pipeline indicators
+            const ind1 = document.getElementById('indicator-1');
+            const ind2 = document.getElementById('indicator-2');
+            if (mode === 'implementation') {
+                ind1.innerHTML = '<span class="num">1</span> Hardware';
+                ind2.innerHTML = '<span class="num">2</span> BDD Tests';
+            } else {
+                ind1.innerHTML = '<span class="num">1</span> BDD Tests';
+                ind2.innerHTML = '<span class="num">2</span> Hardware';
+            }
+
+            // Get step sections and their number elements
+            const step1 = document.getElementById('step-1'); // Hardware section
+            const step2 = document.getElementById('step-2'); // BDD section
+            const step1Num = document.getElementById('step-1-num');
+            const step2Num = document.getElementById('step-2-num');
+
+            if (mode === 'specification') {
+                // BDD first: move step-2 (BDD) before step-1 (Hardware)
+                step1.parentNode.insertBefore(step2, step1);
+
+                // Update displayed step numbers
+                step2Num.textContent = '1';
+                step1Num.textContent = '2';
+
+                // Swap colors: BDD gets blue (primary step), Hardware gets green (secondary step)
+                step2Num.classList.remove('blue', 'green');
+                step2Num.classList.add('blue');
+                step1Num.classList.remove('blue', 'green');
+                step1Num.classList.add('green');
+
+                // Update subtitles to reflect new flow
+                document.querySelector('#step-2 .step-subtitle').textContent = 'Define test specifications before writing hardware';
+                document.querySelector('#step-1 .step-subtitle').textContent = 'Generate hardware that satisfies the test specifications';
+
+                // Expand BDD (now first step) if it was collapsed
+                step2.classList.remove('collapsed');
+            } else {
+                // Hardware first: move step-1 (Hardware) before step-2 (BDD)
+                step2.parentNode.insertBefore(step1, step2);
+
+                // Restore step numbers
+                step1Num.textContent = '1';
+                step2Num.textContent = '2';
+
+                // Restore colors
+                step1Num.classList.remove('blue', 'green');
+                step1Num.classList.add('blue');
+                step2Num.classList.remove('blue', 'green');
+                step2Num.classList.add('green');
+
+                // Restore subtitles
+                document.querySelector('#step-1 .step-subtitle').textContent = 'Generate with LLM or upload existing Verilog file';
+                document.querySelector('#step-2 .step-subtitle').textContent = 'Generate with LLM or upload existing .feature file';
+
+                // Expand Hardware (now first step) if it was collapsed
+                step1.classList.remove('collapsed');
+            }
+
+            // Animate the swapped sections
+            [step1, step2].forEach(el => {
+                el.style.animation = 'none';
+                el.offsetHeight; // trigger reflow
+                el.style.animation = 'fadeIn 0.3s ease';
+            });
         }
 
         // ============================================================
@@ -2776,8 +2892,14 @@
                 depth: parseInt(depth),
                 pipeline_stages: parseInt(pipelineStages),
                 input: naturalInput,
-                model
+                model,
+                workflow_mode: currentWorkflowMode
             };
+
+            // In spec-first mode, pass BDD context so LLM can generate hardware matching the spec
+            if (currentWorkflowMode === 'specification' && currentBDD && currentBDD.filepath) {
+                payload.bdd_filepath = currentBDD.filepath;
+            }
 
             if (useStreaming) {
                 await generateHwWithStreaming(payload);
@@ -2839,7 +2961,15 @@
                                     saveDUTInfo(payload, data.filename, 'llm');
                                     updateStepStatus(1, 'completed');
                                     updatePipelineIndicator(1, 'completed');
-                                    updatePipelineIndicator(2, 'active');
+                                    // In spec-first mode: Hardware done → activate Testbench (indicator-3)
+                                    // In impl-first mode: Hardware done → activate BDD (indicator-2)
+                                    if (currentWorkflowMode === 'specification') {
+                                        updatePipelineIndicator(2, 'completed');
+                                        updatePipelineIndicator(3, 'active');
+                                        document.getElementById('step-3').classList.remove('collapsed');
+                                    } else {
+                                        updatePipelineIndicator(2, 'active');
+                                    }
                                 } else if (data.type === 'error') {
                                     showError('hw', data.message);
                                     updateStepStatus(1, 'pending');
@@ -2879,7 +3009,15 @@
                 saveDUTInfo(payload, data.filename, 'llm');
                 updateStepStatus(1, 'completed');
                 updatePipelineIndicator(1, 'completed');
-                updatePipelineIndicator(2, 'active');
+                // In spec-first mode: Hardware done → activate Testbench (indicator-3)
+                // In impl-first mode: Hardware done → activate BDD (indicator-2)
+                if (currentWorkflowMode === 'specification') {
+                    updatePipelineIndicator(2, 'completed');
+                    updatePipelineIndicator(3, 'active');
+                    document.getElementById('step-3').classList.remove('collapsed');
+                } else {
+                    updatePipelineIndicator(2, 'active');
+                }
             } catch (error) {
                 showError('hw', error.message);
                 updateStepStatus(1, 'pending');
@@ -3027,7 +3165,17 @@
                                     document.getElementById('bdd-download').style.display = 'flex';
                                     updateStepStatus(2, 'completed');
                                     updatePipelineIndicator(2, 'completed');
-                                    updatePipelineIndicator(3, 'active');
+                                    // In spec-first mode: BDD done → activate Hardware (indicator-2)
+                                    // In impl-first mode: BDD done → activate Testbench (indicator-3)
+                                    if (currentWorkflowMode === 'specification') {
+                                        // BDD is indicator-1 in spec mode, Hardware is indicator-2
+                                        updatePipelineIndicator(1, 'completed');
+                                        updatePipelineIndicator(2, 'active');
+                                        // Expand Hardware step for user
+                                        document.getElementById('step-1').classList.remove('collapsed');
+                                    } else {
+                                        updatePipelineIndicator(3, 'active');
+                                    }
                                 } else if (data.type === 'error') {
                                     showError('bdd', data.message);
                                     updateStepStatus(2, 'pending');
@@ -3068,7 +3216,15 @@
                 document.getElementById('bdd-result').classList.add('visible');
                 updateStepStatus(2, 'completed');
                 updatePipelineIndicator(2, 'completed');
-                updatePipelineIndicator(3, 'active');
+                // In spec-first mode: BDD done → activate Hardware (indicator-2)
+                // In impl-first mode: BDD done → activate Testbench (indicator-3)
+                if (currentWorkflowMode === 'specification') {
+                    updatePipelineIndicator(1, 'completed');
+                    updatePipelineIndicator(2, 'active');
+                    document.getElementById('step-1').classList.remove('collapsed');
+                } else {
+                    updatePipelineIndicator(3, 'active');
+                }
             } catch (error) {
                 showError('bdd', error.message);
                 updateStepStatus(2, 'pending');
