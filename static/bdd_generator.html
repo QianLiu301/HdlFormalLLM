@@ -2032,6 +2032,11 @@
             const step1Num = document.getElementById('step-1-num');
             const step2Num = document.getElementById('step-2-num');
 
+            // Elements for dependency management
+            const noDutWarning = document.getElementById('no-dut-warning');
+            const dutStatus = document.getElementById('dut-status');
+            const bddRequirementsLabel = document.querySelector('#step-2 .form-group label[for="bdd-input"], #step-2 .form-group label');
+
             if (mode === 'specification') {
                 // BDD first: move step-2 (BDD) before step-1 (Hardware)
                 step1.parentNode.insertBefore(step2, step1);
@@ -2049,6 +2054,22 @@
                 // Update subtitles to reflect new flow
                 document.querySelector('#step-2 .step-subtitle').textContent = 'Define test specifications before writing hardware';
                 document.querySelector('#step-1 .step-subtitle').textContent = 'Generate hardware that satisfies the test specifications';
+
+                // BDD-First: BDD is step 1, it does NOT depend on DUT
+                // Hide the "No Hardware Generated" warning - BDD can work independently
+                noDutWarning.classList.remove('visible');
+                noDutWarning.style.display = 'none';
+                // Hide DUT status bar in BDD step (not relevant when BDD is first)
+                dutStatus.style.display = 'none';
+
+                // Update BDD requirements label
+                const reqLabel = document.querySelector('label[for="bdd-input"]') ||
+                    document.querySelector('#bdd-mode-generate .form-group label');
+                if (reqLabel) reqLabel.textContent = 'Requirements (describe what your hardware should do)';
+
+                // If BDD input is empty, provide a helpful placeholder
+                const bddInput = document.getElementById('bdd-input');
+                bddInput.placeholder = 'Describe the hardware behavior you want to verify...\ne.g., "16-bit ALU with ADD, SUB, AND, OR operations, overflow detection"';
 
                 // Expand BDD (now first step) if it was collapsed
                 step2.classList.remove('collapsed');
@@ -2070,6 +2091,20 @@
                 document.querySelector('#step-1 .step-subtitle').textContent = 'Generate with LLM or upload existing Verilog file';
                 document.querySelector('#step-2 .step-subtitle').textContent = 'Generate with LLM or upload existing .feature file';
 
+                // Restore DUT dependency: show warning if no DUT
+                noDutWarning.style.display = '';
+                dutStatus.style.display = '';
+                updateBddTabState(); // Re-evaluate based on currentDUT
+
+                // Restore BDD requirements label
+                const reqLabel = document.querySelector('label[for="bdd-input"]') ||
+                    document.querySelector('#bdd-mode-generate .form-group label');
+                if (reqLabel) reqLabel.textContent = 'Requirements (auto-filled based on DUT)';
+
+                // Restore placeholder
+                const bddInput = document.getElementById('bdd-input');
+                bddInput.placeholder = 'Requirements will be auto-filled when you generate or upload hardware...';
+
                 // Expand Hardware (now first step) if it was collapsed
                 step1.classList.remove('collapsed');
             }
@@ -2081,6 +2116,8 @@
                 el.style.animation = 'fadeIn 0.3s ease';
             });
         }
+
+
 
         // ============================================================
         // File Upload Handling
