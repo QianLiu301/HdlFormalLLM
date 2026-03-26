@@ -199,6 +199,15 @@ try:
 except ImportError as e:
     print(f"⚠️ CPU module not available: {e}")
 
+# BDD Spec Generator (Specification-First Workflow)
+HAS_BDD_SPEC_MODULE = False
+try:
+    from bdd_spec_generator import BddSpecGenerator
+    HAS_BDD_SPEC_MODULE = True
+    print("✅ BDD Spec Generator module loaded (Specification-First)")
+except ImportError as e:
+    print(f"⚠️ BDD Spec Generator not available: {e}")
+
 # DUT Interface Checker (Bug Detection)
 HAS_DUT_CHECKER = False
 try:
@@ -1435,6 +1444,159 @@ def generate_bdd():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# BDD Spec Generator API (Specification-First Workflow)
+# ============================================================================
+@app.route('/api/generate-bdd-spec', methods=['POST'])
+def generate_bdd_spec():
+    """Generate BDD Feature file from structured parameters (Specification-First workflow)."""
+    if not HAS_BDD_SPEC_MODULE:
+        return jsonify({'success': False, 'error': 'BDD Spec Generator module not available'}), 500
+
+    data = request.json
+    llm_name = data.get('llm', 'groq')
+    model = data.get('model')
+    module_type = data.get('module_type', 'alu')
+    bitwidth = int(data.get('bitwidth', 16))
+    num_tests = int(data.get('num_tests', 5))
+    depth = int(data.get('depth', 32))
+    pipeline_stages = int(data.get('pipeline_stages', 5))
+    custom_requirements = data.get('custom_requirements', '')
+    operations = data.get('operations')
+    stream = data.get('stream', True)
+
+    if not stream:
+        try:
+            spec_gen = BddSpecGenerator(
+                llm_provider=llm_name,
+                project_root=str(PROJECT_ROOT),
+                debug=True
+            )
+
+            if model and llm_name in ('openai', 'gemini'):
+                try:
+                    llm = LLMFactory.create_provider(llm_name, model=model)
+                    spec_gen.llm = llm
+                except Exception as e:
+                    return jsonify({'success': False, 'error': f'Model override failed: {str(e)}'}), 500
+
+            feature_path = spec_gen.generate(
+                module_type=module_type,
+                bitwidth=bitwidth,
+                operations=operations,
+                num_tests=num_tests,
+                depth=depth,
+                pipeline_stages=pipeline_stages,
+                custom_requirements=custom_requirements
+            )
+
+            if not feature_path:
+                return jsonify({'success': False, 'error': 'Failed to generate BDD specification'}), 500
+
+            feature_path_obj = Path(feature_path)
+            content = feature_path_obj.read_text(encoding='utf-8')
+
+            last_generated_bdd['filename'] = feature_path_obj.name
+            last_generated_bdd['filepath'] = str(feature_path)
+            last_generated_bdd['llm'] = llm_name
+
+            return jsonify({
+                'success': True,
+                'filename': feature_path_obj.name,
+                'filepath': str(feature_path),
+                'preview': content[:500] + ('...' if len(content) > 500 else ''),
+                'full_content': content,
+                'module_type': module_type,
+                'bitwidth': bitwidth,
+                'operations': operations or BddSpecGenerator.DEFAULT_OPERATIONS.get(module_type, [])
+            })
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # Streaming path (default)
+    def generate():
+        try:
+            yield make_sse_message("start", llm=llm_name)
+
+            spec_gen = BddSpecGenerator(
+                llm_provider=llm_name,
+                project_root=str(PROJECT_ROOT),
+                debug=False
+            )
+
+            if model and llm_name in ('openai', 'gemini'):
+                try:
+                    llm = LLMFactory.create_provider(llm_name, model=model)
+                    spec_gen.llm = llm
+                    print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
+                except Exception as e:
+                    yield make_sse_message("error", message=str(e))
+                    return
+
+            prompt, requirements = spec_gen.generate_streaming(
+                module_type=module_type,
+                bitwidth=bitwidth,
+                operations=operations,
+                num_tests=num_tests,
+                depth=depth,
+                pipeline_stages=pipeline_stages,
+                custom_requirements=custom_requirements
+            )
+
+            ops = requirements.get('operations', [])
+            yield make_sse_message("info",
+                message=f"Generating {bitwidth}-bit {module_type.upper()} spec with {len(ops)} operations")
+
+            yield make_sse_message("info", message="Calling LLM API...")
+
+            llm_instance = spec_gen.llm
+            full_content = ""
+
+            if hasattr(llm_instance, '_call_api_stream'):
+                for chunk in llm_instance._call_api_stream(prompt):
+                    if chunk:
+                        full_content += chunk
+                        yield make_sse_message("chunk", content=chunk)
+            else:
+                yield make_sse_message("info", message="Using standard mode...")
+                full_content = spec_gen._generator._call_llm(prompt)
+                if full_content:
+                    for i in range(0, len(full_content), 50):
+                        yield make_sse_message("chunk", content=full_content[i:i+50])
+
+            if not full_content:
+                yield make_sse_message("error", message="LLM returned empty response")
+                return
+
+            full_content = spec_gen.clean_response(full_content)
+            feature_path = spec_gen.save_feature(full_content, requirements)
+            filename = Path(feature_path).name
+
+            last_generated_bdd['filename'] = filename
+            last_generated_bdd['filepath'] = str(feature_path)
+            last_generated_bdd['llm'] = llm_name
+
+            yield make_sse_message("complete",
+                filename=filename,
+                filepath=str(feature_path),
+                module_type=module_type,
+                bitwidth=bitwidth,
+                operations=requirements.get('operations', [])
+            )
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield make_sse_message("error", message=str(e))
+
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'
+    })
 
 
 @app.route('/api/download/<filename>')

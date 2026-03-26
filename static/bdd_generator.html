@@ -1156,6 +1156,95 @@
 
                 <!-- Generate Mode for Step 2 -->
                 <div class="mode-content active" id="bdd-mode-generate">
+
+                    <!-- ========== Spec-First Configuration (only visible in specification mode) ========== -->
+                    <div id="spec-first-config" style="display: none;">
+                        <div class="card">
+                            <div class="card-title">📋 BDD Specification Configuration</div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Module Type</label>
+                                    <select id="spec-module-type" onchange="onSpecModuleChange()">
+                                        <option value="alu">ALU - Arithmetic Logic Unit</option>
+                                        <option value="counter">Counter - Up/Down Counter</option>
+                                        <option value="regfile">Register File</option>
+                                        <option value="cpu">CPU - RISC-V Processor</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Bitwidth</label>
+                                    <select id="spec-bitwidth">
+                                        <option value="8">8-bit</option>
+                                        <option value="16" selected>16-bit</option>
+                                        <option value="32">32-bit</option>
+                                        <option value="64">64-bit</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="spec-depth-group" style="display: none;">
+                                    <label>Registers</label>
+                                    <select id="spec-depth">
+                                        <option value="8">8 registers</option>
+                                        <option value="16">16 registers</option>
+                                        <option value="32" selected>32 registers</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="spec-pipeline-group" style="display: none;">
+                                    <label>Pipeline</label>
+                                    <select id="spec-pipeline">
+                                        <option value="5" selected>5-stage</option>
+                                        <option value="3">3-stage</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>LLM Provider</label>
+                                    <select id="spec-llm" onchange="onSpecLlmChange()">
+                                        <option value="gemini">Gemini</option>
+                                        <option value="mistral">Mistral</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="openai">OpenAI</option>
+                                        <option value="qwen">Qwen</option>
+                                        <option value="together">Together AI</option>
+                                        <option value="groq">Groq</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="spec-model-group" style="display: none;">
+                                    <label>Model</label>
+                                    <select id="spec-model">
+                                        <option value="gpt-5-mini">GPT-5 Mini</option>
+                                        <option value="gpt-5">GPT-5</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Additional Requirements (optional)</label>
+                                <textarea id="spec-custom-input" rows="3"
+                                    placeholder="e.g., Focus on overflow detection, test boundary values for zero flag..."></textarea>
+                            </div>
+                            <div class="toggle-row">
+                                <span class="toggle-label">⚡ Stream output</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="spec-stream" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="error-message" id="spec-error"></div>
+                        <div class="stream-status" id="spec-status">
+                            <div class="dot"></div>
+                            <span id="spec-status-text">Generating...</span>
+                        </div>
+
+                        <button class="btn btn-primary green" id="spec-btn" onclick="generateBddSpec()">
+                            <span id="spec-btn-text">📋 Generate BDD Specification</span>
+                            <div class="spinner" id="spec-spinner" style="display: none;"></div>
+                        </button>
+                    </div>
+
+                    <!-- ========== Original Implementation-First BDD UI (hidden in spec mode) ========== -->
+                    <div id="impl-first-bdd-config">
                     <!-- DUT Status -->
                     <div class="dut-status" id="dut-status">
                         <div class="dut-status-header">
@@ -1242,6 +1331,7 @@
                     <span id="bdd-btn-text">🧪 Generate BDD Tests</span>
                     <div class="spinner" id="bdd-spinner" style="display: none;"></div>
                 </button>
+                    </div><!-- end impl-first-bdd-config -->
 
                 <div class="card result" id="bdd-result" style="margin-top: 16px;">
                     <div class="result-header">
@@ -2035,7 +2125,6 @@
             // Elements for dependency management
             const noDutWarning = document.getElementById('no-dut-warning');
             const dutStatus = document.getElementById('dut-status');
-            const bddRequirementsLabel = document.querySelector('#step-2 .form-group label[for="bdd-input"], #step-2 .form-group label');
 
             if (mode === 'specification') {
                 // BDD first: move step-2 (BDD) before step-1 (Hardware)
@@ -2056,20 +2145,13 @@
                 document.querySelector('#step-1 .step-subtitle').textContent = 'Generate hardware that satisfies the test specifications';
 
                 // BDD-First: BDD is step 1, it does NOT depend on DUT
-                // Hide the "No Hardware Generated" warning - BDD can work independently
                 noDutWarning.classList.remove('visible');
                 noDutWarning.style.display = 'none';
-                // Hide DUT status bar in BDD step (not relevant when BDD is first)
                 dutStatus.style.display = 'none';
 
-                // Update BDD requirements label
-                const reqLabel = document.querySelector('label[for="bdd-input"]') ||
-                    document.querySelector('#bdd-mode-generate .form-group label');
-                if (reqLabel) reqLabel.textContent = 'Requirements (describe what your hardware should do)';
-
-                // If BDD input is empty, provide a helpful placeholder
-                const bddInput = document.getElementById('bdd-input');
-                bddInput.placeholder = 'Describe the hardware behavior you want to verify...\ne.g., "16-bit ALU with ADD, SUB, AND, OR operations, overflow detection"';
+                // Show spec-first config panel, hide original implementation-first panel
+                document.getElementById('spec-first-config').style.display = 'block';
+                document.getElementById('impl-first-bdd-config').style.display = 'none';
 
                 // Expand BDD (now first step) if it was collapsed
                 step2.classList.remove('collapsed');
@@ -2091,19 +2173,14 @@
                 document.querySelector('#step-1 .step-subtitle').textContent = 'Generate with LLM or upload existing Verilog file';
                 document.querySelector('#step-2 .step-subtitle').textContent = 'Generate with LLM or upload existing .feature file';
 
-                // Restore DUT dependency: show warning if no DUT
+                // Restore DUT dependency
                 noDutWarning.style.display = '';
                 dutStatus.style.display = '';
-                updateBddTabState(); // Re-evaluate based on currentDUT
+                updateBddTabState();
 
-                // Restore BDD requirements label
-                const reqLabel = document.querySelector('label[for="bdd-input"]') ||
-                    document.querySelector('#bdd-mode-generate .form-group label');
-                if (reqLabel) reqLabel.textContent = 'Requirements (auto-filled based on DUT)';
-
-                // Restore placeholder
-                const bddInput = document.getElementById('bdd-input');
-                bddInput.placeholder = 'Requirements will be auto-filled when you generate or upload hardware...';
+                // Hide spec-first config, restore original implementation-first panel
+                document.getElementById('spec-first-config').style.display = 'none';
+                document.getElementById('impl-first-bdd-config').style.display = 'block';
 
                 // Expand Hardware (now first step) if it was collapsed
                 step1.classList.remove('collapsed');
@@ -2115,6 +2192,236 @@
                 el.offsetHeight; // trigger reflow
                 el.style.animation = 'fadeIn 0.3s ease';
             });
+        }
+
+        // ============================================================
+        // Spec-First: UI Handlers
+        // ============================================================
+        function onSpecModuleChange() {
+            const moduleType = document.getElementById('spec-module-type').value;
+            document.getElementById('spec-depth-group').style.display = moduleType === 'regfile' ? '' : 'none';
+            document.getElementById('spec-pipeline-group').style.display = moduleType === 'cpu' ? '' : 'none';
+        }
+
+        function onSpecLlmChange() {
+            const llm = document.getElementById('spec-llm').value;
+            const modelGroup = document.getElementById('spec-model-group');
+            const modelSelect = document.getElementById('spec-model');
+
+            if (llm === 'openai') {
+                modelGroup.style.display = '';
+                modelSelect.innerHTML = `
+                    <option value="gpt-5-mini">GPT-5 Mini</option>
+                    <option value="gpt-5">GPT-5</option>
+                    <option value="gpt-5.1">GPT-5.1</option>
+                `;
+            } else if (llm === 'gemini') {
+                modelGroup.style.display = '';
+                modelSelect.innerHTML = `
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                `;
+            } else {
+                modelGroup.style.display = 'none';
+            }
+        }
+
+        function showError(prefix, message) {
+            const el = document.getElementById(prefix + '-error');
+            if (el) {
+                el.textContent = message;
+                el.style.display = 'block';
+                setTimeout(() => { el.style.display = 'none'; }, 8000);
+            }
+        }
+
+        async function generateBddSpec() {
+            const useStream = document.getElementById('spec-stream').checked;
+            if (useStream) {
+                return generateBddSpecStreaming();
+            }
+
+            const btn = document.getElementById('spec-btn');
+            const btnText = document.getElementById('spec-btn-text');
+            const spinner = document.getElementById('spec-spinner');
+
+            btn.disabled = true;
+            btnText.textContent = 'Generating...';
+            spinner.style.display = 'inline-block';
+
+            const payload = {
+                module_type: document.getElementById('spec-module-type').value,
+                bitwidth: document.getElementById('spec-bitwidth').value,
+                llm: document.getElementById('spec-llm').value,
+                model: document.getElementById('spec-model').value,
+                custom_requirements: document.getElementById('spec-custom-input').value,
+                depth: document.getElementById('spec-depth').value,
+                pipeline_stages: document.getElementById('spec-pipeline').value,
+                stream: false
+            };
+
+            try {
+                const response = await fetch('/api/generate-bdd-spec', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    currentBddFilename = data.filename;
+                    currentBDD = {
+                        filename: data.filename,
+                        filepath: data.filepath,
+                        llm: payload.llm,
+                        module_type: data.module_type,
+                        bitwidth: data.bitwidth,
+                        operations: data.operations
+                    };
+                    updateTbTabState();
+
+                    const preview = document.querySelector('#bdd-result .preview-box');
+                    if (preview) preview.textContent = data.full_content;
+                    document.getElementById('bdd-result').style.display = 'block';
+                    document.getElementById('bdd-filename').textContent = data.filename;
+                    document.getElementById('bdd-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
+                    document.getElementById('bdd-download').style.display = 'flex';
+                    updateStepStatus(2, 'completed');
+
+                    updatePipelineIndicator(1, 'completed');
+                    updatePipelineIndicator(2, 'active');
+                    document.getElementById('step-1').classList.remove('collapsed');
+
+                    autoFillHardwareFromSpec(payload);
+                } else {
+                    showError('spec', data.error || 'Generation failed');
+                }
+            } catch (error) {
+                showError('spec', error.message);
+            } finally {
+                btn.disabled = false;
+                btnText.textContent = '📋 Generate BDD Specification';
+                spinner.style.display = 'none';
+            }
+        }
+
+        async function generateBddSpecStreaming() {
+            const btn = document.getElementById('spec-btn');
+            const btnText = document.getElementById('spec-btn-text');
+            const spinner = document.getElementById('spec-spinner');
+            const statusDiv = document.getElementById('spec-status');
+            const statusText = document.getElementById('spec-status-text');
+
+            btn.disabled = true;
+            btnText.textContent = 'Generating...';
+            spinner.style.display = 'inline-block';
+            statusDiv.classList.add('visible');
+
+            const preview = document.querySelector('#bdd-result .preview-box');
+            if (preview) preview.textContent = '';
+            document.getElementById('bdd-result').style.display = 'block';
+
+            const payload = {
+                module_type: document.getElementById('spec-module-type').value,
+                bitwidth: document.getElementById('spec-bitwidth').value,
+                llm: document.getElementById('spec-llm').value,
+                model: document.getElementById('spec-model').value,
+                custom_requirements: document.getElementById('spec-custom-input').value,
+                depth: document.getElementById('spec-depth').value,
+                pipeline_stages: document.getElementById('spec-pipeline').value,
+                stream: true
+            };
+
+            let fullContent = '';
+
+            try {
+                const response = await fetch('/api/generate-bdd-spec', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'start') {
+                                    statusText.textContent = `Connected to ${data.llm.toUpperCase()}...`;
+                                } else if (data.type === 'info') {
+                                    statusText.textContent = data.message;
+                                } else if (data.type === 'chunk') {
+                                    fullContent += data.content;
+                                    preview.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
+                                    preview.scrollTop = preview.scrollHeight;
+                                } else if (data.type === 'complete') {
+                                    currentBddFilename = data.filename;
+                                    currentBDD = {
+                                        filename: data.filename,
+                                        filepath: data.filepath,
+                                        llm: payload.llm,
+                                        module_type: data.module_type,
+                                        bitwidth: data.bitwidth,
+                                        operations: data.operations
+                                    };
+                                    updateTbTabState();
+                                    document.getElementById('bdd-filename').textContent = data.filename;
+                                    document.getElementById('bdd-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
+                                    document.getElementById('bdd-download').style.display = 'flex';
+                                    updateStepStatus(2, 'completed');
+
+                                    updatePipelineIndicator(1, 'completed');
+                                    updatePipelineIndicator(2, 'active');
+                                    document.getElementById('step-1').classList.remove('collapsed');
+
+                                    autoFillHardwareFromSpec(payload);
+                                } else if (data.type === 'error') {
+                                    showError('spec', data.message);
+                                    updateStepStatus(2, 'pending');
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                }
+            } catch (error) {
+                showError('spec', error.message);
+                updateStepStatus(2, 'pending');
+            } finally {
+                btn.disabled = false;
+                btnText.textContent = '📋 Generate BDD Specification';
+                spinner.style.display = 'none';
+                statusDiv.classList.remove('visible');
+                if (preview) preview.textContent = fullContent;
+            }
+        }
+
+        function autoFillHardwareFromSpec(specPayload) {
+            const hwModule = document.getElementById('hw-module');
+            if (hwModule) {
+                hwModule.value = specPayload.module_type;
+                onModuleChange();
+            }
+            const hwBitwidth = document.getElementById('hw-bitwidth');
+            if (hwBitwidth) hwBitwidth.value = specPayload.bitwidth.toString();
+
+            if (specPayload.module_type === 'regfile') {
+                const hwDepth = document.getElementById('hw-depth');
+                if (hwDepth) hwDepth.value = specPayload.depth.toString();
+            }
+            if (specPayload.module_type === 'cpu') {
+                const hwPipeline = document.getElementById('hw-pipeline');
+                if (hwPipeline) hwPipeline.value = specPayload.pipeline_stages.toString();
+            }
+            console.log('📋 Hardware step auto-filled from BDD spec:', specPayload.module_type, specPayload.bitwidth + '-bit');
         }
 
         // ============================================================
