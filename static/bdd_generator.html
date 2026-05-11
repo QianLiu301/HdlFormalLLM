@@ -664,9 +664,11 @@
         An automated pipeline for generating hardware designs and verification tests using Large Language Models.
         Transform natural language specifications into Verilog code and BDD test scenarios.
     </p>
+    <!-- 论文链接（暂时注释，需要时取消注释）
     <a href="https://arxiv.org/abs/2512.17814" target="_blank" class="welcome-paper">
         📄 Read the Paper: arXiv:2512.17814
     </a>
+    -->
     <!--        <button class="welcome-btn" onclick="enterApp()">-->
     <!--            🚀 Start Using Tool-->
     <!--        </button>-->
@@ -691,7 +693,7 @@
         </div>
     </div>
 
-    <!-- 添加作者和 Legal Notice -->
+    <!-- 作者信息与法律声明（暂时注释，需要时取消注释）
     <div style="margin-top: 48px; text-align: center;">
         <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
             Authors:
@@ -740,6 +742,7 @@
             </a>
         </p>
     </div>
+    -->
 
 </div>
 
@@ -4477,8 +4480,8 @@
         onBddLlmChange();
 
         function checkPassword() {
-        // 临时使用的门禁密码
-        const PASSWORD = "agra2025";
+        // 门禁密码列表
+        const PASSWORDS = ["agra2025", "fdl2026review"];
 
         const input = prompt("🔒 Please enter access password:");
 
@@ -4486,7 +4489,7 @@
             return;
         }
 
-        if (input === PASSWORD) {
+        if (PASSWORDS.includes(input)) {
             enterApp();
         } else {
             alert("❌ Incorrect password.");
