@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Roadmap — LLM-Based BDD for Hardware Verification</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    background: #f8f9fa;
+    color: #1a1a2e;
+    padding: 40px 20px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  h1 {
+    text-align: center;
+    font-size: 26px;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 40px;
+  }
+
+  /* ---- Current State Section ---- */
+  .current-state {
+    background: #fff;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 32px;
+  }
+  .current-state h2 {
+    font-size: 16px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+  }
+  .state-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .state-item {
+    background: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* ---- Arrow ---- */
+  .arrow-down {
+    text-align: center;
+    font-size: 32px;
+    color: #999;
+    margin: 8px 0;
+  }
+
+  /* ---- Phase Cards ---- */
+  .phase {
+    background: #fff;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .phase-header {
+    display: flex;
+    align-items: center;
+    padding: 18px 24px;
+    color: #fff;
+  }
+  .phase-number {
+    font-size: 36px;
+    font-weight: 800;
+    margin-right: 18px;
+    opacity: 0.4;
+    line-height: 1;
+  }
+  .phase-title-block { flex: 1; }
+  .phase-title {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .phase-period {
+    font-size: 13px;
+    opacity: 0.85;
+    margin-top: 2px;
+  }
+  .phase-priority {
+    background: rgba(255,255,255,0.25);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .phase-1 .phase-header { background: linear-gradient(135deg, #1565c0, #1e88e5); }
+  .phase-2 .phase-header { background: linear-gradient(135deg, #e65100, #fb8c00); }
+  .phase-3 .phase-header { background: linear-gradient(135deg, #6a1b9a, #ab47bc); }
+
+  .phase-body {
+    padding: 20px 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .phase-col h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+  .phase-col ul {
+    list-style: none;
+    padding: 0;
+  }
+  .phase-col li {
+    font-size: 13.5px;
+    padding: 6px 0;
+    padding-left: 20px;
+    position: relative;
+    line-height: 1.5;
+    color: #333;
+  }
+  .phase-col li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .phase-1 .phase-col li::before { background: #1e88e5; }
+  .phase-2 .phase-col li::before { background: #fb8c00; }
+  .phase-3 .phase-col li::before { background: #ab47bc; }
+
+  /* ---- Output Row ---- */
+  .outputs {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 32px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .outputs h2 {
+    font-size: 16px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+  }
+  .output-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .output-card {
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  .output-card .venue {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1a1a2e;
+  }
+  .output-card .type {
+    font-size: 12px;
+    color: #888;
+    margin-top: 4px;
+  }
+  .output-card .deadline {
+    font-size: 12px;
+    color: #e65100;
+    font-weight: 600;
+    margin-top: 6px;
+  }
+  .output-card .content-desc {
+    font-size: 12px;
+    color: #555;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* ---- Key Contributions ---- */
+  .contributions {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    border-radius: 12px;
+    padding: 28px;
+    color: #fff;
+    margin-bottom: 32px;
+  }
+  .contributions h2 {
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    color: rgba(255,255,255,0.7);
+  }
+  .contrib-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .contrib-item {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .contrib-item .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 6px;
+  }
+  .contrib-item .text {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.5;
+  }
+
+  /* ---- Comparison Table ---- */
+  .comparison {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 32px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .comparison h2 {
+    font-size: 16px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+  }
+  .comparison table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .comparison th {
+    background: #f0f0f0;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid #ddd;
+  }
+  .comparison td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #eee;
+  }
+  .comparison tr:last-child td { border-bottom: none; }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .tag-ours { background: #e3f2fd; color: #1565c0; }
+  .tag-gap { background: #fff3e0; color: #e65100; }
+  .tag-novel { background: #e8f5e9; color: #2e7d32; }
+
+  /* ---- Timeline ---- */
+  .timeline {
+    background: #fff;
+    border-radius: 12px;
+    padding: 28px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    margin-bottom: 32px;
+  }
+  .timeline h2 {
+    font-size: 16px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+  }
+  .tl-row {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 16px;
+    margin-bottom: 4px;
+  }
+  .tl-month {
+    font-size: 13px;
+    font-weight: 700;
+    color: #555;
+    text-align: right;
+    padding-top: 8px;
+  }
+  .tl-bar-container { position: relative; padding: 6px 0; }
+  .tl-bar {
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .tl-bar.p1 { background: linear-gradient(90deg, #1565c0, #42a5f5); }
+  .tl-bar.p2 { background: linear-gradient(90deg, #e65100, #ffb74d); }
+  .tl-bar.p3 { background: linear-gradient(90deg, #6a1b9a, #ce93d8); }
+  .tl-bar.submit { background: linear-gradient(90deg, #c62828, #ef5350); }
+  .tl-bar.write { background: linear-gradient(90deg, #2e7d32, #66bb6a); }
+
+  .footer {
+    text-align: center;
+    font-size: 12px;
+    color: #aaa;
+    margin-top: 30px;
+  }
+
+  @media print {
+    body { padding: 20px; background: #fff; }
+    .phase, .current-state, .outputs, .contributions, .comparison, .timeline {
+      box-shadow: none;
+      border: 1px solid #ddd;
+      page-break-inside: avoid;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Research Roadmap: LLM-Based BDD for Hardware Verification</h1>
+  <p class="subtitle">HdlFormalLLM Project — Proposed Research Plan 2025–2026</p>
+
+  <!-- Current State -->
+  <div class="current-state">
+    <h2>Current Foundation (Completed)</h2>
+    <div class="state-grid">
+      <div class="state-item">9 LLM Providers Integrated</div>
+      <div class="state-item">Verilog Generation (ALU, Counter, RegFile, CPU)</div>
+      <div class="state-item">BDD Scenario Generation</div>
+      <div class="state-item">Testbench Synthesis</div>
+      <div class="state-item">Quality Metrics Engine</div>
+      <div class="state-item">iverilog + Yosys Integration</div>
+      <div class="state-item">Bug Taxonomy & Detection</div>
+      <div class="state-item">Web Platform (Flask)</div>
+    </div>
+  </div>
+
+  <div class="arrow-down">&darr;</div>
+
+  <!-- Phase 1 -->
+  <div class="phase phase-1">
+    <div class="phase-header">
+      <div class="phase-number">01</div>
+      <div class="phase-title-block">
+        <div class="phase-title">BDD-Hardware Benchmark & Multi-LLM Evaluation</div>
+        <div class="phase-period">Months 1–3</div>
+      </div>
+      <div class="phase-priority">HIGH PRIORITY</div>
+    </div>
+    <div class="phase-body">
+      <div class="phase-col">
+        <h3>Key Tasks</h3>
+        <ul>
+          <li>Curate 50–100 hardware modules (ALU, FSM, FIFO, bus protocol, pipeline, etc.)</li>
+          <li>Create reference BDD scenarios + testbenches + golden DUTs for each module</li>
+          <li>Implement experiment logging (prompt, output, tokens, latency, model version)</li>
+          <li>Run controlled multi-LLM comparison (9 providers, 5+ repetitions, fixed params)</li>
+          <li>Build mutation testing framework (systematic bug injection into DUTs)</li>
+        </ul>
+      </div>
+      <div class="phase-col">
+        <h3>Evaluation Metrics</h3>
+        <ul>
+          <li><strong>Scenario Completeness</strong> — coverage of spec functional points</li>
+          <li><strong>Conversion Rate</strong> — BDD &rarr; Testbench success ratio</li>
+          <li><strong>Simulation Pass@k</strong> — correctness on golden DUTs</li>
+          <li><strong>Mutation Score</strong> — bug detection on fault-injected DUTs</li>
+          <li><strong>Coverage %</strong> — statement/branch coverage achieved</li>
+          <li><strong>Statistical significance</strong> — Wilcoxon / Mann-Whitney U tests</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down">&darr;</div>
+
+  <!-- Phase 2 -->
+  <div class="phase phase-2">
+    <div class="phase-header">
+      <div class="phase-number">02</div>
+      <div class="phase-title-block">
+        <div class="phase-title">Closed-Loop Simulation Feedback</div>
+        <div class="phase-period">Months 3–5</div>
+      </div>
+      <div class="phase-priority">MEDIUM</div>
+    </div>
+    <div class="phase-body">
+      <div class="phase-col">
+        <h3>Key Tasks</h3>
+        <ul>
+          <li>Feed simulation coverage reports back to LLM after initial generation</li>
+          <li>LLM generates supplementary BDD scenarios targeting coverage gaps</li>
+          <li>Implement iterative refinement loop (max N iterations)</li>
+          <li>Compare BDD-mediated feedback vs. direct testbench regeneration</li>
+        </ul>
+      </div>
+      <div class="phase-col">
+        <h3>Research Questions</h3>
+        <ul>
+          <li>How many iterations are needed to reach coverage saturation?</li>
+          <li>Does BDD as intermediate representation improve feedback efficiency?</li>
+          <li>Which LLMs respond best to coverage-gap feedback?</li>
+          <li>Coverage improvement curve: diminishing returns analysis</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down">&darr;</div>
+
+  <!-- Phase 3 -->
+  <div class="phase phase-3">
+    <div class="phase-header">
+      <div class="phase-number">03</div>
+      <div class="phase-title-block">
+        <div class="phase-title">Multi-Agent BDD Verification Pipeline</div>
+        <div class="phase-period">Months 5–8</div>
+      </div>
+      <div class="phase-priority">EXPLORATORY</div>
+    </div>
+    <div class="phase-body">
+      <div class="phase-col">
+        <h3>Agent Architecture</h3>
+        <ul>
+          <li><strong>Spec Agent</strong> — extract functional points from NL specs</li>
+          <li><strong>BDD Agent</strong> — generate behavioral scenarios</li>
+          <li><strong>Testbench Agent</strong> — synthesize Verilog testbenches</li>
+          <li><strong>Simulation Agent</strong> — execute & analyze results</li>
+          <li><strong>Reviewer Agent</strong> — identify gaps, drive iteration</li>
+        </ul>
+      </div>
+      <div class="phase-col">
+        <h3>Expected Contributions</h3>
+        <ul>
+          <li>Quantify collaboration benefits vs. single-LLM baseline</li>
+          <li>Evaluate role specialization (same model vs. different models per role)</li>
+          <li>Measure end-to-end verification quality improvement</li>
+          <li>Compare with VeriMind & RTLSquad architectures</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key Contributions -->
+  <div class="contributions">
+    <h2>Expected Novel Contributions</h2>
+    <div class="contrib-grid">
+      <div class="contrib-item">
+        <div class="label">Contribution 1</div>
+        <div class="text">First BDD-Hardware Benchmark Suite with multi-LLM evaluation — filling a gap in existing benchmarks (CVDP, FVEval, VerilogEval)</div>
+      </div>
+      <div class="contrib-item">
+        <div class="label">Contribution 2</div>
+        <div class="text">BDD-specific quality metrics for hardware verification (Scenario Completeness, Conversion Rate, Mutation Score)</div>
+      </div>
+      <div class="contrib-item">
+        <div class="label">Contribution 3</div>
+        <div class="text">Systematic comparison of 9 LLM providers on BDD-driven hardware test generation — the most comprehensive multi-LLM study in this domain</div>
+      </div>
+      <div class="contrib-item">
+        <div class="label">Contribution 4</div>
+        <div class="text">Evidence that BDD as intermediate representation improves iterative test refinement compared to direct testbench generation</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Positioning vs. Related Work -->
+  <div class="comparison">
+    <h2>Positioning vs. Related Work</h2>
+    <table>
+      <tr>
+        <th>Related Work</th>
+        <th>Focus</th>
+        <th>Our Differentiation</th>
+      </tr>
+      <tr>
+        <td>LLM-based BDD for HW (Bremen/DFKI, 2025)</td>
+        <td>BDD scenario derivation from specs</td>
+        <td><span class="tag tag-novel">We add</span> Multi-LLM comparison, benchmark, mutation testing, closed-loop feedback</td>
+      </tr>
+      <tr>
+        <td>AutoBench (TUM, 2024)</td>
+        <td>Direct testbench generation</td>
+        <td><span class="tag tag-novel">We add</span> BDD intermediate representation for better interpretability & iterability</td>
+      </tr>
+      <tr>
+        <td>LLM4Cov (VTS 2026)</td>
+        <td>Coverage-driven agentic testbench</td>
+        <td><span class="tag tag-novel">We add</span> BDD-mediated feedback loop; human-readable intermediate layer</td>
+      </tr>
+      <tr>
+        <td>CVDP / FVEval (NVIDIA / Berkeley)</td>
+        <td>Benchmark for RTL generation & FV</td>
+        <td><span class="tag tag-gap">Gap filled</span> No existing benchmark covers BDD-to-testbench pipeline</td>
+      </tr>
+      <tr>
+        <td>VeriMind (2025)</td>
+        <td>Multi-agent Verilog generation</td>
+        <td><span class="tag tag-novel">We add</span> BDD-specialized agent roles for verification (not generation)</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Target Venues -->
+  <div class="outputs">
+    <h2>Target Publication Venues</h2>
+    <div class="output-grid">
+      <div class="output-card">
+        <div class="venue">MLCAD / ICLAD</div>
+        <div class="type">Workshop Paper</div>
+        <div class="deadline">Early results — Phase 1</div>
+        <div class="content-desc">BDD benchmark + preliminary multi-LLM comparison</div>
+      </div>
+      <div class="output-card">
+        <div class="venue">ASP-DAC 2026</div>
+        <div class="type">Full Paper</div>
+        <div class="deadline">Deadline: Jul–Aug 2025</div>
+        <div class="content-desc">Phase 1 full results + Phase 2 initial findings</div>
+      </div>
+      <div class="output-card">
+        <div class="venue">DATE 2026</div>
+        <div class="type">Full Paper</div>
+        <div class="deadline">Deadline: Sep 2025</div>
+        <div class="content-desc">Phase 1 + Phase 2 complete results</div>
+      </div>
+      <div class="output-card">
+        <div class="venue">TCAD (Journal)</div>
+        <div class="type">Journal Article</div>
+        <div class="deadline">Rolling submission</div>
+        <div class="content-desc">Complete system paper (Phase 1+2+3)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="timeline">
+    <h2>Indicative Timeline</h2>
+    <div class="tl-row">
+      <div class="tl-month">Month 1</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar p1" style="width:100%">Benchmark curation (20 modules) + Experiment logging infra</div>
+      </div>
+    </div>
+    <div class="tl-row">
+      <div class="tl-month">Month 2</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar p1" style="width:100%">Expand to 50+ modules + Mutation testing framework + Pilot experiments</div>
+      </div>
+    </div>
+    <div class="tl-row">
+      <div class="tl-month">Month 3</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar p1" style="width:55%">Full 9-LLM experiments</div>
+        <div class="tl-bar write" style="width:43%; margin-left:2%">Write workshop paper</div>
+      </div>
+    </div>
+    <div class="tl-row">
+      <div class="tl-month">Month 4</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar p2" style="width:70%">Implement closed-loop feedback mechanism</div>
+        <div class="tl-bar submit" style="width:28%; margin-left:2%">Submit workshop</div>
+      </div>
+    </div>
+    <div class="tl-row">
+      <div class="tl-month">Month 5</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar p2" style="width:50%">Feedback loop experiments</div>
+        <div class="tl-bar write" style="width:48%; margin-left:2%">Write ASP-DAC / DATE paper</div>
+      </div>
+    </div>
+    <div class="tl-row">
+      <div class="tl-month">Month 6</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar submit" style="width:30%">Submit full paper</div>
+        <div class="tl-bar p3" style="width:68%; margin-left:2%">Begin multi-agent architecture design</div>
+      </div>
+    </div>
+    <div class="tl-row">
+      <div class="tl-month">Month 7–8</div>
+      <div class="tl-bar-container">
+        <div class="tl-bar p3" style="width:100%">Multi-agent experiments + Journal paper preparation</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    HdlFormalLLM Research Roadmap &mdash; Generated June 2025
+  </div>
+
+</div>
+</body>
+</html>
