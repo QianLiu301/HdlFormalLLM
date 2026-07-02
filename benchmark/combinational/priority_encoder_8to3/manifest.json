@@ -1,0 +1,11 @@
+{
+  "name": "priority_encoder_8to3",
+  "category": "combinational",
+  "difficulty": "easy",
+  "functional_points": 5,
+  "bugs": [
+    {"file": "bug01_priority_reversed.v", "taxonomy": "FUNCTIONAL", "description": "priority order reversed: lowest bit wins instead of highest", "sim_detectable": true, "detection_difficulty": "easy"},
+    {"file": "bug02_valid_stuck.v", "taxonomy": "FUNCTIONAL", "description": "valid stuck at 1; not deasserted for in == 0", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug03_msb_wrong_code.v", "taxonomy": "FUNCTIONAL", "description": "highest-priority input (bit 7) encodes to 6 instead of 7", "sim_detectable": true, "detection_difficulty": "easy"}
+  ]
+}

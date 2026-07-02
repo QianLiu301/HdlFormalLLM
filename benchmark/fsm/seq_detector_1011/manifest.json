@@ -1,0 +1,11 @@
+{
+  "name": "seq_detector_1011",
+  "category": "fsm",
+  "difficulty": "medium",
+  "functional_points": 6,
+  "bugs": [
+    {"file": "bug01_no_overlap.v", "taxonomy": "FUNCTIONAL", "description": "detector restarts at S0 after a match; overlapping patterns missed", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug02_ones_run_lost.v", "taxonomy": "FUNCTIONAL", "description": "repeated leading 1s reset progress; 11011 not detected", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug03_moore_delayed.v", "taxonomy": "TIMING", "description": "output registered instead of Mealy; pulse arrives one cycle late", "sim_detectable": true, "detection_difficulty": "hard"}
+  ]
+}

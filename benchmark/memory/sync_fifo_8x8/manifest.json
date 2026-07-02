@@ -1,0 +1,11 @@
+{
+  "name": "sync_fifo_8x8",
+  "category": "memory",
+  "difficulty": "hard",
+  "functional_points": 7,
+  "bugs": [
+    {"file": "bug01_full_off_by_one.v", "taxonomy": "FUNCTIONAL", "description": "full asserts at 7 entries; capacity reduced to 7", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug02_write_when_full.v", "taxonomy": "FUNCTIONAL", "description": "write not gated by full; overwrites data and corrupts count", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug03_read_wrong_ptr.v", "taxonomy": "STRUCTURAL", "description": "dout sourced from write pointer instead of read pointer; FIFO order broken", "sim_detectable": true, "detection_difficulty": "easy"}
+  ]
+}

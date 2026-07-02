@@ -1,0 +1,11 @@
+{
+  "name": "counter_8bit",
+  "category": "sequential",
+  "difficulty": "medium",
+  "functional_points": 8,
+  "bugs": [
+    {"file": "bug01_reset_polarity.v", "taxonomy": "TIMING", "description": "reset polarity inverted (resets when rst_n is high)", "sim_detectable": true, "detection_difficulty": "easy"},
+    {"file": "bug02_load_priority.v", "taxonomy": "FUNCTIONAL", "description": "load ignored when en is also high (priority violation)", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug03_down_overflow_missing.v", "taxonomy": "FUNCTIONAL", "description": "overflow pulse missing on down-count wrap 0x00->0xFF", "sim_detectable": true, "detection_difficulty": "hard"}
+  ]
+}
