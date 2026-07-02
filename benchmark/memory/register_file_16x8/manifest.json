@@ -1,0 +1,11 @@
+{
+  "name": "register_file_16x8",
+  "category": "memory",
+  "difficulty": "hard",
+  "functional_points": 7,
+  "bugs": [
+    {"file": "bug01_r0_writable.v", "taxonomy": "FUNCTIONAL", "description": "R0 hardwire removed: writes to address 0 persist and are readable", "sim_detectable": true, "detection_difficulty": "medium"},
+    {"file": "bug02_portb_reads_a.v", "taxonomy": "STRUCTURAL", "description": "read port B wired to port A address; ports not independent", "sim_detectable": true, "detection_difficulty": "easy"},
+    {"file": "bug03_addr_truncated.v", "taxonomy": "INTERFACE", "description": "internal address truncated to 3 bits; registers 8-15 alias onto 0-7", "sim_detectable": true, "detection_difficulty": "medium"}
+  ]
+}

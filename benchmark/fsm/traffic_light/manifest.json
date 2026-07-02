@@ -1,0 +1,11 @@
+{
+  "name": "traffic_light",
+  "category": "fsm",
+  "difficulty": "medium",
+  "functional_points": 6,
+  "bugs": [
+    {"file": "bug01_yellow_off_by_one.v", "taxonomy": "FUNCTIONAL", "description": "yellow phase lasts Y_TICKS+1 cycles (off-by-one in terminal count)", "sim_detectable": true, "detection_difficulty": "hard"},
+    {"file": "bug02_red_to_yellow.v", "taxonomy": "FUNCTIONAL", "description": "illegal transition: RED advances to YELLOW, GREEN never reached", "sim_detectable": true, "detection_difficulty": "easy"},
+    {"file": "bug03_not_one_hot.v", "taxonomy": "STRUCTURAL", "description": "green lamp also driven during YELLOW; violates one-hot output", "sim_detectable": true, "detection_difficulty": "medium"}
+  ]
+}
