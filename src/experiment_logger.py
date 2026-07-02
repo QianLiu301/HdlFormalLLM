@@ -1,0 +1,304 @@
+"""
+Experiment Logger — 实验记录系统
+
+自动记录每一次 LLM API 调用的完整信息到 SQLite 数据库，
+为 Benchmark 实验和多 LLM 对比提供数据基础。
+
+记录内容：
+- provider / model / 调用方法（普通 or 流式）
+- 完整 prompt / system_prompt / response
+- 延迟（毫秒）、字符数、成功/失败、错误信息
+- 实验上下文标签（task_type / run_id / module_name 等，由上层通过 call_context 设置）
+
+使用方式：
+1. 自动模式（无需改动 Provider 代码）：
+   LLMProvider 基类的 __init_subclass__ 会调用 instrument_class()
+   自动包装所有 _call_api* 方法。
+
+2. 给调用打标签（在 Flask 路由或实验脚本中）：
+   from src.experiment_logger import call_context
+   with call_context(task_type='bdd_generation', run_id='exp001', module_name='alu_8bit'):
+       ...  # 其中发生的所有 LLM 调用都会带上这些标签
+
+3. 命令行查看：
+   python -m src.experiment_logger stats     # 汇总统计
+   python -m src.experiment_logger recent    # 最近 20 条
+   python -m src.experiment_logger export out.jsonl  # 导出 JSONL
+"""
+
+import os
+import json
+import time
+import sqlite3
+import threading
+import functools
+import inspect
+from contextlib import contextmanager
+from typing import Optional, Dict, Any
+
+# 数据库位置：output/experiments/experiments.db（可用环境变量覆盖）
+_DEFAULT_DB = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'output', 'experiments', 'experiments.db'
+)
+DB_PATH = os.environ.get('EXPERIMENT_DB_PATH', _DEFAULT_DB)
+
+_lock = threading.Lock()
+_local = threading.local()
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,            -- ISO8601 UTC
+    provider TEXT,                       -- Provider 类名，如 GroqProvider
+    model TEXT,                          -- 模型名，如 llama-3.3-70b-versatile
+    method TEXT,                         -- 被调用的方法名，如 _call_api / _call_api_stream
+    streaming INTEGER DEFAULT 0,         -- 是否流式调用
+    task_type TEXT,                      -- 上下文标签：bdd_generation / hardware_generation / testbench ...
+    run_id TEXT,                         -- 实验批次 ID
+    module_name TEXT,                    -- benchmark 模块名，如 alu_8bit
+    prompt TEXT,
+    system_prompt TEXT,
+    response TEXT,
+    prompt_chars INTEGER,
+    response_chars INTEGER,
+    max_tokens INTEGER,
+    latency_ms INTEGER,
+    success INTEGER DEFAULT 1,
+    error TEXT,
+    extra TEXT                           -- 预留 JSON 字段
+);
+CREATE INDEX IF NOT EXISTS idx_calls_run ON llm_calls(run_id);
+CREATE INDEX IF NOT EXISTS idx_calls_provider ON llm_calls(provider);
+CREATE INDEX IF NOT EXISTS idx_calls_created ON llm_calls(created_at);
+"""
+
+
+def _connect() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.executescript(_SCHEMA)
+    return conn
+
+
+def _utcnow() -> str:
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+# ---------------------------------------------------------------------------
+# 上下文标签：让上层代码给 LLM 调用打标签，无需层层传参
+# ---------------------------------------------------------------------------
+
+@contextmanager
+def call_context(**labels):
+    """
+    with call_context(task_type='bdd_generation', run_id='exp001'):
+        provider.generate_scenario_description(...)
+    """
+    old = getattr(_local, 'labels', {})
+    _local.labels = {**old, **labels}
+    try:
+        yield
+    finally:
+        _local.labels = old
+
+
+def _current_labels() -> Dict[str, Any]:
+    return getattr(_local, 'labels', {})
+
+
+# ---------------------------------------------------------------------------
+# 核心写入
+# ---------------------------------------------------------------------------
+
+def log_call(provider: str, model: str, method: str, prompt: str,
+             response: str = None, system_prompt: str = None,
+             max_tokens: int = None, latency_ms: int = None,
+             success: bool = True, error: str = None,
+             streaming: bool = False, extra: Dict = None):
+    """记录一次 LLM 调用。写入失败不影响主流程（只打印警告）。"""
+    labels = _current_labels()
+    try:
+        with _lock:
+            conn = _connect()
+            conn.execute(
+                """INSERT INTO llm_calls
+                   (created_at, provider, model, method, streaming,
+                    task_type, run_id, module_name,
+                    prompt, system_prompt, response,
+                    prompt_chars, response_chars, max_tokens,
+                    latency_ms, success, error, extra)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    _utcnow(), provider, model, method, int(streaming),
+                    labels.get('task_type'), labels.get('run_id'), labels.get('module_name'),
+                    prompt, system_prompt, response,
+                    len(prompt) if prompt else 0,
+                    len(response) if response else 0,
+                    max_tokens, latency_ms, int(success), error,
+                    json.dumps(extra, ensure_ascii=False) if extra else None,
+                )
+            )
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        print(f"⚠️  Experiment logger write failed (non-fatal): {e}")
+
+
+# ---------------------------------------------------------------------------
+# 自动埋点：包装 Provider 的 _call_api* 方法
+# ---------------------------------------------------------------------------
+
+def _wrap_regular(cls_name, name, fn):
+    @functools.wraps(fn)
+    def wrapper(self, prompt, *args, **kwargs):
+        model = getattr(self, 'model', None)
+        max_tokens = kwargs.get('max_tokens')
+        system_prompt = kwargs.get('system_prompt')
+        start = time.time()
+        try:
+            result = fn(self, prompt, *args, **kwargs)
+            log_call(cls_name, model, name, prompt,
+                     response=result if isinstance(result, str) else str(result),
+                     system_prompt=system_prompt, max_tokens=max_tokens,
+                     latency_ms=int((time.time() - start) * 1000), success=True)
+            return result
+        except Exception as e:
+            log_call(cls_name, model, name, prompt,
+                     system_prompt=system_prompt, max_tokens=max_tokens,
+                     latency_ms=int((time.time() - start) * 1000),
+                     success=False, error=f"{type(e).__name__}: {e}")
+            raise
+    wrapper._exp_logged = True
+    return wrapper
+
+
+def _wrap_stream(cls_name, name, fn):
+    @functools.wraps(fn)
+    def wrapper(self, prompt, *args, **kwargs):
+        model = getattr(self, 'model', None)
+        max_tokens = kwargs.get('max_tokens')
+        system_prompt = kwargs.get('system_prompt')
+        labels = _current_labels()  # 生成器可能在 context 退出后才被消费，先快照
+        start = time.time()
+        chunks = []
+
+        def gen():
+            success, error = True, None
+            try:
+                for chunk in fn(self, prompt, *args, **kwargs):
+                    if isinstance(chunk, str):
+                        chunks.append(chunk)
+                    yield chunk
+            except Exception as e:
+                success, error = False, f"{type(e).__name__}: {e}"
+                raise
+            finally:
+                with call_context(**labels):
+                    log_call(cls_name, model, name, prompt,
+                             response=''.join(chunks),
+                             system_prompt=system_prompt, max_tokens=max_tokens,
+                             latency_ms=int((time.time() - start) * 1000),
+                             success=success, error=error, streaming=True)
+        return gen()
+    wrapper._exp_logged = True
+    return wrapper
+
+
+def instrument_class(cls):
+    """包装类自身定义的所有 _call_api* 方法（不含继承来的，避免重复包装）。"""
+    for name, fn in list(cls.__dict__.items()):
+        if not name.startswith('_call_api') or not callable(fn):
+            continue
+        if getattr(fn, '_exp_logged', False):
+            continue
+        if inspect.isgeneratorfunction(fn):
+            setattr(cls, name, _wrap_stream(cls.__name__, name, fn))
+        else:
+            setattr(cls, name, _wrap_regular(cls.__name__, name, fn))
+    return cls
+
+
+# ---------------------------------------------------------------------------
+# 查询 / 导出
+# ---------------------------------------------------------------------------
+
+def get_stats() -> Dict:
+    """按 provider 汇总：调用次数、成功率、平均延迟。"""
+    conn = _connect()
+    rows = conn.execute(
+        """SELECT provider, model, COUNT(*),
+                  SUM(success), AVG(latency_ms),
+                  SUM(prompt_chars), SUM(response_chars)
+           FROM llm_calls GROUP BY provider, model ORDER BY COUNT(*) DESC"""
+    ).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0]
+    conn.close()
+    return {
+        'total_calls': total,
+        'by_provider': [
+            {
+                'provider': r[0], 'model': r[1], 'calls': r[2],
+                'success_rate': round(r[3] / r[2], 3) if r[2] else 0,
+                'avg_latency_ms': round(r[4]) if r[4] is not None else None,
+                'prompt_chars': r[5], 'response_chars': r[6],
+            } for r in rows
+        ]
+    }
+
+
+def get_recent(limit: int = 20, run_id: str = None) -> list:
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    sql = """SELECT id, created_at, provider, model, method, streaming,
+                    task_type, run_id, module_name,
+                    prompt_chars, response_chars, latency_ms, success, error
+             FROM llm_calls"""
+    params = []
+    if run_id:
+        sql += " WHERE run_id = ?"
+        params.append(run_id)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    conn.close()
+    return rows
+
+
+def export_jsonl(path: str, run_id: str = None) -> int:
+    """导出完整记录（含 prompt/response 全文）为 JSONL，用于论文数据归档。"""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    sql = "SELECT * FROM llm_calls"
+    params = []
+    if run_id:
+        sql += " WHERE run_id = ?"
+        params.append(run_id)
+    sql += " ORDER BY id"
+    count = 0
+    with open(path, 'w', encoding='utf-8') as f:
+        for row in conn.execute(sql, params):
+            f.write(json.dumps(dict(row), ensure_ascii=False) + '\n')
+            count += 1
+    conn.close()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    import sys
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'stats'
+    if cmd == 'stats':
+        print(json.dumps(get_stats(), indent=2, ensure_ascii=False))
+    elif cmd == 'recent':
+        limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+        print(json.dumps(get_recent(limit), indent=2, ensure_ascii=False))
+    elif cmd == 'export':
+        out = sys.argv[2] if len(sys.argv) > 2 else 'llm_calls.jsonl'
+        n = export_jsonl(out)
+        print(f"✅ Exported {n} records to {out}")
+    else:
+        print("Usage: python -m src.experiment_logger [stats|recent [N]|export [file]]")
