@@ -36,9 +36,24 @@ except ImportError:
     OPENAI_SDK_AVAILABLE = False
     print("⚠️  openai SDK not installed. Install with: pip install openai")
 
+# 实验记录系统：自动记录所有 LLM 调用到 SQLite（可选依赖，失败不影响运行）
+try:
+    from src.experiment_logger import instrument_class as _exp_instrument
+except ImportError:
+    try:
+        from experiment_logger import instrument_class as _exp_instrument
+    except ImportError:
+        _exp_instrument = None
+
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers"""
+
+    def __init_subclass__(cls, **kwargs):
+        """子类定义时自动包装其 _call_api* 方法，实现调用级实验记录"""
+        super().__init_subclass__(**kwargs)
+        if _exp_instrument is not None:
+            _exp_instrument(cls)
 
 
     def _get_proxies(self) -> Optional[Dict[str, str]]:

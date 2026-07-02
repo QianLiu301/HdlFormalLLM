@@ -577,6 +577,31 @@ def health_check():
 
 
 # ============================================================================
+# Experiment Logs API (实验记录查询)
+# ============================================================================
+@app.route('/api/experiment-stats')
+def experiment_stats():
+    """按 provider/model 汇总 LLM 调用统计（次数、成功率、平均延迟）"""
+    try:
+        from src.experiment_logger import get_stats
+        return jsonify({'success': True, **get_stats()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/experiment-logs')
+def experiment_logs():
+    """查看最近的 LLM 调用记录（不含 prompt/response 全文）"""
+    try:
+        from src.experiment_logger import get_recent
+        limit = min(int(request.args.get('limit', 50)), 500)
+        run_id = request.args.get('run_id')
+        return jsonify({'success': True, 'logs': get_recent(limit=limit, run_id=run_id)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
 # Hardware Generator API (ALU, Counter, etc.)
 # ============================================================================
 @app.route('/api/generate-hardware', methods=['POST'])
