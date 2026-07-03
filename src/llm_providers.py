@@ -595,12 +595,13 @@ class DeepSeekProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("DeepSeek API key not provided. Get free key at: https://platform.deepseek.com/")
 
-    def _get_proxies(self) -> None:
+    def _get_proxies(self) -> Dict[str, None]:
         """
-        DeepSeek 不需要代理（国内 API）
-        覆盖父类方法，始终返回 None
+        DeepSeek 不需要代理（国内 API）。
+        注意: requests 里 proxies=None 表示"使用环境变量代理"，
+        必须显式传 {'http': None, 'https': None} 才能真正直连。
         """
-        return None
+        return {'http': None, 'https': None}
     def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
         """
         Call DeepSeek API with detailed debug output
@@ -1670,9 +1671,11 @@ class QwenProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Qwen API key not provided. Get key at: https://dashscope.console.aliyun.com/")
 
-    def _get_proxies(self) -> None:
-        """Qwen (Alibaba Cloud) does not need proxy for Chinese users"""
-        return None
+    def _get_proxies(self) -> Dict[str, None]:
+        """Qwen (Alibaba Cloud) 国内直连。
+        注意: requests 里 proxies=None 表示"使用环境变量代理"，
+        必须显式传 {'http': None, 'https': None} 才能真正绕过代理。"""
+        return {'http': None, 'https': None}
 
     def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
         headers = {
@@ -1697,7 +1700,8 @@ class QwenProvider(LLMProvider):
         }
 
         try:
-            response = requests.post(self.api_url, headers=headers, json=payload, timeout=60)
+            response = requests.post(self.api_url, headers=headers, json=payload,
+                                     proxies=self._get_proxies(), timeout=60)
             response.raise_for_status()
             result = response.json()
             return result['choices'][0]['message']['content'].strip()
@@ -1729,7 +1733,8 @@ class QwenProvider(LLMProvider):
         }
 
         try:
-            response = requests.post(self.api_url, headers=headers, json=payload, stream=True, timeout=180)
+            response = requests.post(self.api_url, headers=headers, json=payload,
+                                     proxies=self._get_proxies(), stream=True, timeout=180)
             response.raise_for_status()
 
             for line in response.iter_lines():
