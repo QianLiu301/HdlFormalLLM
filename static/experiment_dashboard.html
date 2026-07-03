@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Experiment Dashboard — HdlFormalLLM</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f7f8fa;
+    --text-primary: #1a1a1a;
+    --text-secondary: #555b66;
+    --text-muted: #8a919c;
+    --border: #e4e7ec;
+    --accent: #00a884;
+    --accent-blue: #2563eb;
+    --error: #dc2626;
+    --warn: #d97706;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+.mono { font-family: 'JetBrains Mono', monospace; }
+.container { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
+
+header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 24px; flex-wrap: wrap; gap: 8px;
+}
+header h1 { font-size: 22px; font-weight: 700; }
+header a { color: var(--accent-blue); text-decoration: none; font-size: 13px; }
+header a:hover { text-decoration: underline; }
+
+.card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+}
+.card h2 { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+.card h2 .hint { font-weight: 400; font-size: 12.5px; color: var(--text-muted); margin-left: 8px; }
+
+/* stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile {
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px;
+}
+.tile .num { font-size: 26px; font-weight: 700; }
+.tile .label { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+    text-align: left; padding: 8px 10px; color: var(--text-secondary);
+    font-weight: 600; font-size: 12px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+.table-wrap { overflow-x: auto; }
+
+/* score bar: thin single-hue meter, value stays in text ink */
+.meter { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.meter .track {
+    flex: 1; height: 6px; background: var(--bg-secondary);
+    border-radius: 4px; overflow: hidden;
+}
+.meter .fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.meter .val { font-size: 12px; color: var(--text-primary); min-width: 38px; text-align: right; }
+
+/* status badges: icon + word, never color alone */
+.badge { font-size: 12px; font-weight: 500; white-space: nowrap; }
+.badge.ok { color: #047857; }
+.badge.fail { color: var(--error); }
+.badge.na { color: var(--text-muted); }
+
+/* run form */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } }
+.field-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.check-list {
+    display: flex; flex-wrap: wrap; gap: 6px;
+}
+.check-list label {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; cursor: pointer; font-size: 12.5px;
+    background: var(--bg-primary); user-select: none;
+}
+.check-list label:has(input:checked) {
+    border-color: var(--accent); background: #e6f7f2;
+}
+.row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; margin-top: 14px; }
+.row .group { display: flex; flex-direction: column; }
+input[type=number], input[type=text], select {
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 13px; font-family: inherit;
+    background: var(--bg-primary); color: var(--text-primary);
+}
+button {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 8px 20px; font-size: 13.5px;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); }
+
+/* progress */
+#progress-panel { display: none; margin-top: 16px; }
+.progress-track { height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent-blue); border-radius: 4px; width: 0; transition: width .4s; }
+#progress-label { font-size: 12.5px; color: var(--text-secondary); margin-top: 6px; }
+#live-log {
+    margin-top: 10px; max-height: 180px; overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: var(--bg-secondary); border-radius: 6px; padding: 10px 12px;
+    color: var(--text-secondary); white-space: pre-wrap;
+}
+.error-box {
+    color: var(--error); font-size: 13px; margin-top: 10px; display: none;
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+    <h1>🧪 Experiment Dashboard</h1>
+    <a href="/">← Back to Main App</a>
+</header>
+
+<!-- Benchmark overview -->
+<div class="tiles" id="tiles"></div>
+<div style="height:20px"></div>
+
+<div class="card">
+    <h2>Benchmark Suite <span class="hint">reference specs + golden designs + fault-injected mutants</span></h2>
+    <div class="table-wrap">
+        <table id="modules-table">
+            <thead><tr>
+                <th>Module</th><th>Category</th><th>Difficulty</th>
+                <th>Functional Points</th><th>Mutants</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Run experiments -->
+<div class="card">
+    <h2>Run Experiments <span class="hint">spec → BDD scenarios → testbench → golden gate → mutation testing</span></h2>
+    <div class="form-grid">
+        <div>
+            <div class="field-label">LLM providers (mock = pipeline test, no API keys)</div>
+            <div class="check-list" id="llm-list"></div>
+        </div>
+        <div>
+            <div class="field-label">Modules (none selected = all)</div>
+            <div class="check-list" id="module-list"></div>
+        </div>
+    </div>
+    <div class="row">
+        <div class="group">
+            <div class="field-label">Repetitions</div>
+            <input type="number" id="reps" value="1" min="1" max="10" style="width:70px">
+        </div>
+        <div class="group">
+            <div class="field-label">Run ID (optional)</div>
+            <input type="text" id="run-id" placeholder="auto" style="width:160px" class="mono">
+        </div>
+        <div class="group">
+            <div class="field-label">FP-coverage judge (optional)</div>
+            <select id="judge">
+                <option value="">— none —</option>
+            </select>
+        </div>
+        <button id="start-btn" onclick="startRun()">▶ Start Run</button>
+    </div>
+    <div class="error-box" id="run-error"></div>
+    <div id="progress-panel">
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div id="progress-label"></div>
+        <div id="live-log"></div>
+    </div>
+</div>
+
+<!-- Results -->
+<div class="card">
+    <h2>Results
+        <span class="hint">golden pass = testbench correct; mutation score = bugs caught</span>
+    </h2>
+    <div class="row" style="margin-top:0; margin-bottom:14px">
+        <div class="group">
+            <div class="field-label">Run</div>
+            <select id="run-select" onchange="loadResults()"></select>
+        </div>
+        <button class="secondary" onclick="loadResults()">↻ Refresh</button>
+    </div>
+    <div class="field-label" style="margin-bottom:6px">Per-LLM summary</div>
+    <div class="table-wrap">
+        <table id="summary-table">
+            <thead><tr>
+                <th>LLM</th><th>Runs</th><th>Compile</th><th>Golden Pass</th>
+                <th>Mutation Score</th><th>Completeness</th><th>Avg Scenarios</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div style="height:18px"></div>
+    <div class="field-label" style="margin-bottom:6px">Per-experiment detail</div>
+    <div class="table-wrap">
+        <table id="detail-table">
+            <thead><tr>
+                <th>Module</th><th>LLM</th><th>Rep</th><th>Scenarios</th>
+                <th>Compiled</th><th>Golden</th><th>Mutants Caught</th>
+                <th>Completeness</th><th>Error</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- LLM call log -->
+<div class="card">
+    <h2>LLM Call Log <span class="hint">every API call recorded by the experiment logger</span></h2>
+    <div class="table-wrap">
+        <table id="stats-table">
+            <thead><tr>
+                <th>Provider</th><th>Model</th><th>Calls</th>
+                <th>Success Rate</th><th>Avg Latency</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+</div>
+
+<script>
+const LLMS = ['mock','groq','gemini','deepseek','openai','claude','grok','qwen','mistral','together'];
+let polling = null;
+
+function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+}
+
+function meter(value) {
+    // value in [0,1] or null
+    const wrap = el('div', 'meter');
+    const track = el('div', 'track');
+    const fill = el('div', 'fill');
+    const val = el('div', 'val');
+    if (value === null || value === undefined) {
+        val.textContent = '—';
+        fill.style.width = '0';
+    } else {
+        fill.style.width = (value * 100).toFixed(0) + '%';
+        val.textContent = (value * 100).toFixed(0) + '%';
+    }
+    track.appendChild(fill);
+    wrap.appendChild(track);
+    wrap.appendChild(val);
+    return wrap;
+}
+
+function badge(state) {
+    // state: true / false / null
+    if (state === null || state === undefined) return el('span', 'badge na', '—');
+    return state ? el('span', 'badge ok', '✓ pass') : el('span', 'badge fail', '✗ fail');
+}
+
+async function getJSON(url, opts) {
+    const r = await fetch(url, opts);
+    return r.json();
+}
+
+/* ---------- init ---------- */
+async function init() {
+    // LLM checkboxes + judge dropdown
+    const list = document.getElementById('llm-list');
+    const judge = document.getElementById('judge');
+    for (const name of LLMS) {
+        const label = el('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = name;
+        if (name === 'mock') cb.checked = true;
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(name));
+        list.appendChild(label);
+        if (name !== 'mock') {
+            const opt = el('option', null, name);
+            opt.value = name;
+            judge.appendChild(opt);
+        }
+    }
+
+    // benchmark modules
+    const data = await getJSON('/api/benchmark-modules');
+    if (data.success) {
+        const tiles = document.getElementById('tiles');
+        const t = data.totals;
+        for (const [num, label] of [[t.modules, 'Modules'], [t.bugs, 'Fault Mutants'],
+                                    [t.functional_points, 'Functional Points']]) {
+            const tile = el('div', 'tile');
+            tile.appendChild(el('div', 'num', String(num)));
+            tile.appendChild(el('div', 'label', label));
+            tiles.appendChild(tile);
+        }
+        const tbody = document.querySelector('#modules-table tbody');
+        const mlist = document.getElementById('module-list');
+        for (const m of data.modules) {
+            const tr = el('tr');
+            for (const v of [m.name, m.category, m.difficulty, m.functional_points, m.num_bugs])
+                tr.appendChild(el('td', v === m.name ? 'mono' : null, String(v)));
+            tbody.appendChild(tr);
+            const label = el('label');
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.value = m.name;
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode(m.name));
+            mlist.appendChild(label);
+        }
+    }
+
+    loadResults();
+    loadStats();
+}
+
+/* ---------- run ---------- */
+async function startRun() {
+    const llms = [...document.querySelectorAll('#llm-list input:checked')].map(c => c.value);
+    const modules = [...document.querySelectorAll('#module-list input:checked')].map(c => c.value);
+    const err = document.getElementById('run-error');
+    err.style.display = 'none';
+    if (!llms.length) {
+        err.textContent = 'Select at least one LLM.';
+        err.style.display = 'block';
+        return;
+    }
+    const body = {
+        llms, modules,
+        reps: parseInt(document.getElementById('reps').value) || 1,
+        run_id: document.getElementById('run-id').value.trim(),
+        judge: document.getElementById('judge').value
+    };
+    const btn = document.getElementById('start-btn');
+    btn.disabled = true;
+    const resp = await getJSON('/api/benchmark-run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    if (!resp.success) {
+        err.textContent = resp.error;
+        err.style.display = 'block';
+        btn.disabled = false;
+        return;
+    }
+    document.getElementById('progress-panel').style.display = 'block';
+    document.getElementById('live-log').textContent = '';
+    pollStatus(resp.run_id);
+}
+
+function pollStatus(runId) {
+    if (polling) clearInterval(polling);
+    let seen = 0;
+    polling = setInterval(async () => {
+        const s = await getJSON('/api/benchmark-status?run_id=' + encodeURIComponent(runId));
+        if (!s.success) return;
+        const pct = s.total ? (s.done / s.total * 100) : 0;
+        document.getElementById('progress-fill').style.width = pct + '%';
+        document.getElementById('progress-label').textContent =
+            `${s.done}/${s.total}  ${s.current || ''}  [${s.status}]`;
+        const log = document.getElementById('live-log');
+        for (; seen < s.results.length; seen++) {
+            const r = s.results[seen];
+            log.textContent += `${r.module} × ${r.llm} rep${r.rep}: ` +
+                (r.error ? `ERROR ${r.error}` :
+                 `scenarios=${r.scenarios_count} compiled=${!!r.tb_compiled} ` +
+                 `golden=${!!r.golden_passed} mutation=${r.mutation_score ?? '—'}`) + '\n';
+            log.scrollTop = log.scrollHeight;
+        }
+        if (s.status !== 'running') {
+            clearInterval(polling);
+            polling = null;
+            document.getElementById('start-btn').disabled = false;
+            if (s.error) {
+                const err = document.getElementById('run-error');
+                err.textContent = s.error;
+                err.style.display = 'block';
+            }
+            loadResults(runId);
+            loadStats();
+        }
+    }, 2000);
+}
+
+/* ---------- results ---------- */
+async function loadResults(preferRun) {
+    const sel = document.getElementById('run-select');
+    const chosen = preferRun || sel.value;
+    const data = await getJSON('/api/benchmark-results' + (chosen ? '?run_id=' + encodeURIComponent(chosen) : ''));
+    if (!data.success) return;
+
+    // run selector
+    sel.innerHTML = '';
+    const all = el('option', null, '— all runs —');
+    all.value = '';
+    sel.appendChild(all);
+    for (const r of data.runs) {
+        const o = el('option', null, r);
+        o.value = r;
+        if (r === chosen) o.selected = true;
+        sel.appendChild(o);
+    }
+
+    const sBody = document.querySelector('#summary-table tbody');
+    sBody.innerHTML = '';
+    for (const r of data.summary) {
+        const tr = el('tr');
+        tr.appendChild(el('td', 'mono', r.llm));
+        tr.appendChild(el('td', null, String(r.runs)));
+        for (const v of [r.compile_rate, r.golden_rate, r.mutation_score, r.completeness]) {
+            const td = el('td');
+            td.appendChild(meter(v === null ? null : v));
+            tr.appendChild(td);
+        }
+        tr.appendChild(el('td', null, r.avg_scenarios === null ? '—' : r.avg_scenarios.toFixed(1)));
+        sBody.appendChild(tr);
+    }
+    if (!data.summary.length) {
+        const tr = el('tr');
+        const td = el('td', null, 'No results yet — start a run above.');
+        td.colSpan = 7;
+        td.style.color = 'var(--text-muted)';
+        tr.appendChild(td);
+        sBody.appendChild(tr);
+    }
+
+    const dBody = document.querySelector('#detail-table tbody');
+    dBody.innerHTML = '';
+    for (const r of data.detail) {
+        const tr = el('tr');
+        tr.appendChild(el('td', 'mono', r.module));
+        tr.appendChild(el('td', 'mono', r.llm));
+        tr.appendChild(el('td', null, String(r.rep)));
+        tr.appendChild(el('td', null, String(r.scenarios_count ?? '—')));
+        let td = el('td'); td.appendChild(badge(r.tb_compiled === null ? null : !!r.tb_compiled)); tr.appendChild(td);
+        td = el('td'); td.appendChild(badge(r.golden_passed === null ? null : !!r.golden_passed)); tr.appendChild(td);
+        tr.appendChild(el('td', null,
+            r.mutation_score === null ? '—' : `${r.mutants_detected}/${r.mutants_total} (${(r.mutation_score*100).toFixed(0)}%)`));
+        tr.appendChild(el('td', null,
+            r.completeness === null ? '—' : (r.completeness*100).toFixed(0) + '%'));
+        tr.appendChild(el('td', null, r.error || ''));
+        dBody.appendChild(tr);
+    }
+}
+
+/* ---------- llm call stats ---------- */
+async function loadStats() {
+    const data = await getJSON('/api/experiment-stats');
+    if (!data.success) return;
+    const tbody = document.querySelector('#stats-table tbody');
+    tbody.innerHTML = '';
+    for (const r of data.by_provider) {
+        const tr = el('tr');
+        tr.appendChild(el('td', 'mono', r.provider));
+        tr.appendChild(el('td', 'mono', r.model || '—'));
+        tr.appendChild(el('td', null, String(r.calls)));
+        const td = el('td');
+        td.appendChild(meter(r.success_rate));
+        tr.appendChild(td);
+        tr.appendChild(el('td', null, r.avg_latency_ms === null ? '—' : r.avg_latency_ms + ' ms'));
+        tbody.appendChild(tr);
+    }
+    if (!data.by_provider.length) {
+        const tr = el('tr');
+        const td = el('td', null, 'No LLM calls recorded yet.');
+        td.colSpan = 5;
+        td.style.color = 'var(--text-muted)';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

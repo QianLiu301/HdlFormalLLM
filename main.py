@@ -602,6 +602,131 @@ def experiment_logs():
 
 
 # ============================================================================
+# Benchmark Dashboard API (实验看板)
+# ============================================================================
+BENCHMARK_DIR = PROJECT_ROOT / 'benchmark'
+_bench_runs = {}  # run_id -> {'status', 'total', 'done', 'current', 'results': []}
+
+
+def _bench_runner():
+    """按需导入 benchmark/run_experiments.py（不是包，用 sys.path 挂载）"""
+    import sys as _sys
+    if str(BENCHMARK_DIR) not in _sys.path:
+        _sys.path.insert(0, str(BENCHMARK_DIR))
+    import run_experiments
+    return run_experiments
+
+
+@app.route('/dashboard')
+def dashboard():
+    return send_from_directory(str(PROJECT_ROOT / 'static'), 'experiment_dashboard.html')
+
+
+@app.route('/api/benchmark-modules')
+def benchmark_modules():
+    """题库模块清单（benchmark/index.json）"""
+    try:
+        with open(BENCHMARK_DIR / 'index.json', encoding='utf-8') as f:
+            return jsonify({'success': True, **json.load(f)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/benchmark-run', methods=['POST'])
+def benchmark_run():
+    """后台启动一批实验；前端轮询 /api/benchmark-status 查看进度"""
+    import threading
+    data = request.json or {}
+    llms = data.get('llms') or []
+    reps = max(1, min(int(data.get('reps', 1)), 10))
+    run_id = (data.get('run_id') or '').strip() or datetime.now().strftime('run%Y%m%d_%H%M%S')
+    judge_name = (data.get('judge') or '').strip() or None
+    wanted = set(data.get('modules') or [])
+
+    if not llms:
+        return jsonify({'success': False, 'error': 'no LLMs selected'}), 400
+    if any(r.get('status') == 'running' for r in _bench_runs.values()):
+        return jsonify({'success': False, 'error': 'another run is already in progress'}), 409
+
+    bench = _bench_runner()
+    manifests = sorted(BENCHMARK_DIR.glob('*/*/manifest.json'))
+    if wanted:
+        manifests = [m for m in manifests if m.parent.name in wanted]
+    if not manifests:
+        return jsonify({'success': False, 'error': 'no matching modules'}), 400
+
+    state = {'status': 'running', 'total': len(manifests) * len(llms) * reps,
+             'done': 0, 'current': '', 'results': [], 'error': None}
+    _bench_runs[run_id] = state
+
+    def worker():
+        try:
+            providers = {name: bench.make_provider(name) for name in llms}
+            judge = bench.make_provider(judge_name) if judge_name and judge_name != 'mock' else None
+            for mf in manifests:
+                manifest = json.loads(mf.read_text())
+                for llm in llms:
+                    for rep in range(1, reps + 1):
+                        state['current'] = f"{manifest['name']} × {llm} rep{rep}"
+                        row = bench.run_one(mf.parent, manifest, llm, providers[llm],
+                                            rep, run_id, judge=judge, judge_name=judge_name)
+                        state['done'] += 1
+                        state['results'].append({k: row[k] for k in (
+                            'module', 'llm', 'rep', 'scenarios_count', 'tb_compiled',
+                            'golden_passed', 'mutation_score', 'completeness', 'error')})
+            state['status'] = 'finished'
+            state['current'] = ''
+        except Exception as e:
+            state['status'] = 'failed'
+            state['error'] = f'{type(e).__name__}: {e}'
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({'success': True, 'run_id': run_id, 'total': state['total']})
+
+
+@app.route('/api/benchmark-status')
+def benchmark_status():
+    run_id = request.args.get('run_id', '')
+    state = _bench_runs.get(run_id)
+    if not state:
+        return jsonify({'success': False, 'error': 'unknown run_id'}), 404
+    return jsonify({'success': True, 'run_id': run_id, **state})
+
+
+@app.route('/api/benchmark-results')
+def benchmark_results():
+    """历史结果：按 LLM 汇总 + 明细（从 SQLite benchmark_results 表读取）"""
+    import sqlite3
+    try:
+        from src.experiment_logger import DB_PATH
+        run_id = request.args.get('run_id')
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        runs = [r[0] for r in conn.execute(
+            'SELECT DISTINCT run_id FROM benchmark_results ORDER BY id DESC').fetchall()]
+        where, params = ('WHERE run_id = ?', [run_id]) if run_id else ('', [])
+        summary = [dict(r) for r in conn.execute(f'''
+            SELECT llm, COUNT(*) AS runs,
+                   AVG(tb_compiled) AS compile_rate,
+                   AVG(golden_passed) AS golden_rate,
+                   AVG(mutation_score) AS mutation_score,
+                   AVG(completeness) AS completeness,
+                   AVG(scenarios_count) AS avg_scenarios
+            FROM benchmark_results {where}
+            GROUP BY llm ORDER BY AVG(golden_passed) DESC''', params).fetchall()]
+        detail = [dict(r) for r in conn.execute(f'''
+            SELECT module, category, llm, rep, scenarios_count, tb_compiled,
+                   golden_passed, mutants_total, mutants_detected,
+                   mutation_score, completeness, error
+            FROM benchmark_results {where}
+            ORDER BY module, llm, rep''', params).fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'runs': runs, 'summary': summary, 'detail': detail})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
 # Hardware Generator API (ALU, Counter, etc.)
 # ============================================================================
 @app.route('/api/generate-hardware', methods=['POST'])
