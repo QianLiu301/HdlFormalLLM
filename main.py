@@ -664,7 +664,7 @@ def benchmark_run():
             providers = {name: bench.make_provider(name) for name in llms}
             judge = bench.make_provider(judge_name) if judge_name and judge_name != 'mock' else None
             for mf in manifests:
-                manifest = json.loads(mf.read_text())
+                manifest = json.loads(mf.read_text(encoding="utf-8"))
                 for llm in llms:
                     for rep in range(1, reps + 1):
                         state['current'] = f"{manifest['name']} × {llm} rep{rep}"

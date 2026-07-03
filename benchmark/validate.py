@@ -23,7 +23,9 @@ BENCH_ROOT = Path(__file__).parent
 
 
 def run(cmd, cwd=None, timeout=60):
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+    # encoding/errors 显式指定：Windows 默认 GBK，会在 UTF-8 输出上抛 UnicodeDecodeError
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=cwd, timeout=timeout)
 
 
 def compile_and_sim(design: Path, tb: Path, workdir: Path, tag: str):
@@ -39,7 +41,7 @@ def compile_and_sim(design: Path, tb: Path, workdir: Path, tag: str):
 
 
 def validate_module(mod_dir: Path) -> dict:
-    manifest = json.loads((mod_dir / "manifest.json").read_text())
+    manifest = json.loads((mod_dir / "manifest.json").read_text(encoding="utf-8"))
     golden = mod_dir / "golden.v"
     tb = mod_dir / "tb_smoke.v"
     result = {"name": manifest["name"], "golden_ok": False, "bugs": []}
