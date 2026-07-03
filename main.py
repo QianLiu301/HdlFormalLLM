@@ -1027,6 +1027,15 @@ Make sure the module interface and behavior match the test expectations above.
             if not verilog_code:
                 verilog_code = full_content
 
+            # Guard: LLM API 失败时会降级返回模板文本，绝不能把非 Verilog 内容存成 .v
+            if 'module' not in verilog_code:
+                yield make_sse_message(
+                    "error",
+                    message=f"{llm_name.upper()} did not return Verilog code — the API call "
+                            f"likely failed (check server console for proxy/API-key errors). "
+                            f"Response preview: {full_content[:200]}")
+                return
+
             # Fix module name and save based on module type
             if module_type == 'alu':
                 verilog_code = generator._fix_module_name(verilog_code, module_name)
