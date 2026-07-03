@@ -1,0 +1,13 @@
+{
+  "_comment": "复制此文件为 llm_config.json 并按需修改（llm_config.json 已被 .gitignore 排除，不会提交）",
+  "proxy": {
+    "enabled": true,
+    "http_proxy": "http://127.0.0.1:10809",
+    "https_proxy": "http://127.0.0.1:10809",
+    "_comment": "v2rayN 默认: HTTP 代理端口 10809, SOCKS5 端口 10808。requests 库需要 HTTP 代理；如只有 SOCKS5 可用 socks5://127.0.0.1:10808 并 pip install pysocks"
+  },
+  "providers": {
+    "deepseek": { "api_key": "sk-xxxx" },
+    "groq":     { "api_key": "gsk_xxxx" }
+  }
+}
