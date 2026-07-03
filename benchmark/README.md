@@ -67,3 +67,28 @@ invalid bug and fails validation.
 Current status: **9/9 golden OK, 28/28 mutants killed.**
 
 Requires `iverilog`/`vvp` (already in the project Dockerfile).
+
+## Running experiments
+
+```
+# smoke test — exercises the whole pipeline with a built-in mock, no API keys needed
+python benchmark/run_experiments.py --llms mock --reps 1 --run-id smoke
+
+# real experiment: LLMs × modules × repetitions
+python benchmark/run_experiments.py --llms groq,gemini --reps 3 --run-id exp001
+
+# subset of modules + an LLM judge for FP-coverage scoring
+python benchmark/run_experiments.py --llms groq --modules alu_8bit,sync_fifo_8x8 \
+    --judge groq --run-id exp002
+
+# aggregate results table
+python benchmark/run_experiments.py summary --run-id exp001
+```
+
+Per (module, LLM, rep) the runner: generates BDD scenarios from the spec
+(FP list withheld), converts them to a self-checking testbench, verifies the
+testbench PASSES on golden, then runs it against every mutant
+(**Mutation Score** = detected / total). Every LLM call is recorded by
+`src/experiment_logger.py` (tagged with run_id and module); structured
+results land in the `benchmark_results` table of the same SQLite DB, and
+all generated artifacts are kept under `output/benchmark_runs/<run_id>/`.
