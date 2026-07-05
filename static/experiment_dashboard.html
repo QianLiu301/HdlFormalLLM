@@ -203,6 +203,10 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
             <select id="run-select" onchange="loadResults()"></select>
         </div>
         <button class="secondary" onclick="loadResults()">↻ Refresh</button>
+        <button class="secondary" onclick="exportResults('csv')">⬇ CSV</button>
+        <button class="secondary" onclick="exportResults('jsonl')">⬇ JSONL</button>
+        <button class="secondary" onclick="downloadArtifacts()"
+                title="BDD scenarios, testbenches and simulation logs of the selected run">⬇ Artifacts ZIP</button>
     </div>
     <div class="field-label" style="margin-bottom:6px">Per-LLM summary</div>
     <div class="table-wrap">
@@ -465,6 +469,23 @@ async function loadResults(preferRun) {
         tr.appendChild(el('td', null, r.error || ''));
         dBody.appendChild(tr);
     }
+}
+
+/* ---------- downloads ---------- */
+function exportResults(fmt) {
+    const run = document.getElementById('run-select').value;
+    const q = new URLSearchParams({format: fmt});
+    if (run) q.set('run_id', run);
+    window.location.href = '/api/benchmark-export?' + q.toString();
+}
+
+function downloadArtifacts() {
+    const run = document.getElementById('run-select').value;
+    if (!run) {
+        alert('Select a specific run first — artifacts are stored per run.');
+        return;
+    }
+    window.location.href = '/api/benchmark-download-artifacts?run_id=' + encodeURIComponent(run);
 }
 
 /* ---------- llm call stats ---------- */
