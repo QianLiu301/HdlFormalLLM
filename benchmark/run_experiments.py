@@ -148,7 +148,7 @@ def save_result(row: dict):
 
 def load_spec(mod_dir: Path):
     """返回 (去掉功能点的 spec, FP 列表)。FP 是评分标准答案，不能泄漏给被测 LLM。"""
-    text = (mod_dir / "spec.md").read_text()
+    text = (mod_dir / "spec.md").read_text(encoding="utf-8")
     m = re.split(r"^## Functional Points.*$", text, flags=re.M)
     spec_body = m[0].strip()
     fps = re.findall(r"^- (FP-\d+): (.+)$", text, flags=re.M)
@@ -157,7 +157,7 @@ def load_spec(mod_dir: Path):
 
 def extract_ports(golden: Path) -> str:
     """提取 module 声明（到端口列表结束的 ');'），不泄漏实现。"""
-    text = golden.read_text()
+    text = golden.read_text(encoding="utf-8")
     m = re.search(r"module\s+\w+.*?\);", text, flags=re.S)
     return m.group(0) if m else text.split("\n")[0]
 
@@ -173,16 +173,18 @@ def extract_verilog(response: str) -> str:
 def compile_and_run(dut: Path, tb: Path, workdir: Path):
     """返回 (compiled, passed, output)。passed 定义为输出含 TEST PASSED 且不含 TEST FAILED。"""
     exe = workdir / "sim.vvp"
+    # encoding/errors 显式指定：Windows 默认 GBK，会在 UTF-8 输出上抛 UnicodeDecodeError
     try:
         r = subprocess.run(["iverilog", "-g2005", "-o", str(exe), str(dut), str(tb)],
-                           capture_output=True, text=True, timeout=SIM_TIMEOUT)
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=SIM_TIMEOUT)
     except subprocess.TimeoutExpired:
         return False, False, "compile timeout"
     if r.returncode != 0:
         return False, False, r.stderr
     try:
         r = subprocess.run(["vvp", str(exe)], capture_output=True, text=True,
-                           timeout=SIM_TIMEOUT)
+                           encoding="utf-8", errors="replace", timeout=SIM_TIMEOUT)
     except subprocess.TimeoutExpired:
         return True, False, "simulation timeout"
     out = r.stdout + r.stderr
@@ -233,7 +235,7 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
             t0 = time.time()
             bdd = llm_call(provider, llm, BDD_PROMPT.format(spec=spec_body), BDD_SYSTEM)
             row["bdd_ms"] = int((time.time() - t0) * 1000)
-        (art_dir / "scenarios.feature").write_text(bdd)
+        (art_dir / "scenarios.feature").write_text(bdd, encoding="utf-8")
         row["scenarios_count"] = len(re.findall(r"^\s*Scenario", bdd, flags=re.M))
 
         # 2) Testbench 生成
@@ -243,11 +245,11 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
                 spec=spec_body, ports=extract_ports(golden), bdd=bdd), TB_SYSTEM)
             row["tb_ms"] = int((time.time() - t0) * 1000)
         tb_file = art_dir / "tb.v"
-        tb_file.write_text(extract_verilog(tb_resp))
+        tb_file.write_text(extract_verilog(tb_resp), encoding="utf-8")
 
         # 3) golden 仿真
         compiled, passed, out = compile_and_run(golden, tb_file, art_dir)
-        (art_dir / "golden_sim.log").write_text(out)
+        (art_dir / "golden_sim.log").write_text(out, encoding="utf-8")
         row["tb_compiled"] = int(compiled)
         row["golden_passed"] = int(passed)
 
@@ -263,7 +265,7 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
                 mut_log.append(f"{bug['file']}: {'DETECTED' if caught else 'ESCAPED'}")
             row["mutants_detected"] = detected
             row["mutation_score"] = round(detected / len(manifest["bugs"]), 3)
-            (art_dir / "mutation.log").write_text("\n".join(mut_log))
+            (art_dir / "mutation.log").write_text("\n".join(mut_log), encoding="utf-8")
 
         # 5) 覆盖率裁判（可选）
         if judge is not None and row["scenarios_count"] > 0:
@@ -349,7 +351,7 @@ def main():
           f"{args.reps} reps = {total} experiments\n")
 
     for mf in manifests:
-        manifest = json.loads(mf.read_text())
+        manifest = json.loads(mf.read_text(encoding="utf-8"))
         for llm in llms:
             for rep in range(1, args.reps + 1):
                 done += 1

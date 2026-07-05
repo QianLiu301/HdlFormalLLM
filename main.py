@@ -664,7 +664,7 @@ def benchmark_run():
             providers = {name: bench.make_provider(name) for name in llms}
             judge = bench.make_provider(judge_name) if judge_name and judge_name != 'mock' else None
             for mf in manifests:
-                manifest = json.loads(mf.read_text())
+                manifest = json.loads(mf.read_text(encoding="utf-8"))
                 for llm in llms:
                     for rep in range(1, reps + 1):
                         state['current'] = f"{manifest['name']} × {llm} rep{rep}"
@@ -724,6 +724,59 @@ def benchmark_results():
         return jsonify({'success': True, 'runs': runs, 'summary': summary, 'detail': detail})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/benchmark-export')
+def benchmark_export():
+    """导出实验成绩为 CSV 或 JSONL（论文数据分析用）"""
+    import sqlite3
+    import csv
+    import io
+    fmt = request.args.get('format', 'csv')
+    run_id = request.args.get('run_id')
+    try:
+        from src.experiment_logger import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        where, params = ('WHERE run_id = ?', [run_id]) if run_id else ('', [])
+        rows = [dict(r) for r in conn.execute(
+            f'SELECT * FROM benchmark_results {where} ORDER BY id', params).fetchall()]
+        conn.close()
+        tag = run_id or 'all'
+        if fmt == 'jsonl':
+            body = '\n'.join(json.dumps(r, ensure_ascii=False) for r in rows)
+            mime, fname = 'application/x-ndjson', f'benchmark_results_{tag}.jsonl'
+        else:
+            buf = io.StringIO()
+            if rows:
+                w = csv.DictWriter(buf, fieldnames=rows[0].keys())
+                w.writeheader()
+                w.writerows(rows)
+            body, mime, fname = buf.getvalue(), 'text/csv', f'benchmark_results_{tag}.csv'
+        return Response(body, mimetype=mime,
+                        headers={'Content-Disposition': f'attachment; filename={fname}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/benchmark-download-artifacts')
+def benchmark_download_artifacts():
+    """打包下载某次实验的全部产物（BDD 场景、testbench、仿真日志）"""
+    import io
+    import zipfile
+    run_id = request.args.get('run_id', '')
+    run_dir = PROJECT_ROOT / 'output' / 'benchmark_runs' / secure_filename(run_id)
+    if not run_id or not run_dir.is_dir():
+        return jsonify({'success': False, 'error': f'no artifacts for run "{run_id}"'}), 404
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(run_dir.rglob('*')):
+            if f.is_file():
+                zf.write(f, f.relative_to(run_dir.parent))
+    buf.seek(0)
+    return Response(buf.read(), mimetype='application/zip',
+                    headers={'Content-Disposition':
+                             f'attachment; filename=benchmark_artifacts_{secure_filename(run_id)}.zip'})
 
 
 # ============================================================================
@@ -1026,6 +1079,15 @@ Make sure the module interface and behavior match the test expectations above.
             verilog_code = generator._extract_verilog(full_content)
             if not verilog_code:
                 verilog_code = full_content
+
+            # Guard: LLM API 失败时会降级返回模板文本，绝不能把非 Verilog 内容存成 .v
+            if 'module' not in verilog_code:
+                yield make_sse_message(
+                    "error",
+                    message=f"{llm_name.upper()} did not return Verilog code — the API call "
+                            f"likely failed (check server console for proxy/API-key errors). "
+                            f"Response preview: {full_content[:200]}")
+                return
 
             # Fix module name and save based on module type
             if module_type == 'alu':
