@@ -4,8 +4,54 @@
   "difficulty": "medium",
   "functional_points": 8,
   "bugs": [
-    {"file": "bug01_reset_polarity.v", "taxonomy": "TIMING", "description": "reset polarity inverted (resets when rst_n is high)", "sim_detectable": true, "detection_difficulty": "easy"},
-    {"file": "bug02_load_priority.v", "taxonomy": "FUNCTIONAL", "description": "load ignored when en is also high (priority violation)", "sim_detectable": true, "detection_difficulty": "medium"},
-    {"file": "bug03_down_overflow_missing.v", "taxonomy": "FUNCTIONAL", "description": "overflow pulse missing on down-count wrap 0x00->0xFF", "sim_detectable": true, "detection_difficulty": "hard"}
+    {
+      "file": "bug01_reset_polarity.v",
+      "taxonomy": "TIMING",
+      "description": "reset polarity inverted (resets when rst_n is high)",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    },
+    {
+      "file": "bug02_load_priority.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "load ignored when en is also high (priority violation)",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug03_down_overflow_missing.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "overflow pulse missing on down-count wrap 0x00->0xFF",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug04_overflow_off_by_one.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "up-count overflow pulses at 0xFE->0xFF instead of 0xFF->0x00",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug05_load_keeps_overflow.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "load does not clear a pending overflow pulse",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug06_hold_keeps_overflow.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "overflow stays asserted while counting is disabled (not a 1-cycle pulse)",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug07_load_msb_dropped.v",
+      "taxonomy": "INTERFACE",
+      "description": "parallel load drops d[7]; values >= 0x80 load wrong",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    }
   ]
 }

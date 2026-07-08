@@ -4,9 +4,61 @@
   "difficulty": "easy",
   "functional_points": 9,
   "bugs": [
-    {"file": "bug01_sub_as_add.v", "taxonomy": "FUNCTIONAL", "description": "SUB opcode performs addition instead of subtraction", "sim_detectable": true, "detection_difficulty": "easy"},
-    {"file": "bug02_zero_inverted.v", "taxonomy": "FUNCTIONAL", "description": "zero flag polarity inverted (high when result != 0)", "sim_detectable": true, "detection_difficulty": "easy"},
-    {"file": "bug03_shl_no_carry.v", "taxonomy": "FUNCTIONAL", "description": "SHL does not capture shifted-out MSB in carry_out", "sim_detectable": true, "detection_difficulty": "medium"},
-    {"file": "bug04_op_truncated.v", "taxonomy": "INTERFACE", "description": "opcode port truncated to 2 bits; ops 4-7 alias onto 0-3", "sim_detectable": true, "detection_difficulty": "medium"}
+    {
+      "file": "bug01_sub_as_add.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "SUB opcode performs addition instead of subtraction",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    },
+    {
+      "file": "bug02_zero_inverted.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "zero flag polarity inverted (high when result != 0)",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    },
+    {
+      "file": "bug03_shl_no_carry.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "SHL does not capture shifted-out MSB in carry_out",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug04_op_truncated.v",
+      "taxonomy": "INTERFACE",
+      "description": "opcode port truncated to 2 bits; ops 4-7 alias onto 0-3",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug05_sub_no_borrow.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "SUB result correct but borrow never reported on carry_out",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug06_zero_msb_blind.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "zero flag ignores result MSB; wrong only when result == 0x80",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug07_shr_carry_msb.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "SHR reports a[7] instead of shifted-out a[0] on carry_out",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug08_not_wrong_operand.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "NOT operation inverts b instead of a",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    }
   ]
 }

@@ -4,8 +4,54 @@
   "difficulty": "medium",
   "functional_points": 6,
   "bugs": [
-    {"file": "bug01_no_overlap.v", "taxonomy": "FUNCTIONAL", "description": "detector restarts at S0 after a match; overlapping patterns missed", "sim_detectable": true, "detection_difficulty": "medium"},
-    {"file": "bug02_ones_run_lost.v", "taxonomy": "FUNCTIONAL", "description": "repeated leading 1s reset progress; 11011 not detected", "sim_detectable": true, "detection_difficulty": "medium"},
-    {"file": "bug03_moore_delayed.v", "taxonomy": "TIMING", "description": "output registered instead of Mealy; pulse arrives one cycle late", "sim_detectable": true, "detection_difficulty": "hard"}
+    {
+      "file": "bug01_no_overlap.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "detector restarts at S0 after a match; overlapping patterns missed",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug02_ones_run_lost.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "repeated leading 1s reset progress; 11011 not detected",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug03_moore_delayed.v",
+      "taxonomy": "TIMING",
+      "description": "output registered instead of Mealy; pulse arrives one cycle late",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug04_reset_to_s1.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "reset lands in S1 (pretends a '1' was already seen)",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug05_s3_zero_to_s0.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "S3 with din=0 forgets the '10' history (goes S0 instead of S2)",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug06_s2_sticky.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "S2 with din=0 stays in S2; '100...' still counts as '10' (false detects)",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug07_overlap_wrong_state.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "after a detect the FSM goes to S2 instead of S1 (false detects on 10111x)",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    }
   ]
 }

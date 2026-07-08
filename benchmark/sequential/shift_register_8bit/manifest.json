@@ -4,8 +4,54 @@
   "difficulty": "medium",
   "functional_points": 7,
   "bugs": [
-    {"file": "bug01_dir_swapped.v", "taxonomy": "FUNCTIONAL", "description": "shift direction semantics swapped (dir=0 shifts right)", "sim_detectable": true, "detection_difficulty": "easy"},
-    {"file": "bug02_serial_out_fixed.v", "taxonomy": "FUNCTIONAL", "description": "serial_out hardwired to q[0]; wrong during left shifts", "sim_detectable": true, "detection_difficulty": "medium"},
-    {"file": "bug03_load_priority.v", "taxonomy": "FUNCTIONAL", "description": "shift wins over load when both asserted (priority violation)", "sim_detectable": true, "detection_difficulty": "medium"}
+    {
+      "file": "bug01_dir_swapped.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "shift direction semantics swapped (dir=0 shifts right)",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    },
+    {
+      "file": "bug02_serial_out_fixed.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "serial_out hardwired to q[0]; wrong during left shifts",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug03_load_priority.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "shift wins over load when both asserted (priority violation)",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug04_serial_out_registered.v",
+      "taxonomy": "TIMING",
+      "description": "serial_out registered: shows the bit one cycle late",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug05_right_inserts_zero.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "right shift always inserts 0, serial_in ignored",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug06_left_inserts_q0.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "left shift recycles q[0] instead of taking serial_in",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug07_load_msb_dropped.v",
+      "taxonomy": "INTERFACE",
+      "description": "parallel load drops d[7]",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    }
   ]
 }

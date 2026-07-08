@@ -4,8 +4,54 @@
   "difficulty": "easy",
   "functional_points": 5,
   "bugs": [
-    {"file": "bug01_signed_gt.v", "taxonomy": "FUNCTIONAL", "description": "gt uses signed comparison; fails when MSB differs (0x80 vs 0x7F)", "sim_detectable": true, "detection_difficulty": "medium"},
-    {"file": "bug02_gt_lt_swapped.v", "taxonomy": "STRUCTURAL", "description": "gt and lt output expressions swapped", "sim_detectable": true, "detection_difficulty": "easy"},
-    {"file": "bug03_gt_off_by_one.v", "taxonomy": "FUNCTIONAL", "description": "gt asserts on equality too (>= instead of >); violates one-hot", "sim_detectable": true, "detection_difficulty": "easy"}
+    {
+      "file": "bug01_signed_gt.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "gt uses signed comparison; fails when MSB differs (0x80 vs 0x7F)",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug02_gt_lt_swapped.v",
+      "taxonomy": "STRUCTURAL",
+      "description": "gt and lt output expressions swapped",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    },
+    {
+      "file": "bug03_gt_off_by_one.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "gt asserts on equality too (>= instead of >); violates one-hot",
+      "sim_detectable": true,
+      "detection_difficulty": "easy"
+    },
+    {
+      "file": "bug04_eq_ignores_bit0.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "eq ignores bit0: values differing only in LSB compare equal",
+      "sim_detectable": true,
+      "detection_difficulty": "hard"
+    },
+    {
+      "file": "bug05_lt_off_by_one.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "lt implemented as <=; lt and eq both high at equality",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug06_gt_or_eq.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "gt implemented as >=; gt and eq both high at equality",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    },
+    {
+      "file": "bug07_signed_lt.v",
+      "taxonomy": "FUNCTIONAL",
+      "description": "lt uses signed comparison; wrong when exactly one operand has MSB set",
+      "sim_detectable": true,
+      "detection_difficulty": "medium"
+    }
   ]
 }

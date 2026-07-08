@@ -35,6 +35,10 @@ module tb_smoke;
             feed(stream[i % 32]);
             if (i % 32 == 31) stream = $random;
         end
+        // reset-state probe: after reset feed 0,1,1,1 —
+        // a detector that resets into "seen 1" fires on the 011 prefix
+        rst_n = 0; @(negedge clk) $display("t=%0t RESET2 det=%b", $time, detected); rst_n = 1;
+        feed(0); feed(1); feed(1); feed(1);
         $finish;
     end
 endmodule

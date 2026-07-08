@@ -46,6 +46,12 @@ module tb_smoke;
             raddr_a = $random; raddr_b = $random;
             @(negedge clk) show;
         end
+        // second reset with registers already written: all 16 must read 0x00
+        we = 0; rst_n = 0; @(negedge clk) show; rst_n = 1;
+        for (i = 0; i < 16; i = i + 1) begin
+            raddr_a = i[3:0]; raddr_b = 4'd15 - i[3:0];
+            #1 show;
+        end
         $finish;
     end
 endmodule

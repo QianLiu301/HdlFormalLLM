@@ -37,6 +37,11 @@ module tb_smoke;
             {load, shift_en, dir, serial_in} = $random; d = $random;
             @(negedge clk) show;
         end
+        // right shift with serial_in=1 (insert ones at MSB)
+        load = 1; shift_en = 0; d = 8'h00; @(negedge clk) show; load = 0;
+        shift_en = 1; dir = 1; serial_in = 1;
+        for (i = 0; i < 4; i = i + 1) begin @(negedge clk) show; end
+        shift_en = 0;
         $finish;
     end
 endmodule

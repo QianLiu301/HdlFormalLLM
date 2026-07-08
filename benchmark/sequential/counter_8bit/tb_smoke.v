@@ -41,6 +41,12 @@ module tb_smoke;
             {load, en, up_down} = $random; d = $random;
             @(negedge clk) show;
         end
+        // overflow pulse must clear even while counting is disabled:
+        // wrap at 0xFF -> 0x00 (ov=1), then en=0 and watch ov drop
+        load = 1; en = 0; up_down = 1; d = 8'hFF; @(negedge clk) show; load = 0;
+        en = 1; @(negedge clk) show;   // wrap: q=00, ov=1
+        en = 0; @(negedge clk) show;   // golden: ov=0; sticky mutant: ov=1
+        @(negedge clk) show;
         $finish;
     end
 endmodule

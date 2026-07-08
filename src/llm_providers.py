@@ -1070,26 +1070,26 @@ class OpenAIProvider(LLMProvider):
             else:
                 print(f"🔄 [DEBUG] Retry {retry_count}/{self.max_retries} - max_tokens: {max_tokens}")
 
-                # 构建消息
-                default_system = """You are a helpful assistant that generates BDD scenario descriptions.
+            # 构建消息（修复：原先只在 retry 分支构建，首次调用必抛 UnboundLocalError）
+            default_system = """You are a helpful assistant that generates BDD scenario descriptions.
             You MUST respond with valid JSON only. Do not include any text outside the JSON structure."""
 
-                system_content = system_prompt or default_system
+            system_content = system_prompt or default_system
 
-                # OpenAI requires the word "json" in messages when using response_format json_object
-                if 'json' not in system_content.lower() and 'json' not in prompt.lower():
-                    system_content += "\nYou MUST respond with valid JSON only."
+            # OpenAI requires the word "json" in messages when using response_format json_object
+            if 'json' not in system_content.lower() and 'json' not in prompt.lower():
+                system_content += "\nYou MUST respond with valid JSON only."
 
-                messages = [
-                    {
-                        "role": "system",
-                        "content": system_content
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_content
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
 
             # 根据模型选择参数
             if self._is_gpt5_model(self.model):
@@ -1306,6 +1306,29 @@ Respond with ONLY the JSON object, no other text.
     def _fallback_text(self) -> str:
         """备用文本响应 (用于 codex)"""
         return "Given ALU operation, When executed, Then produce correct output"
+
+    def _call_api_text(self, prompt: str, max_tokens: int = 500, system_prompt: str = None) -> str:
+        """
+        纯文本 chat 调用（无 JSON mode）——benchmark 用。
+        主应用的 intent 解析仍走 _call_api 的 JSON 模式，两者互不影响。
+        """
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt or "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ]
+            if self._is_gpt5_model(self.model):
+                params = {"model": self.model, "messages": messages,
+                          "max_completion_tokens": max_tokens, "temperature": 1}
+            else:
+                params = {"model": self.model, "messages": messages,
+                          "max_tokens": max_tokens, "temperature": 0.7}
+            response = self.client.chat.completions.create(**params)
+            content = response.choices[0].message.content
+            return (content or "").strip()
+        except Exception as e:
+            print(f"⚠️  OpenAI text API request failed: {e}")
+            return self._fallback_text()
 
     def _call_api(self, prompt: str, max_tokens: int = 500, system_prompt: str = None) -> str:
         """

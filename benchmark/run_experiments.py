@@ -234,14 +234,20 @@ def _is_fallback(text: str) -> bool:
     # 另一个降级分支 _fallback_intent_json：一小段 {"scenario":..., "operation":...} JSON
     if '"operation"' in text and '"scenario"' in text and len(text) < 800:
         return True
+    # OpenAI _fallback_text 的降级句
+    if text.startswith("Given ALU operation, When executed"):
+        return True
     return False
 
 
 def llm_call(provider, name, prompt, system):
     if name == "mock":
         return MOCK_BDD if "Gherkin" in prompt else MOCK_TB
+    # OpenAI 的 _call_api 强制 JSON mode（主应用需要）；benchmark 需要纯文本，
+    # 优先用 _call_api_text，其余 provider 本来就返回纯文本
+    call = getattr(provider, "_call_api_text", None) or provider._call_api
     for attempt in range(1, LLM_RETRIES + 1):
-        resp = provider._call_api(prompt, max_tokens=LLM_MAX_TOKENS, system_prompt=system)
+        resp = call(prompt, max_tokens=LLM_MAX_TOKENS, system_prompt=system)
         text = (resp or "").strip()
         if text and not _is_fallback(text):
             return resp
