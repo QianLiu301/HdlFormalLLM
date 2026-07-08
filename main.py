@@ -794,6 +794,147 @@ def benchmark_delete_run():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+_fb_runs = {}  # run_id -> {'status', 'total', 'done', 'current', 'results': []}
+
+
+def _fb_runner():
+    """按需导入 benchmark/run_feedback.py（挂 sys.path，同 _bench_runner）"""
+    import sys as _sys
+    if str(BENCHMARK_DIR) not in _sys.path:
+        _sys.path.insert(0, str(BENCHMARK_DIR))
+    import run_feedback
+    return run_feedback
+
+
+@app.route('/api/feedback-run', methods=['POST'])
+def feedback_run():
+    """后台启动一批 Phase-2 反馈闭环任务；前端轮询 /api/feedback-status"""
+    import threading
+    data = request.json or {}
+    llms = data.get('llms') or []
+    reps = max(1, min(int(data.get('reps', 1) or 1), 5))
+    iters = max(1, min(int(data.get('iters', 3) or 3), 6))
+    workers = max(1, min(int(data.get('workers', 2) or 2), 8))
+    arms = [a for a in (data.get('arms') or ['bdd', 'tb']) if a in ('bdd', 'tb')]
+    wanted = set(data.get('modules') or [])
+    run_id = (data.get('run_id') or '').strip()
+    if not run_id:
+        tag = '-'.join(llms) if len(llms) <= 3 else f"{llms[0]}-and{len(llms) - 1}more"
+        run_id = f"fb_{tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    if not llms:
+        return jsonify({'success': False, 'error': 'no LLMs selected'}), 400
+    if not wanted:
+        return jsonify({'success': False, 'error': 'no modules selected'}), 400
+    if not arms:
+        return jsonify({'success': False, 'error': 'select at least one arm'}), 400
+    if any(r.get('status') == 'running' for r in _fb_runs.values()):
+        return jsonify({'success': False, 'error': 'another feedback run is already in progress'}), 409
+
+    fb = _fb_runner()
+    conn = fb._fb_conn()
+    existing = conn.execute('SELECT COUNT(*) FROM feedback_results WHERE run_id = ?',
+                            (run_id,)).fetchone()[0]
+    conn.close()
+    if existing:
+        return jsonify({'success': False,
+                        'error': f'run_id "{run_id}" already has {existing} results — pick a new one'}), 400
+
+    manifests = sorted(BENCHMARK_DIR.glob('*/*/manifest.json'))
+    manifests = [m for m in manifests if m.parent.name in wanted]
+    if not manifests:
+        return jsonify({'success': False, 'error': 'no matching modules'}), 400
+
+    state = {'status': 'running', 'total': len(manifests) * len(llms) * reps,
+             'done': 0, 'current': '', 'results': [], 'error': None}
+    _fb_runs[run_id] = state
+
+    def worker():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        lock = threading.Lock()
+        running = set()
+
+        def one(mod_dir, manifest, llm, rep, providers):
+            label = f"{manifest['name']} × {llm} rep{rep}"
+            with lock:
+                running.add(label)
+                state['current'] = ' | '.join(sorted(running))
+            try:
+                msg = fb.run_task(mod_dir, manifest, llm, providers[llm], rep,
+                                  run_id, iters, arms)
+            finally:
+                with lock:
+                    running.discard(label)
+                    state['current'] = ' | '.join(sorted(running))
+            with lock:
+                state['done'] += 1
+                state['results'].append(msg)
+
+        try:
+            providers = {name: fb.rx.make_provider(name) for name in llms}
+            tasks = []
+            for mf in manifests:
+                manifest = json.loads(mf.read_text(encoding='utf-8'))
+                for llm in llms:
+                    for rep in range(1, reps + 1):
+                        tasks.append((mf.parent, manifest, llm, rep))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(one, *t, providers) for t in tasks]
+                for f in as_completed(futures):
+                    f.result()
+            state['status'] = 'finished'
+            state['current'] = ''
+        except Exception as e:
+            state['status'] = 'failed'
+            state['error'] = f'{type(e).__name__}: {e}'
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({'success': True, 'run_id': run_id, 'total': state['total']})
+
+
+@app.route('/api/feedback-status')
+def feedback_status():
+    run_id = request.args.get('run_id', '')
+    state = _fb_runs.get(run_id)
+    if not state:
+        return jsonify({'success': False, 'error': 'unknown run_id'}), 404
+    return jsonify({'success': True, 'run_id': run_id, **state})
+
+
+@app.route('/api/feedback-results')
+def feedback_results():
+    """反馈闭环结果：run 列表 + 臂×轮次透视 + 明细"""
+    import sqlite3
+    try:
+        fb = _fb_runner()
+        fb._fb_conn().close()  # 确保表存在
+        from src.experiment_logger import DB_PATH
+        run_id = request.args.get('run_id')
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        runs = [dict(r) for r in conn.execute(
+            '''SELECT run_id, GROUP_CONCAT(DISTINCT llm) AS llms, COUNT(*) AS n
+               FROM feedback_results GROUP BY run_id ORDER BY MAX(id) DESC''').fetchall()]
+        where, params = ('WHERE run_id = ?', [run_id]) if run_id else ('', [])
+        pivot = [dict(r) for r in conn.execute(f'''
+            SELECT arm, iteration, COUNT(*) AS n,
+                   AVG(tb_compiled) AS compile_rate,
+                   AVG(golden_passed) AS golden_rate,
+                   AVG(CASE WHEN golden_passed=1 THEN mutation_score END) AS mutation_score,
+                   SUM(error IS NOT NULL) AS errors
+            FROM feedback_results {where}
+            GROUP BY arm, iteration ORDER BY arm, iteration''', params).fetchall()]
+        detail = [dict(r) for r in conn.execute(f'''
+            SELECT module, llm, rep, arm, iteration, feedback_kind, converged,
+                   scenarios_count, tb_compiled, golden_passed, mutation_score, error
+            FROM feedback_results {where}
+            ORDER BY module, llm, rep, arm, iteration''', params).fetchall()]
+        conn.close()
+        return jsonify({'success': True, 'runs': runs, 'pivot': pivot, 'detail': detail})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/benchmark-export')
 def benchmark_export():
     """导出实验成绩为 CSV 或 JSONL（论文数据分析用）"""
