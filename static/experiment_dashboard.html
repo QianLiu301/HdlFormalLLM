@@ -45,16 +45,8 @@ header a:hover { text-decoration: underline; }
     margin-bottom: 20px;
 }
 .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
-.card h2 .hint { font-weight: 400; font-size: 12.5px; color: var(--text-muted); margin-left: 8px; }
-
-/* stat tiles */
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.tile {
-    background: var(--bg-primary); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px 18px;
-}
-.tile .num { font-size: 26px; font-weight: 700; }
-.tile .label { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.hint { font-weight: 400; font-size: 12.5px; color: var(--text-muted); }
+.card h2 .hint, summary .hint { margin-left: 8px; }
 
 /* tables */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -134,36 +126,69 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
 
 <header>
     <h1>🧪 Experiment Dashboard</h1>
-    <a href="/">← Back to Main App</a>
+    <a href="/" onclick="if (history.length > 1) { history.back(); return false; }">← Back to Main App</a>
 </header>
 
-<!-- Benchmark overview -->
-<div class="tiles" id="tiles"></div>
-<div style="height:20px"></div>
+<!-- How it works -->
+<div class="card">
+    <h2>How this works <span class="hint">standalone benchmark runner — it exams the LLM itself, not designs you made in the main app</span></h2>
+    <div style="font-size:13.5px; color:var(--text-secondary); line-height:1.7; margin-bottom:14px">
+        <b>Flow:</b> pick LLM(s) and module(s) → <b>Start Run</b> → for each task the LLM reads the spec,
+        writes BDD scenarios and a testbench; the testbench is verified on the golden (reference) design,
+        then challenged with fault-injected mutants → scores appear in <b>Results</b>.
+        Nothing needs to be prepared in the main app first.
+    </div>
+    <div style="display:grid; grid-template-columns:max-content 1fr; gap:8px 18px;
+                font-size:13px; color:var(--text-secondary); line-height:1.6">
+        <b style="color:var(--text-primary)">Benchmark Suite</b>
+        <span>The fixed exam tasks shipped with the repo — each has a natural-language spec,
+              a golden design and fault mutants. Reference only; module names (e.g. alu_8bit)
+              are fixed and unrelated to the bit-width options in the main app.</span>
+        <b style="color:var(--text-primary)">Run Experiments</b>
+        <span>Choose LLMs × modules × repetitions and start a run.</span>
+        <b style="color:var(--text-primary)">Results</b>
+        <span><b>Compile</b>: generated testbench compiles ·
+              <b>Golden Pass</b>: passes the correct design, i.e. the testbench itself is valid ·
+              <b>Mutation Score</b>: fraction of injected bugs caught (<b>headline metric</b>) ·
+              <b>Completeness</b>: functional-point coverage (only with a judge LLM).
+              Top table = per-LLM averages, bottom table = per-experiment detail.</span>
+        <b style="color:var(--text-primary)">LLM Call Log</b>
+        <span>All-time API-call statistics for the whole app, not tied to a run — debug only.</span>
+    </div>
+</div>
 
 <div class="card">
-    <h2>Benchmark Suite <span class="hint">reference specs + golden designs + fault-injected mutants</span></h2>
-    <div class="table-wrap">
-        <table id="modules-table">
-            <thead><tr>
-                <th>Module</th><th>Category</th><th>Difficulty</th>
-                <th>Functional Points</th><th>Mutants</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table>
-    </div>
+    <details>
+        <summary style="cursor:pointer; font-size:15px; font-weight:600">
+            Benchmark Suite <span class="hint" id="suite-totals">fixed exam tasks: spec + golden design + fault mutants</span>
+        </summary>
+        <div class="table-wrap" style="margin-top:12px">
+            <table id="modules-table">
+                <thead><tr>
+                    <th>Module</th><th>Category</th><th>Difficulty</th>
+                    <th>Functional Points</th><th>Mutants</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </details>
 </div>
 
 <!-- Run experiments -->
 <div class="card">
-    <h2>Run Experiments <span class="hint">spec → BDD scenarios → testbench → golden gate → mutation testing</span></h2>
+    <h2>Run Experiments <span class="hint">exam the LLM on fixed benchmark tasks (not your uploaded designs): spec → BDD → testbench → golden gate → mutation testing</span></h2>
     <div class="form-grid">
         <div>
             <div class="field-label">LLM providers (mock = pipeline test, no API keys)</div>
             <div class="check-list" id="llm-list"></div>
         </div>
         <div>
-            <div class="field-label">Modules (none selected = all)</div>
+            <div class="field-label">Benchmark modules — select at least one
+                <button type="button" class="secondary" style="font-size:11px;padding:2px 8px;margin-left:8px"
+                        onclick="setAllModules(true)">Select all</button>
+                <button type="button" class="secondary" style="font-size:11px;padding:2px 8px"
+                        onclick="setAllModules(false)">Clear</button>
+            </div>
             <div class="check-list" id="module-list"></div>
         </div>
     </div>
@@ -171,6 +196,10 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
         <div class="group">
             <div class="field-label">Repetitions</div>
             <input type="number" id="reps" value="1" min="1" max="10" style="width:70px">
+        </div>
+        <div class="group">
+            <div class="field-label">Parallel workers</div>
+            <input type="number" id="workers" value="3" min="1" max="8" style="width:70px">
         </div>
         <div class="group">
             <div class="field-label">Run ID (optional)</div>
@@ -184,6 +213,7 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
         </div>
         <button id="start-btn" onclick="startRun()">▶ Start Run</button>
     </div>
+    <div class="hint" id="run-estimate" style="margin-top:8px"></div>
     <div class="error-box" id="run-error"></div>
     <div id="progress-panel">
         <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
@@ -207,6 +237,8 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
         <button class="secondary" onclick="exportResults('jsonl')">⬇ JSONL</button>
         <button class="secondary" onclick="downloadArtifacts()"
                 title="BDD scenarios, testbenches and simulation logs of the selected run">⬇ Artifacts ZIP</button>
+        <button class="secondary" onclick="deleteRun()" style="color:var(--error)"
+                title="Permanently remove the selected run's scores and artifact files">🗑 Delete run</button>
     </div>
     <div class="field-label" style="margin-bottom:6px">Per-LLM summary</div>
     <div class="table-wrap">
@@ -234,8 +266,11 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
 
 <!-- LLM call log -->
 <div class="card">
-    <h2>LLM Call Log <span class="hint">every API call recorded by the experiment logger</span></h2>
-    <div class="table-wrap">
+    <details>
+        <summary style="cursor:pointer; font-size:15px; font-weight:600">
+            LLM Call Log <span class="hint">all-time API calls across the whole app (debug) — not just the selected run</span>
+        </summary>
+        <div class="table-wrap" style="margin-top:12px">
         <table id="stats-table">
             <thead><tr>
                 <th>Provider</th><th>Model</th><th>Calls</th>
@@ -243,7 +278,8 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
             </tr></thead>
             <tbody></tbody>
         </table>
-    </div>
+        </div>
+    </details>
 </div>
 
 </div>
@@ -312,15 +348,10 @@ async function init() {
     // benchmark modules
     const data = await getJSON('/api/benchmark-modules');
     if (data.success) {
-        const tiles = document.getElementById('tiles');
         const t = data.totals;
-        for (const [num, label] of [[t.modules, 'Modules'], [t.bugs, 'Fault Mutants'],
-                                    [t.functional_points, 'Functional Points']]) {
-            const tile = el('div', 'tile');
-            tile.appendChild(el('div', 'num', String(num)));
-            tile.appendChild(el('div', 'label', label));
-            tiles.appendChild(tile);
-        }
+        document.getElementById('suite-totals').textContent =
+            `${t.modules} modules · ${t.bugs} fault mutants · ${t.functional_points} functional points` +
+            ` — each module ships a spec, a golden design and mutants (click to expand)`;
         const tbody = document.querySelector('#modules-table tbody');
         const mlist = document.getElementById('module-list');
         for (const m of data.modules) {
@@ -337,8 +368,40 @@ async function init() {
         }
     }
 
+    // 实验数 / 预估时长实时提示
+    for (const id of ['llm-list', 'module-list']) {
+        document.getElementById(id).addEventListener('change', updateEstimate);
+    }
+    document.getElementById('reps').addEventListener('input', updateEstimate);
+    document.getElementById('workers').addEventListener('input', updateEstimate);
+    updateEstimate();
+
     loadResults();
     loadStats();
+}
+
+function setAllModules(checked) {
+    document.querySelectorAll('#module-list input').forEach(c => c.checked = checked);
+    updateEstimate();
+}
+
+function updateEstimate() {
+    const llms = [...document.querySelectorAll('#llm-list input:checked')].map(c => c.value);
+    const nMods = document.querySelectorAll('#module-list input:checked').length;
+    const reps = parseInt(document.getElementById('reps').value) || 1;
+    const workers = Math.max(1, parseInt(document.getElementById('workers').value) || 3);
+    const est = document.getElementById('run-estimate');
+    const n = llms.length * nMods * reps;
+    if (!n) {
+        est.textContent = 'Select LLM(s) and module(s) above — nothing will run until both are chosen.';
+        return;
+    }
+    // 粗略估计：真实 LLM 每个实验 ~2.5 分钟（BDD + TB 两次调用 + 仿真），mock 秒级
+    const perExpMin = llms.some(l => l !== 'mock') ? 2.5 : 0.05;
+    const totalMin = Math.ceil(n / workers) * perExpMin;
+    est.textContent = `Will run ${n} experiment${n > 1 ? 's' : ''} ` +
+        `(${nMods} module${nMods > 1 ? 's' : ''} × ${llms.length} LLM${llms.length > 1 ? 's' : ''} × ${reps} rep${reps > 1 ? 's' : ''})` +
+        ` · est ~${totalMin < 1 ? '<1' : Math.round(totalMin)} min with ${workers} parallel workers`;
 }
 
 /* ---------- run ---------- */
@@ -352,9 +415,15 @@ async function startRun() {
         err.style.display = 'block';
         return;
     }
+    if (!modules.length) {
+        err.textContent = 'Select at least one benchmark module (or click "Select all").';
+        err.style.display = 'block';
+        return;
+    }
     const body = {
         llms, modules,
         reps: parseInt(document.getElementById('reps').value) || 1,
+        workers: parseInt(document.getElementById('workers').value) || 3,
         run_id: document.getElementById('run-id').value.trim(),
         judge: document.getElementById('judge').value
     };
@@ -389,10 +458,12 @@ function pollStatus(runId) {
         const log = document.getElementById('live-log');
         for (; seen < s.results.length; seen++) {
             const r = s.results[seen];
+            const timing = (r.bdd_ms || r.tb_ms)
+                ? `  [bdd ${((r.bdd_ms ?? 0) / 1000).toFixed(0)}s, tb ${((r.tb_ms ?? 0) / 1000).toFixed(0)}s]` : '';
             log.textContent += `${r.module} × ${r.llm} rep${r.rep}: ` +
                 (r.error ? `ERROR ${r.error}` :
                  `scenarios=${r.scenarios_count} compiled=${!!r.tb_compiled} ` +
-                 `golden=${!!r.golden_passed} mutation=${r.mutation_score ?? '—'}`) + '\n';
+                 `golden=${!!r.golden_passed} mutation=${r.mutation_score ?? '—'}`) + timing + '\n';
             log.scrollTop = log.scrollHeight;
         }
         if (s.status !== 'running') {
@@ -423,9 +494,10 @@ async function loadResults(preferRun) {
     all.value = '';
     sel.appendChild(all);
     for (const r of data.runs) {
-        const o = el('option', null, r);
-        o.value = r;
-        if (r === chosen) o.selected = true;
+        // r = {run_id, llms, n} — 显示 LLM 名和实验数，方便区分批次
+        const o = el('option', null, `${r.run_id} · ${r.llms} (${r.n})`);
+        o.value = r.run_id;
+        if (r.run_id === chosen) o.selected = true;
         sel.appendChild(o);
     }
 
@@ -486,6 +558,26 @@ function downloadArtifacts() {
         return;
     }
     window.location.href = '/api/benchmark-download-artifacts?run_id=' + encodeURIComponent(run);
+}
+
+async function deleteRun() {
+    const run = document.getElementById('run-select').value;
+    if (!run) {
+        alert('Select a specific run to delete — "all runs" cannot be deleted at once.');
+        return;
+    }
+    if (!confirm(`Delete run "${run}"?\n\nThis permanently removes its scores and artifact files.`)) return;
+    const resp = await getJSON('/api/benchmark-delete-run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({run_id: run})
+    });
+    if (!resp.success) {
+        alert('Delete failed: ' + resp.error);
+        return;
+    }
+    document.getElementById('run-select').value = '';
+    loadResults();
 }
 
 /* ---------- llm call stats ---------- */

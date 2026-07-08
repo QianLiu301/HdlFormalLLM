@@ -639,12 +639,32 @@ def benchmark_run():
     data = request.json or {}
     llms = data.get('llms') or []
     reps = max(1, min(int(data.get('reps', 1)), 10))
-    run_id = (data.get('run_id') or '').strip() or datetime.now().strftime('run%Y%m%d_%H%M%S')
+    workers = max(1, min(int(data.get('workers', 3) or 3), 8))
+    run_id = (data.get('run_id') or '').strip()
+    if not run_id:
+        # 自动 run_id 带上 LLM 名，方便在结果下拉框里区分（只用 '-'，保证 secure_filename 安全）
+        tag = '-'.join(llms) if len(llms) <= 3 else f"{llms[0]}-and{len(llms) - 1}more"
+        run_id = f"{tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     judge_name = (data.get('judge') or '').strip() or None
     wanted = set(data.get('modules') or [])
 
     if not llms:
         return jsonify({'success': False, 'error': 'no LLMs selected'}), 400
+    if not wanted:
+        # 必须显式选模块（防止误触全量真实 API 跑）；CLI 的 run_experiments.py 仍默认全跑
+        return jsonify({'success': False, 'error': 'no modules selected — pick modules or click "Select all"'}), 400
+    try:
+        # 复用已有 run_id 会覆盖 artifacts（run_id/module/llm/repN 目录相同），拒绝
+        import sqlite3 as _sq
+        from src.experiment_logger import DB_PATH as _dbp
+        _c = _sq.connect(_dbp)
+        _n = _c.execute('SELECT COUNT(*) FROM benchmark_results WHERE run_id = ?', (run_id,)).fetchone()[0]
+        _c.close()
+        if _n:
+            return jsonify({'success': False,
+                            'error': f'run_id "{run_id}" already has {_n} results — pick a new one'}), 400
+    except Exception:
+        pass  # 查不到库不阻塞启动
     if any(r.get('status') == 'running' for r in _bench_runs.values()):
         return jsonify({'success': False, 'error': 'another run is already in progress'}), 409
 
@@ -660,20 +680,43 @@ def benchmark_run():
     _bench_runs[run_id] = state
 
     def worker():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        lock = threading.Lock()
+        running = set()  # 正在跑的实验标签，用于进度条显示
+
+        def run_task(mf, manifest, llm, rep, providers, judge):
+            label = f"{manifest['name']} × {llm} rep{rep}"
+            with lock:
+                running.add(label)
+                state['current'] = ' | '.join(sorted(running))
+            try:
+                row = bench.run_one(mf.parent, manifest, llm, providers[llm],
+                                    rep, run_id, judge=judge, judge_name=judge_name)
+            finally:
+                with lock:
+                    running.discard(label)
+                    state['current'] = ' | '.join(sorted(running))
+            with lock:
+                state['done'] += 1
+                state['results'].append({k: row[k] for k in (
+                    'module', 'llm', 'rep', 'scenarios_count', 'tb_compiled',
+                    'golden_passed', 'mutation_score', 'completeness', 'error',
+                    'bdd_ms', 'tb_ms')})
+
         try:
             providers = {name: bench.make_provider(name) for name in llms}
             judge = bench.make_provider(judge_name) if judge_name and judge_name != 'mock' else None
+            tasks = []
             for mf in manifests:
                 manifest = json.loads(mf.read_text(encoding="utf-8"))
                 for llm in llms:
                     for rep in range(1, reps + 1):
-                        state['current'] = f"{manifest['name']} × {llm} rep{rep}"
-                        row = bench.run_one(mf.parent, manifest, llm, providers[llm],
-                                            rep, run_id, judge=judge, judge_name=judge_name)
-                        state['done'] += 1
-                        state['results'].append({k: row[k] for k in (
-                            'module', 'llm', 'rep', 'scenarios_count', 'tb_compiled',
-                            'golden_passed', 'mutation_score', 'completeness', 'error')})
+                        tasks.append((mf, manifest, llm, rep))
+            # LLM 调用是 IO 等待，用线程池并行跑（call_context 是 threading.local，安全）
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(run_task, *t, providers, judge) for t in tasks]
+                for f in as_completed(futures):
+                    f.result()  # 让异常在这里抛出
             state['status'] = 'finished'
             state['current'] = ''
         except Exception as e:
@@ -702,8 +745,9 @@ def benchmark_results():
         run_id = request.args.get('run_id')
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
-        runs = [r[0] for r in conn.execute(
-            'SELECT DISTINCT run_id FROM benchmark_results ORDER BY id DESC').fetchall()]
+        runs = [dict(r) for r in conn.execute(
+            '''SELECT run_id, GROUP_CONCAT(DISTINCT llm) AS llms, COUNT(*) AS n
+               FROM benchmark_results GROUP BY run_id ORDER BY MAX(id) DESC''').fetchall()]
         where, params = ('WHERE run_id = ?', [run_id]) if run_id else ('', [])
         summary = [dict(r) for r in conn.execute(f'''
             SELECT llm, COUNT(*) AS runs,
@@ -722,6 +766,30 @@ def benchmark_results():
             ORDER BY module, llm, rep''', params).fetchall()]
         conn.close()
         return jsonify({'success': True, 'runs': runs, 'summary': summary, 'detail': detail})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/benchmark-delete-run', methods=['POST'])
+def benchmark_delete_run():
+    """删除一个 run 的成绩行 + artifacts 目录（清理跑废的批次）"""
+    import sqlite3
+    import shutil
+    run_id = ((request.json or {}).get('run_id') or '').strip()
+    if not run_id:
+        return jsonify({'success': False, 'error': 'run_id required'}), 400
+    if _bench_runs.get(run_id, {}).get('status') == 'running':
+        return jsonify({'success': False, 'error': 'run is still in progress'}), 409
+    try:
+        from src.experiment_logger import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.execute('DELETE FROM benchmark_results WHERE run_id = ?', (run_id,))
+        conn.commit()
+        conn.close()
+        run_dir = PROJECT_ROOT / 'output' / 'benchmark_runs' / secure_filename(run_id)
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir, ignore_errors=True)
+        return jsonify({'success': True, 'deleted_rows': cur.rowcount})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

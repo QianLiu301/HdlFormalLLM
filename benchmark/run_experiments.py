@@ -192,17 +192,64 @@ def compile_and_run(dut: Path, tb: Path, workdir: Path):
     return True, passed, out
 
 
+def _config_api_key(name: str):
+    """从 config/llm_config.json 读某 provider 的 api_key（不取 model——配置里的
+    model 名可能过期，provider 自带的默认值更可靠）"""
+    try:
+        cfg = json.loads((PROJECT_ROOT / "config" / "llm_config.json").read_text(encoding="utf-8"))
+        return cfg.get("providers", {}).get(name, {}).get("api_key") or None
+    except Exception:
+        return None
+
+
 def make_provider(name: str):
     if name == "mock":
         return None
     from src.llm_providers import LLMFactory
-    return LLMFactory.create_provider(name)
+    # 先按默认方式创建（环境变量里的 key 优先，已验证可用）；
+    # 环境变量缺 key 时（如 claude/grok），再用 config 文件里的 key 补一次
+    provider = LLMFactory.create_provider(name)
+    if not hasattr(provider, "_call_api"):
+        key = _config_api_key(name)
+        if key:
+            provider = LLMFactory.create_provider(name, api_key=key)
+    # 工厂在创建失败时会静默降级成 LocalLLMProvider（模板文本，没有 _call_api）
+    # ——benchmark 必须硬失败，否则又是数据污染
+    if not hasattr(provider, "_call_api"):
+        raise RuntimeError(f"provider '{name}' fell back to local templates — "
+                           f"no usable api_key in env vars or config/llm_config.json")
+    return provider
+
+
+# providers 在 API 失败时不抛异常，而是静默返回模板文本（对交互式应用友好，
+# 但会污染 benchmark 数据）——在这里检测它并重试，重试耗尽则如实抛错记入 error 字段
+FALLBACK_MARKER = "Test ALU operation with various input values"
+LLM_RETRIES = 3
+RETRY_BACKOFF = 10  # 秒；第 n 次失败后等 n*RETRY_BACKOFF
+
+
+def _is_fallback(text: str) -> bool:
+    if FALLBACK_MARKER in text:
+        return True
+    # 另一个降级分支 _fallback_intent_json：一小段 {"scenario":..., "operation":...} JSON
+    if '"operation"' in text and '"scenario"' in text and len(text) < 800:
+        return True
+    return False
 
 
 def llm_call(provider, name, prompt, system):
     if name == "mock":
         return MOCK_BDD if "Gherkin" in prompt else MOCK_TB
-    return provider._call_api(prompt, max_tokens=LLM_MAX_TOKENS, system_prompt=system)
+    for attempt in range(1, LLM_RETRIES + 1):
+        resp = provider._call_api(prompt, max_tokens=LLM_MAX_TOKENS, system_prompt=system)
+        text = (resp or "").strip()
+        if text and not _is_fallback(text):
+            return resp
+        if attempt < LLM_RETRIES:
+            print(f"  ⚠️ {name} API failure (fallback detected), "
+                  f"retry {attempt}/{LLM_RETRIES - 1} in {attempt * RETRY_BACKOFF}s ...", flush=True)
+            time.sleep(attempt * RETRY_BACKOFF)
+    raise RuntimeError(f"{name} API failed {LLM_RETRIES} times (provider returned fallback text)")
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +379,20 @@ def main():
     ap.add_argument("--reps", type=int, default=1, help="repetitions per (module, llm)")
     ap.add_argument("--run-id", required=True, help="experiment batch id, e.g. exp001")
     ap.add_argument("--judge", default=None, help="LLM used to judge FP coverage (optional)")
+    ap.add_argument("--workers", type=int, default=3,
+                    help="parallel experiments (LLM calls are IO-bound; use 1-2 for rate-limited providers)")
+    ap.add_argument("--append", action="store_true",
+                    help="allow adding results to an existing run_id (careful: same module×llm×rep overwrites artifacts)")
     args = ap.parse_args()
+
+    # 复用 run_id 会让 artifacts 目录 (run_id/module/llm/repN) 互相覆盖，默认拒绝
+    conn = _results_conn()
+    existing = conn.execute("SELECT COUNT(*) FROM benchmark_results WHERE run_id = ?",
+                            (args.run_id,)).fetchone()[0]
+    conn.close()
+    if existing and not args.append:
+        sys.exit(f"run_id '{args.run_id}' already has {existing} results in the DB.\n"
+                 f"Pick a new --run-id, or pass --append to knowingly add to it.")
 
     manifests = sorted(BENCH_ROOT.glob("*/*/manifest.json"))
     if args.modules:
@@ -345,29 +405,44 @@ def main():
     providers = {name: make_provider(name) for name in llms}
     judge = make_provider(args.judge) if args.judge and args.judge != "mock" else None
 
-    total = len(manifests) * len(llms) * args.reps
-    done = 0
-    print(f"🚀 run_id={args.run_id}: {len(manifests)} modules × {len(llms)} LLMs × "
-          f"{args.reps} reps = {total} experiments\n")
-
+    tasks = []
     for mf in manifests:
         manifest = json.loads(mf.read_text(encoding="utf-8"))
         for llm in llms:
             for rep in range(1, args.reps + 1):
-                done += 1
-                tag = f"[{done}/{total}] {manifest['name']} × {llm} rep{rep}"
-                print(f"{tag} ...", flush=True)
-                row = run_one(mf.parent, manifest, llm, providers[llm], rep,
-                              args.run_id, judge=judge, judge_name=args.judge)
-                if row["error"]:
-                    print(f"  ❌ {row['error']}")
-                else:
-                    ms = row["mutation_score"]
-                    print(f"  scenarios={row['scenarios_count']} "
-                          f"compiled={bool(row['tb_compiled'])} "
-                          f"golden={bool(row['golden_passed'])} "
-                          f"mutation={ms if ms is not None else '-'} "
-                          f"completeness={row['completeness'] if row['completeness'] is not None else '-'}")
+                tasks.append((mf, manifest, llm, rep))
+
+    total = len(tasks)
+    workers = max(1, min(args.workers, 8))
+    print(f"🚀 run_id={args.run_id}: {len(manifests)} modules × {len(llms)} LLMs × "
+          f"{args.reps} reps = {total} experiments, {workers} workers\n")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+    lock = threading.Lock()
+    done = [0]
+
+    def run_task(mf, manifest, llm, rep):
+        row = run_one(mf.parent, manifest, llm, providers[llm], rep,
+                      args.run_id, judge=judge, judge_name=args.judge)
+        with lock:
+            done[0] += 1
+            tag = f"[{done[0]}/{total}] {manifest['name']} × {llm} rep{rep}"
+            if row["error"]:
+                print(f"{tag}  ❌ {row['error']}", flush=True)
+            else:
+                ms = row["mutation_score"]
+                print(f"{tag}  scenarios={row['scenarios_count']} "
+                      f"compiled={bool(row['tb_compiled'])} "
+                      f"golden={bool(row['golden_passed'])} "
+                      f"mutation={ms if ms is not None else '-'} "
+                      f"completeness={row['completeness'] if row['completeness'] is not None else '-'}",
+                      flush=True)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(run_task, *t) for t in tasks]
+        for f in as_completed(futures):
+            f.result()
 
     print(f"\n{'='*60}\nSummary for run_id={args.run_id}:\n")
     print_summary(args.run_id)
