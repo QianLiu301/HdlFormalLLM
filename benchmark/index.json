@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BDD-Hardware Benchmark Suite: reference specs, golden designs, and fault-injected mutants for evaluating LLM-generated BDD scenarios and testbenches",
   "modules": [
     {
@@ -8,7 +8,7 @@
       "path": "combinational/alu_8bit",
       "difficulty": "easy",
       "functional_points": 9,
-      "num_bugs": 4
+      "num_bugs": 8
     },
     {
       "name": "comparator_8bit",
@@ -16,7 +16,7 @@
       "path": "combinational/comparator_8bit",
       "difficulty": "easy",
       "functional_points": 5,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "priority_encoder_8to3",
@@ -24,7 +24,7 @@
       "path": "combinational/priority_encoder_8to3",
       "difficulty": "easy",
       "functional_points": 5,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "seq_detector_1011",
@@ -32,7 +32,7 @@
       "path": "fsm/seq_detector_1011",
       "difficulty": "medium",
       "functional_points": 6,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "traffic_light",
@@ -40,7 +40,7 @@
       "path": "fsm/traffic_light",
       "difficulty": "medium",
       "functional_points": 6,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "register_file_16x8",
@@ -48,7 +48,7 @@
       "path": "memory/register_file_16x8",
       "difficulty": "hard",
       "functional_points": 7,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "sync_fifo_8x8",
@@ -56,7 +56,7 @@
       "path": "memory/sync_fifo_8x8",
       "difficulty": "hard",
       "functional_points": 7,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "counter_8bit",
@@ -64,7 +64,7 @@
       "path": "sequential/counter_8bit",
       "difficulty": "medium",
       "functional_points": 8,
-      "num_bugs": 3
+      "num_bugs": 7
     },
     {
       "name": "shift_register_8bit",
@@ -72,12 +72,12 @@
       "path": "sequential/shift_register_8bit",
       "difficulty": "medium",
       "functional_points": 7,
-      "num_bugs": 3
+      "num_bugs": 7
     }
   ],
   "totals": {
     "modules": 9,
-    "bugs": 28,
+    "bugs": 64,
     "functional_points": 60
   }
 }
