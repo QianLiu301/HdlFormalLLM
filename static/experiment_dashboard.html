@@ -225,7 +225,7 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
 <!-- Feedback loop (Phase 2) -->
 <div class="card">
     <h2>Feedback Loop — Phase 2
-        <span class="hint">iterative repair from simulation feedback · arm "bdd": revise scenarios then regenerate TB · arm "tb": patch TB directly · mutation scored blindly each round</span>
+        <span class="hint">iterative repair from simulation feedback · "bdd": revise scenarios, regenerate TB (BDD is the only feedback carrier) · "bdd+": revise scenarios AND show feedback to the TB generator · "tb": patch TB directly · mutation scored blindly each round</span>
     </h2>
     <div class="form-grid">
         <div>
@@ -259,6 +259,7 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
             <div class="field-label">Arms</div>
             <div class="check-list" id="fb-arms">
                 <label><input type="checkbox" value="bdd" checked>bdd</label>
+                <label><input type="checkbox" value="bdd+" checked>bdd+</label>
                 <label><input type="checkbox" value="tb" checked>tb</label>
             </div>
         </div>
@@ -280,6 +281,7 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
             <select id="fb-run-select" onchange="loadFbResults()"></select>
         </div>
         <button class="secondary" onclick="loadFbResults()">↻ Refresh</button>
+        <button class="secondary" onclick="exportFbResults()">⬇ CSV</button>
     </div>
     <div class="field-label" style="margin:12px 0 6px">Score vs iteration — does feedback improve the tests, and which arm wins?</div>
     <div class="table-wrap">
@@ -463,6 +465,11 @@ let fbPolling = null;
 
 function setAllFbModules(checked) {
     document.querySelectorAll('#fb-module-list input').forEach(c => c.checked = checked);
+}
+
+function exportFbResults() {
+    const run = document.getElementById('fb-run-select').value;
+    window.location.href = '/api/feedback-export' + (run ? '?run_id=' + encodeURIComponent(run) : '');
 }
 
 async function startFbRun() {

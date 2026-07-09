@@ -815,7 +815,7 @@ def feedback_run():
     reps = max(1, min(int(data.get('reps', 1) or 1), 5))
     iters = max(1, min(int(data.get('iters', 3) or 3), 6))
     workers = max(1, min(int(data.get('workers', 2) or 2), 8))
-    arms = [a for a in (data.get('arms') or ['bdd', 'tb']) if a in ('bdd', 'tb')]
+    arms = [a for a in (data.get('arms') or ['bdd', 'tb', 'bdd+']) if a in ('bdd', 'tb', 'bdd+')]
     wanted = set(data.get('modules') or [])
     run_id = (data.get('run_id') or '').strip()
     if not run_id:
@@ -899,6 +899,35 @@ def feedback_status():
     if not state:
         return jsonify({'success': False, 'error': 'unknown run_id'}), 404
     return jsonify({'success': True, 'run_id': run_id, **state})
+
+
+@app.route('/api/feedback-export')
+def feedback_export():
+    """导出反馈闭环结果 CSV（Render 磁盘易失，跑完必须下载）"""
+    import sqlite3
+    import csv as _csv
+    import io
+    try:
+        _fb_runner()._fb_conn().close()  # 确保表存在
+        from src.experiment_logger import DB_PATH
+        run_id = request.args.get('run_id')
+        where, params = ('WHERE run_id = ?', [run_id]) if run_id else ('', [])
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute(
+            f'SELECT * FROM feedback_results {where} ORDER BY id', params).fetchall()]
+        conn.close()
+        buf = io.StringIO()
+        if rows:
+            w = _csv.DictWriter(buf, fieldnames=rows[0].keys())
+            w.writeheader()
+            w.writerows(rows)
+        tag = secure_filename(run_id) if run_id else 'all'
+        return app.response_class(
+            buf.getvalue(), mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=feedback_results_{tag}.csv'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/feedback-results')

@@ -3,9 +3,12 @@
 """
 Phase 2 — simulation-feedback loop experiment (BDD-as-intermediate-representation study).
 
-Two arms share the same one-shot baseline (iteration 0), then iterate:
-  bdd : feedback -> revise BDD scenarios -> regenerate testbench from revised BDD
-  tb  : feedback -> patch the testbench directly (BDD untouched)
+Three arms share the same one-shot baseline (iteration 0), then iterate:
+  bdd  : feedback -> revise BDD scenarios -> regenerate testbench from revised BDD
+         (the TB generator does NOT see the feedback — BDD is the only carrier)
+  bdd+ : feedback -> revise BDD scenarios -> regenerate testbench from revised BDD
+         WITH the feedback also attached (information routed to both layers)
+  tb   : feedback -> patch the testbench directly (BDD untouched)
 
 Feedback given to the LLM = compiler errors, or golden-simulation failure lines.
 Mutation results are NEVER fed back (they are the answer key); the mutation score
@@ -56,6 +59,34 @@ Revise the BDD scenarios in Gherkin format to fix the problems the feedback reve
 correct wrong expectations, fix mis-read timing semantics, and add scenarios for
 behaviours that are missing. Keep scenarios that are already correct.
 Output ONLY the complete revised Gherkin feature file content, no explanations.
+"""
+
+TB_REGEN_FB_PROMPT = """Below is a hardware module specification, its port declaration, BDD test
+scenarios describing what must be verified, and feedback from running the PREVIOUS
+version of the testbench in a simulator.
+
+=== SPECIFICATION ===
+{spec}
+
+=== MODULE PORT DECLARATION (instantiate exactly this interface) ===
+{ports}
+
+=== BDD SCENARIOS ===
+{bdd}
+
+=== SIMULATION FEEDBACK (about the previous testbench) ===
+{feedback}
+
+Write a SELF-CHECKING Verilog-2005 testbench that implements these BDD scenarios
+and avoids the problems described in the feedback.
+Requirements:
+- Testbench module must be named `tb`.
+- Instantiate the DUT exactly as declared above.
+- Check expected values with if-statements; on any mismatch print
+  "TEST FAILED" (plus details) using $display.
+- If ALL checks pass, print exactly "TEST PASSED" at the end.
+- Always call $finish at the end. Do not use SystemVerilog-only features.
+Output ONLY the Verilog code in a ```verilog code block.
 """
 
 PATCH_TB_PROMPT = """Below is a hardware module specification, its port declaration, the Verilog
@@ -230,15 +261,22 @@ def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
             (it_dir / "feedback.txt").write_text(fb, encoding="utf-8")
             row["feedback_kind"] = kind
             try:
-                if arm == "bdd":
+                if arm in ("bdd", "bdd+"):
                     with call_context(task_type="fb_bdd_revise", run_id=run_id, module_name=module):
                         st["bdd"] = rx.llm_call(provider, llm, REVISE_BDD_PROMPT.format(
                             spec=spec_body, bdd=st["bdd"], feedback=fb), rx.BDD_SYSTEM)
                     (it_dir / "scenarios.feature").write_text(st["bdd"], encoding="utf-8")
                     st["scen"] = count_scen(st["bdd"])
-                    with call_context(task_type="fb_tb_regen", run_id=run_id, module_name=module):
-                        tb_resp = rx.llm_call(provider, llm, rx.TB_PROMPT.format(
-                            spec=spec_body, ports=ports, bdd=st["bdd"]), rx.TB_SYSTEM)
+                    if arm == "bdd":
+                        # BDD 是唯一信息载体：TB 生成器看不到反馈
+                        with call_context(task_type="fb_tb_regen", run_id=run_id, module_name=module):
+                            tb_resp = rx.llm_call(provider, llm, rx.TB_PROMPT.format(
+                                spec=spec_body, ports=ports, bdd=st["bdd"]), rx.TB_SYSTEM)
+                    else:
+                        # bdd+：反馈同时路由到 TB 生成层
+                        with call_context(task_type="fb_tb_regen_fb", run_id=run_id, module_name=module):
+                            tb_resp = rx.llm_call(provider, llm, TB_REGEN_FB_PROMPT.format(
+                                spec=spec_body, ports=ports, bdd=st["bdd"], feedback=fb), rx.TB_SYSTEM)
                 else:  # arm == "tb"
                     with call_context(task_type="fb_tb_patch", run_id=run_id, module_name=module):
                         tb_resp = rx.llm_call(provider, llm, PATCH_TB_PROMPT.format(
@@ -302,7 +340,7 @@ def main():
     ap.add_argument("--modules", default=None, help="comma-separated module names (default: all)")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--iters", type=int, default=3, help="feedback iterations per arm")
-    ap.add_argument("--arms", default="bdd,tb", help="which arms to run (bdd,tb)")
+    ap.add_argument("--arms", default="bdd,tb,bdd+", help="which arms to run (bdd,tb,bdd+)")
     ap.add_argument("--run-id", required=True)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--append", action="store_true")
@@ -316,9 +354,9 @@ def main():
         sys.exit(f"run_id '{args.run_id}' already has {existing} feedback results. "
                  f"Pick a new --run-id or pass --append.")
 
-    arms = [a.strip() for a in args.arms.split(",") if a.strip() in ("bdd", "tb")]
+    arms = [a.strip() for a in args.arms.split(",") if a.strip() in ("bdd", "tb", "bdd+")]
     if not arms:
-        sys.exit("no valid arms (use --arms bdd,tb)")
+        sys.exit("no valid arms (use --arms bdd,tb,bdd+)")
 
     manifests = sorted(BENCH_ROOT.glob("*/*/manifest.json"))
     if args.modules:
