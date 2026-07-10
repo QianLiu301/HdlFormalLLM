@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Benchmark validation — 题库质量守门员
+Benchmark Validation — Ensuring Benchmark Quality
 
-对 benchmark/ 下的每个模块执行三重检查：
-1. golden.v + tb_smoke.v 能用 iverilog 编译并仿真成功
-2. 每个 bug 变体能编译成功（bug 必须是功能性突变，不是语法错误）
-3. 每个 sim_detectable 的 bug 变体，在相同激励下输出必须与 golden 不同
-   （差分测试：输出相同的突变体是无效 bug，会被报告为 SURVIVED）
+A three-step check is performed on each module under the `benchmark/` directory:
+1. `golden.v` and `tb_smoke.v` must compile and simulate successfully using Icarus Verilog (iverilog).
+2. Each bug variant must compile successfully (the bug must be a functional mutation, not a syntax error).
+3. For each bug variant marked as `sim_detectable`, the output under the same stimulus must differ from the `golden` output.
+(Differential testing: mutants that produce identical output are considered invalid bugs and are reported as "SURVIVED".)
 
-用法:
-    python benchmark/validate.py            # 验证全部模块
-    python benchmark/validate.py alu_8bit   # 只验证指定模块
+Usage:
+python benchmark/validate.py            # Validate all modules
+python benchmark/validate.py alu_8bit   # Validate only the specified module
 """
 
 import json
@@ -23,13 +23,13 @@ BENCH_ROOT = Path(__file__).parent
 
 
 def run(cmd, cwd=None, timeout=60):
-    # encoding/errors 显式指定：Windows 默认 GBK，会在 UTF-8 输出上抛 UnicodeDecodeError
+    # encoding/errors Explicit specification: Windows defaults to GBK, which causes a UnicodeDecodeError when processing UTF-8 output.
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", cwd=cwd, timeout=timeout)
 
 
 def compile_and_sim(design: Path, tb: Path, workdir: Path, tag: str):
-    """编译 design+tb 并运行仿真，返回 (ok, output_or_error)"""
+    """Compile design+tb and run the simulation, returning (ok, output_or_error)."""
     exe = workdir / f"{tag}.vvp"
     r = run(["iverilog", "-g2005", "-o", str(exe), str(design), str(tb)])
     if r.returncode != 0:

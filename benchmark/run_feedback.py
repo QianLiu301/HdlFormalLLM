@@ -113,7 +113,7 @@ Output ONLY the Verilog code in a ```verilog code block.
 
 
 # ---------------------------------------------------------------------------
-# 结果表
+# result table
 # ---------------------------------------------------------------------------
 
 def _fb_conn():
@@ -142,12 +142,12 @@ def save_fb(row: dict):
 
 
 # ---------------------------------------------------------------------------
-# 反馈构造与打分
+# Feedback Construction and Scoring
 # ---------------------------------------------------------------------------
 
 def build_feedback(compiled: bool, passed: bool, sim_out: str):
-    """从上一轮结果构造反馈文本；golden 通过则返回 (None, None) 表示收敛。
-    注意：mutant 检出情况绝不进入反馈（那是评分答案）。"""
+    """Construct feedback text based on the results of the previous round; return (None, None) if the golden test passes, indicating convergence.
+Note: Mutant detection results are never included in the feedback (that information pertains to the scored answer)."""
     if not compiled:
         lines = sim_out.strip().splitlines()[:15]
         text = ("The testbench FAILED TO COMPILE with `iverilog -g2005`. "
@@ -167,7 +167,7 @@ def build_feedback(compiled: bool, passed: bool, sim_out: str):
 
 
 def score_tb(tb_file: Path, mod_dir: Path, manifest: dict, work_dir: Path):
-    """golden 门控 + 盲测 mutation。返回 (compiled, passed, sim_out, detected, total)。"""
+    "Golden gating + blind mutation testing. Returns (compiled, passed, sim_out, detected, total)."
     compiled, passed, out = rx.compile_and_run(mod_dir / "golden.v", tb_file, work_dir)
     (work_dir / "golden_sim.log").write_text(out, encoding="utf-8")
     total = len(manifest["bugs"])
@@ -185,7 +185,7 @@ def score_tb(tb_file: Path, mod_dir: Path, manifest: dict, work_dir: Path):
 
 
 # ---------------------------------------------------------------------------
-# 单个任务：module x llm x rep，跑 iter0 + 两臂各 iters 轮
+# Single task: module x LLM x rep; run iter0 + multiple rounds of iterations for each arm.
 # ---------------------------------------------------------------------------
 
 def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
@@ -210,7 +210,7 @@ def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
         import re
         return len(re.findall(r"^\s*Scenario", bdd, flags=re.M))
 
-    # ---- iteration 0：共享 one-shot 基线 -----------------------------------
+    # ---- Iteration 0: Shared one-shot baseline-----------------------------------
     it0 = base / "iter0"
     it0.mkdir(parents=True, exist_ok=True)
     row = row_common("base", 0, it0)
@@ -234,12 +234,12 @@ def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
         return f"{module} × {llm} rep{rep}: baseline ERROR {row['error']}"
     save_fb(row)
 
-    # 两臂共享的起点状态
+    # Starting state shared by both arms
     state = {arm: {"bdd": bdd, "tb": tb_text, "compiled": compiled, "passed": passed,
                    "out": out, "det": det, "scen": row["scenarios_count"]}
              for arm in arms}
 
-    # ---- 迭代 ---------------------------------------------------------------
+    # ---- Iteration---------------------------------------------------------------
     for k in range(1, iters + 1):
         for arm in arms:
             st = state[arm]
@@ -248,7 +248,7 @@ def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
             row = row_common(arm, k, it_dir)
             kind, fb = build_feedback(st["compiled"], st["passed"], st["out"])
             if fb is None:
-                # 已收敛：分数带着走，保证每轮均值可比
+                # Converged: Scores are carried over, ensuring comparability of means across rounds.
                 row.update({"feedback_kind": "converged", "converged": 1,
                             "scenarios_count": st["scen"],
                             "tb_compiled": int(st["compiled"]),
@@ -268,12 +268,12 @@ def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
                     (it_dir / "scenarios.feature").write_text(st["bdd"], encoding="utf-8")
                     st["scen"] = count_scen(st["bdd"])
                     if arm == "bdd":
-                        # BDD 是唯一信息载体：TB 生成器看不到反馈
+                        # BDD is the sole carrier of information: the TB generator cannot see the feedback.
                         with call_context(task_type="fb_tb_regen", run_id=run_id, module_name=module):
                             tb_resp = rx.llm_call(provider, llm, rx.TB_PROMPT.format(
                                 spec=spec_body, ports=ports, bdd=st["bdd"]), rx.TB_SYSTEM)
                     else:
-                        # bdd+：反馈同时路由到 TB 生成层
+                        # bdd+: Feedback is simultaneously routed to the TB generation layer.
                         with call_context(task_type="fb_tb_regen_fb", run_id=run_id, module_name=module):
                             tb_resp = rx.llm_call(provider, llm, TB_REGEN_FB_PROMPT.format(
                                 spec=spec_body, ports=ports, bdd=st["bdd"], feedback=fb), rx.TB_SYSTEM)
@@ -298,7 +298,7 @@ def run_task(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
 
 
 # ---------------------------------------------------------------------------
-# 汇总
+# summary
 # ---------------------------------------------------------------------------
 
 def print_summary(run_id=None):
@@ -324,7 +324,7 @@ def print_summary(run_id=None):
 
 
 # ---------------------------------------------------------------------------
-# 主流程
+# main
 # ---------------------------------------------------------------------------
 
 def main():

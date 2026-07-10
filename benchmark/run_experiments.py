@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 """
-Batch Experiment Runner — 批量实验执行器
+    Batch Experiment Runner
 
-遍历 benchmark 题库 × LLM × 重复次数，对每个组合执行完整流水线：
+    Iterates through the benchmark suite × LLMs × repetition count, executing the full pipeline for each combination:
 
-  spec.md (去掉功能点答案)
-    → [LLM] 生成 BDD 场景 (Gherkin)
-    → [LLM] 生成自检 Verilog testbench
-    → iverilog 编译 + golden 仿真 (必须 TEST PASSED)
-    → 对每个 bug 变体做突变测试 (检出 = 未打印 TEST PASSED)
-    → (可选) LLM 裁判评估功能点覆盖率
+    spec.md (with functional requirement answers removed)
+    → [LLM] Generate BDD scenarios (Gherkin)
+    → [LLM] Generate self-checking Verilog testbench
+    → iverilog compilation + golden simulation (must result in "TEST PASSED")
+    → Mutation testing on each bug variant (detected = "TEST PASSED" not printed)
+    → (Optional) LLM judge evaluates functional requirement coverage
 
-所有 LLM 调用经 src/experiment_logger 自动入库（带 run_id / module_name 标签），
-结构化结果写入同一 SQLite 的 benchmark_results 表，
-生成的 artifacts 保存在 output/benchmark_runs/<run_id>/ 下。
+    All LLM calls are automatically logged via `src/experiment_logger` (tagged with `run_id` / `module_name`),
+    structured results are written to the `benchmark_results` table in the same SQLite database,
+    and generated artifacts are saved under `output/benchmark_runs/<run_id>/`.
 
-用法:
-    # 冒烟测试（不调用任何 API，用内置 mock 验证整条流水线）
+    Usage:
+    # Smoke test (no API calls; uses built-in mock to verify the entire pipeline)
     python benchmark/run_experiments.py --llms mock --reps 1 --run-id smoke
 
-    # 真实实验：2 个 LLM × 全部 9 模块 × 3 次重复
+    # Real experiment: 2 LLMs × all 9 modules × 3 repetitions
     python benchmark/run_experiments.py --llms groq,gemini --reps 3 --run-id exp001
 
-    # 只跑部分模块 + 用 groq 当覆盖率裁判
+    # Run specific modules only + use groq as the coverage judge
     python benchmark/run_experiments.py --llms groq --modules alu_8bit,sync_fifo_8x8 \\
-        --judge groq --run-id exp002
+    --judge groq --run-id exp002
 
-    # 查看结果汇总
+    # View result summary
     python benchmark/run_experiments.py summary --run-id exp001
 """
 
@@ -45,7 +45,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.experiment_logger import call_context, DB_PATH  # noqa: E402
 
-SIM_TIMEOUT = 30       # 秒，防止 LLM 生成的 testbench 死循环
+SIM_TIMEOUT = 30  # seconds, to prevent the LLM-generated testbench from entering an infinite loop.
 LLM_MAX_TOKENS = 8000
 
 BDD_SYSTEM = "You are a hardware verification engineer expert in BDD (Behavior-Driven Development)."
@@ -113,7 +113,7 @@ endmodule
 
 
 # ---------------------------------------------------------------------------
-# 结果表
+# Result table
 # ---------------------------------------------------------------------------
 
 def _results_conn():
@@ -143,11 +143,12 @@ def save_result(row: dict):
 
 
 # ---------------------------------------------------------------------------
-# 工具函数
+# Utility functions
 # ---------------------------------------------------------------------------
 
 def load_spec(mod_dir: Path):
-    """返回 (去掉功能点的 spec, FP 列表)。FP 是评分标准答案，不能泄漏给被测 LLM。"""
+    """Return the spec and FP list (with function points removed).
+    FPs serve as the scoring ground truth and must not be disclosed to the LLM under test."""
     text = (mod_dir / "spec.md").read_text(encoding="utf-8")
     m = re.split(r"^## Functional Points.*$", text, flags=re.M)
     spec_body = m[0].strip()
@@ -156,7 +157,8 @@ def load_spec(mod_dir: Path):
 
 
 def extract_ports(golden: Path) -> str:
-    """提取 module 声明（到端口列表结束的 ');'），不泄漏实现。"""
+    """Extract the module declaration (up to the `');'` at the end of the port list)
+    without exposing the implementation."""
     text = golden.read_text(encoding="utf-8")
     m = re.search(r"module\s+\w+.*?\);", text, flags=re.S)
     return m.group(0) if m else text.split("\n")[0]
@@ -171,9 +173,11 @@ def extract_verilog(response: str) -> str:
 
 
 def compile_and_run(dut: Path, tb: Path, workdir: Path):
-    """返回 (compiled, passed, output)。passed 定义为输出含 TEST PASSED 且不含 TEST FAILED。"""
+    """Returns (compiled, passed, output). "Passed" is defined as
+    output containing "TEST PASSED" and not containing "TEST FAILED"."""
     exe = workdir / "sim.vvp"
-    # encoding/errors 显式指定：Windows 默认 GBK，会在 UTF-8 输出上抛 UnicodeDecodeError
+    # Explicitly specify encoding/errors: Windows defaults to GBK,
+    # which will throw a `UnicodeDecodeError` when processing UTF-8 output.
     try:
         r = subprocess.run(["iverilog", "-g2005", "-o", str(exe), str(dut), str(tb)],
                            capture_output=True, text=True, encoding="utf-8",
@@ -193,8 +197,8 @@ def compile_and_run(dut: Path, tb: Path, workdir: Path):
 
 
 def _config_api_key(name: str):
-    """从 config/llm_config.json 读某 provider 的 api_key（不取 model——配置里的
-    model 名可能过期，provider 自带的默认值更可靠）"""
+    """Read the api_key of a certain provider from config/llm_config.json (do not take the model - the one in the configuration
+The model name may expire, and the default value provided by the provider is more reliable)"""
     try:
         cfg = json.loads((PROJECT_ROOT / "config" / "llm_config.json").read_text(encoding="utf-8"))
         return cfg.get("providers", {}).get(name, {}).get("api_key") or None
@@ -206,35 +210,35 @@ def make_provider(name: str):
     if name == "mock":
         return None
     from src.llm_providers import LLMFactory
-    # 先按默认方式创建（环境变量里的 key 优先，已验证可用）；
-    # 环境变量缺 key 时（如 claude/grok），再用 config 文件里的 key 补一次
+    # First, create using the default method (the key from environment variables takes precedence and has been verified to work);
+    # If the key is missing from environment variables (e.g., for Claude/Grok), use the key from the config file as a fallback.
     provider = LLMFactory.create_provider(name)
     if not hasattr(provider, "_call_api"):
         key = _config_api_key(name)
         if key:
             provider = LLMFactory.create_provider(name, api_key=key)
-    # 工厂在创建失败时会静默降级成 LocalLLMProvider（模板文本，没有 _call_api）
-    # ——benchmark 必须硬失败，否则又是数据污染
+    # The factory silently falls back to LocalLLMProvider upon creation failure (template text, lacking _call_api).
+    # —benchmark must fail hard; otherwise, it results in data contamination.
     if not hasattr(provider, "_call_api"):
         raise RuntimeError(f"provider '{name}' fell back to local templates — "
                            f"no usable api_key in env vars or config/llm_config.json")
     return provider
 
 
-# providers 在 API 失败时不抛异常，而是静默返回模板文本（对交互式应用友好，
-# 但会污染 benchmark 数据）——在这里检测它并重试，重试耗尽则如实抛错记入 error 字段
+# Providers do not throw exceptions upon API failure; instead, they silently return the template text (which is friendly for interactive applications
+# but pollutes benchmark data)—here, we detect this and retry; if retries are exhausted, we raise the error as-is and log it in the 'error' field.
 FALLBACK_MARKER = "Test ALU operation with various input values"
 LLM_RETRIES = 3
-RETRY_BACKOFF = 10  # 秒；第 n 次失败后等 n*RETRY_BACKOFF
+RETRY_BACKOFF = 10  # seconds; wait n * RETRY_BACKOFF after the n-th failure
 
 
 def _is_fallback(text: str) -> bool:
     if FALLBACK_MARKER in text:
         return True
-    # 另一个降级分支 _fallback_intent_json：一小段 {"scenario":..., "operation":...} JSON
+    # Another fallback branch _fallback_intent_json: a small snippet of {"scenario":..., "operation":...} JSON
     if '"operation"' in text and '"scenario"' in text and len(text) < 800:
         return True
-    # OpenAI _fallback_text 的降级句
+    # OpenAI _fallback_text fallback sentence
     if text.startswith("Given ALU operation, When executed"):
         return True
     return False
@@ -243,8 +247,8 @@ def _is_fallback(text: str) -> bool:
 def llm_call(provider, name, prompt, system):
     if name == "mock":
         return MOCK_BDD if "Gherkin" in prompt else MOCK_TB
-    # OpenAI 的 _call_api 强制 JSON mode（主应用需要）；benchmark 需要纯文本，
-    # 优先用 _call_api_text，其余 provider 本来就返回纯文本
+    # OpenAI's _call_api enforces JSON mode (required by the main application); benchmarks require plain text,
+    # so prioritize _call_api_text, while other providers return plain text by default.
     call = getattr(provider, "_call_api_text", None) or provider._call_api
     for attempt in range(1, LLM_RETRIES + 1):
         resp = call(prompt, max_tokens=LLM_MAX_TOKENS, system_prompt=system)
@@ -259,7 +263,7 @@ def llm_call(provider, name, prompt, system):
 
 
 # ---------------------------------------------------------------------------
-# 单个实验单元: (module, llm, rep)
+# Single experimental unit: (module, llm, rep)
 # ---------------------------------------------------------------------------
 
 def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
@@ -283,7 +287,7 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
     }
 
     try:
-        # 1) BDD 场景生成
+        # 1) BDD Scenario Generation
         with call_context(task_type="bench_bdd", run_id=run_id, module_name=module):
             t0 = time.time()
             bdd = llm_call(provider, llm, BDD_PROMPT.format(spec=spec_body), BDD_SYSTEM)
@@ -291,7 +295,7 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
         (art_dir / "scenarios.feature").write_text(bdd, encoding="utf-8")
         row["scenarios_count"] = len(re.findall(r"^\s*Scenario", bdd, flags=re.M))
 
-        # 2) Testbench 生成
+        # 2) Testbench Generation
         with call_context(task_type="bench_tb", run_id=run_id, module_name=module):
             t0 = time.time()
             tb_resp = llm_call(provider, llm, TB_PROMPT.format(
@@ -300,13 +304,13 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
         tb_file = art_dir / "tb.v"
         tb_file.write_text(extract_verilog(tb_resp), encoding="utf-8")
 
-        # 3) golden 仿真
+        # 3) Golden simulation
         compiled, passed, out = compile_and_run(golden, tb_file, art_dir)
         (art_dir / "golden_sim.log").write_text(out, encoding="utf-8")
         row["tb_compiled"] = int(compiled)
         row["golden_passed"] = int(passed)
 
-        # 4) 突变测试（仅当 golden 通过才有意义）
+        # 4) Mutation testing (only meaningful if the golden test passes)
         if passed:
             detected = 0
             mut_log = []
@@ -320,7 +324,7 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
             row["mutation_score"] = round(detected / len(manifest["bugs"]), 3)
             (art_dir / "mutation.log").write_text("\n".join(mut_log), encoding="utf-8")
 
-        # 5) 覆盖率裁判（可选）
+        # 5) Coverage Arbiter (Optional)
         if judge is not None and row["scenarios_count"] > 0:
             fp_text = "\n".join(f"{k}: {v}" for k, v in fps)
             with call_context(task_type="bench_judge", run_id=run_id, module_name=module):
@@ -340,7 +344,7 @@ def run_one(mod_dir: Path, manifest: dict, llm: str, provider, rep: int,
 
 
 # ---------------------------------------------------------------------------
-# 汇总
+# summary
 # ---------------------------------------------------------------------------
 
 def print_summary(run_id=None):
@@ -361,13 +365,13 @@ def print_summary(run_id=None):
     print("-" * len(hdr))
     for r in rows:
         fmt = lambda v, pct=False: ("-" if v is None else
-                                    f"{v*100:.0f}%" if pct else f"{v:.2f}")
+                                    f"{v * 100:.0f}%" if pct else f"{v:.2f}")
         print(f"{r[0]:<12}{r[1]:>5}{fmt(r[2], True):>10}{fmt(r[3], True):>13}"
               f"{fmt(r[4]):>10}{fmt(r[5]):>10}{fmt(r[6]):>9}")
 
 
 # ---------------------------------------------------------------------------
-# 主流程
+# main flow
 # ---------------------------------------------------------------------------
 
 def main():
@@ -391,7 +395,7 @@ def main():
                     help="allow adding results to an existing run_id (careful: same module×llm×rep overwrites artifacts)")
     args = ap.parse_args()
 
-    # 复用 run_id 会让 artifacts 目录 (run_id/module/llm/repN) 互相覆盖，默认拒绝
+    # Reusing a run_id causes the artifacts directories (run_id/module/llm/repN) to overwrite each other; this is rejected by default.
     conn = _results_conn()
     existing = conn.execute("SELECT COUNT(*) FROM benchmark_results WHERE run_id = ?",
                             (args.run_id,)).fetchone()[0]
@@ -450,7 +454,7 @@ def main():
         for f in as_completed(futures):
             f.result()
 
-    print(f"\n{'='*60}\nSummary for run_id={args.run_id}:\n")
+    print(f"\n{'=' * 60}\nSummary for run_id={args.run_id}:\n")
     print_summary(args.run_id)
     print(f"\nArtifacts: output/benchmark_runs/{args.run_id}/")
     print(f"Raw LLM calls: python -m src.experiment_logger recent")
