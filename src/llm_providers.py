@@ -457,67 +457,67 @@ class GroqProvider(LLMProvider):
             print(f"⚠️  Groq API request failed: {e}")
             return self._fallback_description(prompt)
 
-        def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
-            """
-            Streaming API call for Groq
-            Yields chunks of generated text
-            """
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+        """
+        Streaming API call for Groq
+        Yields chunks of generated text
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
 
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt or "You are a hardware verification expert."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "max_tokens": max_tokens,
-                "temperature": 0.7,
-                "stream": True
-            }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a hardware verification expert."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "stream": True
+        }
 
-            try:
-                proxies = self._get_proxies()
-                response = requests.post(
-                    self.api_url,
-                    headers=headers,
-                    json=payload,
-                    proxies=proxies,
-                    stream=True,
-                    timeout=120
-                )
-                response.raise_for_status()
+        try:
+            proxies = self._get_proxies()
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                proxies=proxies,
+                stream=True,
+                timeout=120
+            )
+            response.raise_for_status()
 
-                for line in response.iter_lines():
-                    if line:
-                        line = line.decode('utf-8')
-                        if line.startswith('data: '):
-                            data = line[6:]
-                            if data == '[DONE]':
-                                break
-                            try:
-                                chunk_data = json.loads(data)
-                                if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
-                                    delta = chunk_data['choices'][0].get('delta', {})
-                                    content = delta.get('content', '')
-                                    if content:
-                                        yield content
-                            except json.JSONDecodeError:
-                                continue
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        data = line[6:]
+                        if data == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
 
-            except Exception as e:
-                print(f"⚠️ Groq streaming failed: {e}")
-                result = self._call_api(prompt, max_tokens, system_prompt)
-                if result:
-                    yield result
+        except Exception as e:
+            print(f"⚠️ Groq streaming failed: {e}")
+            result = self._call_api(prompt, max_tokens, system_prompt)
+            if result:
+                yield result
 
     def generate_scenario_description(
             self,
