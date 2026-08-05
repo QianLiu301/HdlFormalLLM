@@ -27,6 +27,20 @@ except ImportError:
     GENAI_AVAILABLE = False
     print("⚠️  google-genai not installed. Install with: pip install -U google-genai")
 
+# Gemini 走 SDK 还是 REST。历史上写作 `if GENAI_AVAILABLE and False:`，
+# 即使 SDK 已安装也强制走 REST；该写法自仓库首次提交(887326e, 2025-12-24)即存在，
+# 无 commit 记录说明原因。改为显式常量以消除 `and False`，行为保持不变（仍为 REST）。
+#
+# 重新启用前必须先修复 GeminiProvider.__init__ 中 SDK 分支的三个已知缺陷：
+#   1. 只设置 self.models_to_try，不设置 self.model
+#      -> experiment_logger 的 getattr(self,'model') 取到 None，SDK 调用的
+#         model 字段会全部记成 NULL，实验数据不可追溯
+#   2. 构造函数的 model 参数被静默丢弃（REST 分支用 `model or "gemini-2.5-flash"`）
+#      -> 调用方指定的模型不生效
+#   3. models_to_try 里是已退役的模型名（gemini-2.0-flash-exp / gemini-1.5-*），
+#      而 REST 分支用的是 gemini-2.5-flash
+USE_GEMINI_SDK = False
+
 # 尝试导入 openai SDK,如果失败则标记
 try:
     from openai import OpenAI
@@ -173,8 +187,8 @@ class GeminiProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Gemini API key not provided. Get free key at: https://makersuite.google.com/app/apikey")
 
-        # 如果 google-genai 可用,使用新的 SDK
-        if GENAI_AVAILABLE and False:
+        # 如果 google-genai 可用且 SDK 路径已启用,使用新的 SDK（见 USE_GEMINI_SDK 说明）
+        if GENAI_AVAILABLE and USE_GEMINI_SDK:
             # 使用新的模型名称和 SDK
             self.models_to_try = [ "gemini-2.0-flash-exp",  # Best for code
                                    "gemini-1.5-pro-latest",
