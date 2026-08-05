@@ -1793,8 +1793,14 @@ def generate_bdd_stream():
             llm = generator.llm
             full_content = ""
 
+            # Match the non-streaming branch below, which goes through
+            # FeatureGeneratorLLM._call_llm() with a hard-coded 4000.
+            # Without this, each provider fell back to its own _call_api_stream
+            # default: 4000 for eight of them, but 8192 for Gemini.
+            max_tokens = 4000
+
             if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt):
+                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
