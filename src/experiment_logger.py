@@ -46,6 +46,43 @@ DB_PATH = os.environ.get('EXPERIMENT_DB_PATH', _DEFAULT_DB)
 _lock = threading.Lock()
 _local = threading.local()
 
+# ---------------------------------------------------------------------------
+# 单例自检
+#
+# 本仓库存在双重导入路径：main.py 把 src/ 注入 sys.path，因此模块既可能以
+# `src.experiment_logger` 也可能以 `experiment_logger` 被加载。目前 llm_providers
+# 优先尝试 `src.` 前缀，两条路径命中同一个模块对象，call_context 正常工作。
+#
+# 但一旦某种运行方式让 `src.` 导入失败并回退到裸名，就会出现两份模块、两个
+# threading.local —— 此时 call_context 设的标签写在 A 副本，log_call 从 B 副本读，
+# run_id/task_type 会静默变成 NULL。这里在导入期做一次自检，把该故障从
+# 「静默失效」变成「立刻可见」。
+#
+# 哨兵挂在 sys 上：它是跨模块副本唯一保证单例的位置。
+# ---------------------------------------------------------------------------
+_SENTINEL = '_hdlformal_experiment_logger'
+DUAL_LOAD_DETECTED = False
+
+def _selfcheck_singleton():
+    global DUAL_LOAD_DETECTED
+    import sys as _sys
+    prior = getattr(_sys, _SENTINEL, None)
+    if prior is None:
+        setattr(_sys, _SENTINEL, {'module': __name__, 'local': _local})
+        return
+    if prior['module'] == __name__:
+        return  # 同名重复导入（reload），不是双重加载
+    DUAL_LOAD_DETECTED = True
+    print(f"⚠️  WARNING: experiment_logger loaded twice under different names: "
+          f"'{prior['module']}' and '{__name__}'")
+    if prior['local'] is not _local:
+        print(f"❌ ERROR: experiment_logger loaded twice with distinct "
+              f"threading.local; call_context will silently fail "
+              f"(labels set in '{prior['module']}' are invisible to '{__name__}'). "
+              f"Unify imports on 'src.experiment_logger'.", file=_sys.stderr)
+
+_selfcheck_singleton()
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_calls (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
