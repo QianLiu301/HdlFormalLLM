@@ -131,9 +131,15 @@ def call_context(**labels):
     """
     with call_context(task_type='bdd_generation', run_id='exp001'):
         provider.generate_scenario_description(...)
+
+    额外支持 extra=dict(...)：写入 llm_calls.extra（JSON）。
+    嵌套时 extra 按键合并而非整体覆盖，内层可以只补自己关心的键。
     """
     old = getattr(_local, 'labels', {})
-    _local.labels = {**old, **labels}
+    merged = {**old, **labels}
+    if old.get('extra') or labels.get('extra'):
+        merged['extra'] = {**(old.get('extra') or {}), **(labels.get('extra') or {})}
+    _local.labels = merged
     try:
         yield
     finally:
@@ -155,6 +161,11 @@ def log_call(provider: str, model: str, method: str, prompt: str,
              streaming: bool = False, extra: Dict = None):
     """记录一次 LLM 调用。写入失败不影响主流程（只打印警告）。"""
     labels = _current_labels()
+    # 上下文级 extra（call_context 设置）与调用级 extra（埋点包装器计算）合并，
+    # 同名键以调用级为准——包装器观测到的是实际发生的事实。
+    ctx_extra = labels.get('extra') or {}
+    if ctx_extra or extra:
+        extra = {**ctx_extra, **(extra or {})}
     try:
         with _lock:
             conn = _connect()
@@ -186,26 +197,89 @@ def log_call(provider: str, model: str, method: str, prompt: str,
 # 自动埋点：包装 Provider 的 _call_api* 方法
 # ---------------------------------------------------------------------------
 
+# 方法名 -> api_path。用于 extra.api_path，让"这次调用走的哪条实现路径"可查。
+_PATH_BY_METHOD = {
+    '_call_api_stream': 'stream',
+    '_call_api_sdk': 'sdk',
+    '_call_api_rest': 'rest',
+    '_call_api_with_json_mode': 'json_mode',
+    '_call_api_text': 'text',
+    '_call_api_completions': 'completions',
+}
+
+
+def _api_path(obj, method: str) -> str:
+    """判定实际走的实现路径。`_call_api` 是转发型入口，需按 provider 状态推断。"""
+    if method in _PATH_BY_METHOD:
+        return _PATH_BY_METHOD[method]
+    if method == '_call_api':
+        if hasattr(obj, 'use_sdk'):                     # Gemini
+            return 'sdk' if obj.use_sdk else 'rest'
+        if type(obj).__name__ == 'OpenAIProvider':      # OpenAI 强制 JSON mode
+            is_codex = getattr(obj, '_is_codex_model', None)
+            try:
+                if callable(is_codex) and is_codex(getattr(obj, 'model', '')):
+                    return 'completions'
+            except Exception:
+                pass
+            return 'json_mode'
+        return 'default'
+    return method
+
+
+def _auto_extra(obj, cls_name: str, method: str) -> Dict[str, Any]:
+    """埋点包装器能自行观测到的事实（与调用方传入的意图区分开）。"""
+    path = _api_path(obj, method)
+    info = {
+        'api_path': path,
+        'output_mode': 'json' if path == 'json_mode' else 'text',
+        'model_effective': getattr(obj, 'model', None),
+    }
+    # A1a 遗留项：Groq 的 _call_api_stream 曾因缩进错误不可达，此前所有 Groq
+    # "流式"实际是非流式回退。标记原生流式，便于区分修复前后的数据。
+    if cls_name == 'GroqProvider' and method == '_call_api_stream':
+        info['groq_stream_native'] = True
+    return info
+
+
+def _reentrant() -> bool:
+    """是否处于外层已记录的调用内部。
+
+    Gemini 的 _call_api 转发给 _call_api_rest、OpenAI 的转发给
+    _call_api_with_json_mode，而内层同样被埋点，一次逻辑调用会写两行
+    （实测：外层带正确 max_tokens，内层因位置传参记成 NULL）。
+    守卫保证"一次 API 调用 = 一行记录"，保留语义完整的外层。
+    """
+    return getattr(_local, 'in_call', False)
+
+
 def _wrap_regular(cls_name, name, fn):
     @functools.wraps(fn)
     def wrapper(self, prompt, *args, **kwargs):
+        if _reentrant():
+            return fn(self, prompt, *args, **kwargs)   # 内层转发，不重复记录
         model = getattr(self, 'model', None)
         max_tokens = kwargs.get('max_tokens')
         system_prompt = kwargs.get('system_prompt')
         start = time.time()
+        _local.in_call = True
         try:
             result = fn(self, prompt, *args, **kwargs)
             log_call(cls_name, model, name, prompt,
                      response=result if isinstance(result, str) else str(result),
                      system_prompt=system_prompt, max_tokens=max_tokens,
-                     latency_ms=int((time.time() - start) * 1000), success=True)
+                     latency_ms=int((time.time() - start) * 1000), success=True,
+                     extra=_auto_extra(self, cls_name, name))
             return result
         except Exception as e:
             log_call(cls_name, model, name, prompt,
                      system_prompt=system_prompt, max_tokens=max_tokens,
                      latency_ms=int((time.time() - start) * 1000),
-                     success=False, error=f"{type(e).__name__}: {e}")
+                     success=False, error=f"{type(e).__name__}: {e}",
+                     extra=_auto_extra(self, cls_name, name))
             raise
+        finally:
+            _local.in_call = False
     wrapper._exp_logged = True
     return wrapper
 
@@ -213,6 +287,8 @@ def _wrap_regular(cls_name, name, fn):
 def _wrap_stream(cls_name, name, fn):
     @functools.wraps(fn)
     def wrapper(self, prompt, *args, **kwargs):
+        if _reentrant():
+            return fn(self, prompt, *args, **kwargs)
         model = getattr(self, 'model', None)
         max_tokens = kwargs.get('max_tokens')
         system_prompt = kwargs.get('system_prompt')
@@ -222,6 +298,9 @@ def _wrap_stream(cls_name, name, fn):
 
         def gen():
             success, error = True, None
+            # 守卫在生成器体内设置：wrapper 只负责创建生成器，真正执行发生在被消费时。
+            # 流式失败时 provider 会回退调用 self._call_api()，需一并抑制其重复记录。
+            _local.in_call = True
             try:
                 for chunk in fn(self, prompt, *args, **kwargs):
                     if isinstance(chunk, str):
@@ -231,12 +310,14 @@ def _wrap_stream(cls_name, name, fn):
                 success, error = False, f"{type(e).__name__}: {e}"
                 raise
             finally:
+                _local.in_call = False
                 with call_context(**labels):
                     log_call(cls_name, model, name, prompt,
                              response=''.join(chunks),
                              system_prompt=system_prompt, max_tokens=max_tokens,
                              latency_ms=int((time.time() - start) * 1000),
-                             success=success, error=error, streaming=True)
+                             success=success, error=error, streaming=True,
+                             extra=_auto_extra(self, cls_name, name))
         return gen()
     wrapper._exp_logged = True
     return wrapper
