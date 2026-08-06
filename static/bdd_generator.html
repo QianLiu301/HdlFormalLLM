@@ -922,6 +922,7 @@
                             <div class="info">
                                 <h3 id="hw-filename">Generating...</h3>
                                 <p id="hw-info">Ready to generate</p>
+                                <p id="hw-model-hint" style="display:none;color:#b45309;font-size:12px;margin-top:4px"></p>
                             </div>
                             <div class="badge" id="hw-badge">LLM</div>
                         </div>
@@ -1259,6 +1260,7 @@
                         <div class="info">
                             <h3 id="bdd-filename">Generating...</h3>
                             <p id="bdd-info">Ready to generate</p>
+                            <p id="bdd-model-hint" style="display:none;color:#b45309;font-size:12px;margin-top:4px"></p>
                         </div>
                         <div class="badge" id="bdd-badge">LLM</div>
                     </div>
@@ -1881,6 +1883,64 @@
         let parsedModules = [];
         let selectedModuleIndex = 0;
 
+        // ============================================================
+        // 三层 ID：session_id > run_id > 单次 LLM 调用
+        //
+        //   session_id  浏览器会话，存 localStorage，跨刷新保留
+        //     └─ run_id     一条完整依赖链 DUV -> BDD -> TB -> Sim，仅存内存
+        //          └─ 后端每次 LLM 调用写一行 llm_calls
+        //
+        // Step 1（生成或上传 DUV）由后端新建 run_id 并回传；Step 2/3/4 继承它。
+        // Step 2 在 DUV 不变时重试则保持 run_id，只把 attempt 加一。
+        // ============================================================
+        const SESSION_KEY = 'hdlformal_session_id';
+
+        function getSessionId() {
+            let sid = localStorage.getItem(SESSION_KEY);
+            if (!sid) {
+                sid = (crypto.randomUUID ? crypto.randomUUID()
+                                         : 'sess-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+                localStorage.setItem(SESSION_KEY, sid);
+            }
+            return sid;
+        }
+
+        let currentRunId = null;           // 内存态，刷新即失效（可接受）
+        const stepAttempts = {};           // task -> 已执行次数，用于 attempt
+
+        function startNewRun() {
+            currentRunId = null;           // 由后端新建并回传
+            Object.keys(stepAttempts).forEach(k => delete stepAttempts[k]);
+        }
+
+        function adoptRunId(runId) {
+            if (runId) currentRunId = runId;
+        }
+
+        /** 给请求体注入三层 ID。task 用于 attempt 计数（Step 1 之外每次调用递增）。 */
+        function withRunIds(payload, task) {
+            const attempt = stepAttempts[task] || 0;
+            stepAttempts[task] = attempt + 1;
+            return Object.assign({}, payload, {
+                session_id: getSessionId(),
+                run_id: currentRunId,
+                attempt: attempt
+            });
+        }
+
+        /** provider 不支持 model 覆盖时给出提示（后端只对 openai/gemini 生效）。 */
+        function showModelIgnoredHint(step, resp) {
+            const el = document.getElementById(`${step}-model-hint`);
+            if (!el) return;
+            if (resp && resp.model_override_ignored) {
+                el.textContent = `⚠ model parameter ignored for this provider; `
+                    + `using its default model (requested: ${resp.model_requested || 'n/a'})`;
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
         // BDD Templates
         const BDD_TEMPLATES = {
             alu: (bw) => `${bw}-bit ALU with:
@@ -2260,6 +2320,10 @@
                     showError('upload', data.error || 'Upload failed');
                     return;
                 }
+
+                // 上传 DUV 同样是依赖链起点：作废旧 run_id，采用后端新建的
+                startNewRun();
+                adoptRunId(data.run_id);
 
                 // Store parsed data
                 uploadedFileData = data;
@@ -2933,7 +2997,10 @@
             setLoading('hw', true);
             updateStepStatus(1, 'in-progress');
 
-            const payload = {
+            // Step 1 是依赖链起点：作废旧 run_id，由后端新建后回传
+            startNewRun();
+
+            const payload = withRunIds({
                 module_type: moduleType,
                 llm,
                 bitwidth: parseInt(bitwidth),
@@ -2942,7 +3009,7 @@
                 input: naturalInput,
                 model,
                 workflow_mode: currentWorkflowMode
-            };
+            }, 'duv');
 
             // In spec-first mode, pass BDD context so LLM can generate hardware matching the spec
             if (currentWorkflowMode === 'specification' && currentBDD && currentBDD.filepath) {
@@ -2995,6 +3062,8 @@
                                 const data = JSON.parse(line.slice(6));
                                 if (data.type === 'start') {
                                     statusText.textContent = `Connected to ${data.llm.toUpperCase()}...`;
+                                    adoptRunId(data.run_id);   // Step 1 起点：记下后端新建的 run_id
+                                    showModelIgnoredHint('hw', data);
                                 } else if (data.type === 'info') {
                                     statusText.textContent = data.message;
                                 } else if (data.type === 'chunk') {
@@ -3047,6 +3116,8 @@
                 const data = await response.json();
                 if (!data.success) throw new Error(data.error || 'Generation failed');
 
+                adoptRunId(data.run_id);   // Step 1 起点：记下后端新建的 run_id
+                showModelIgnoredHint('hw', data);
                 currentHwFilename = data.filename;
                 document.getElementById('hw-filename').textContent = data.filename;
                 document.getElementById('hw-info').textContent = `Generated with ${data.llm.toUpperCase()}`;
@@ -3150,7 +3221,9 @@
             setLoading('bdd', true);
             updateStepStatus(2, 'in-progress');
 
-            const payload = { llm, model, input };
+            // Step 2 继承 Step 1 的 run_id；同一 DUV 下重试只让 attempt 递增
+            const payload = withRunIds(
+                { llm, model, input, module_type: currentDUT ? currentDUT.moduleType : null }, 'bdd');
 
             if (useStreaming) {
                 await generateBddWithStreaming(payload);
@@ -3198,6 +3271,8 @@
                                 const data = JSON.parse(line.slice(6));
                                 if (data.type === 'start') {
                                     statusText.textContent = `Connected to ${data.llm.toUpperCase()}...`;
+                                    adoptRunId(data.run_id);   // 通常继承自 Step 1；直接跑 Step 2 时后端会新建
+                                    showModelIgnoredHint('bdd', data);
                                 } else if (data.type === 'info') {
                                     statusText.textContent = data.message;
                                 } else if (data.type === 'chunk') {
@@ -3253,6 +3328,8 @@
                 const data = await response.json();
                 if (!data.success) throw new Error(data.error || 'Generation failed');
 
+                adoptRunId(data.run_id);   // 通常继承自 Step 1；直接跑 Step 2 时后端会新建
+                showModelIgnoredHint('bdd', data);
                 currentBddFilename = data.filename;
                 currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
                 updateTbTabState();
@@ -3851,8 +3928,10 @@
 
                 currentTbFilename = data.filename;
                 document.getElementById('tb-filename').textContent = data.filename;
-                document.getElementById('tb-info').textContent = `Generated from ${currentBDD.filename}`;
-                document.getElementById('tb-badge').textContent = data.llm.toUpperCase();
+                // Step 3 无 LLM 参与：由确定性模板从 BDD 场景编译而成
+                document.getElementById('tb-info').textContent =
+                    `Deterministic template compiler (no LLM) — from ${currentBDD.filename}`;
+                document.getElementById('tb-badge').textContent = 'TEMPLATE';
                 document.getElementById('tb-preview').textContent = data.full_content;
 
                 // Update quality summary

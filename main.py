@@ -31,6 +31,10 @@ PROJECT_ROOT = Path(__file__).parent.absolute()
 SRC_DIR = PROJECT_ROOT / 'src'
 sys.path.insert(0, str(SRC_DIR))
 
+# 统一用 src. 前缀导入 experiment_logger：模块内有单例自检，若同时以裸名加载
+# 会出现两个 threading.local，call_context 设的标签会静默丢失。
+from src.experiment_logger import call_context  # noqa: E402
+
 # ============================================================================
 # Configuration Loading
 # ============================================================================
@@ -271,6 +275,68 @@ def allowed_file(filename):
     """Check if file extension is allowed."""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+# ============================================================================
+# 三层 ID 体系：session_id > run_id > 单次 LLM 调用
+#
+#   session_id  浏览器会话（前端生成，存 localStorage）
+#     └─ run_id     一条完整 artifact 依赖链：DUV -> BDD -> TB -> Sim
+#          └─ 每次 LLM 调用一行 llm_calls 记录
+#
+# run_id 生命周期：Step 1（生成或上传 DUV）新建；Step 2/3/4 继承；
+# Step 2 在 DUV 不变时重试则保持 run_id 并让 attempt 递增。
+# DUV 变了整条链就失效，因此 Step 1 必须新建。
+# ============================================================================
+
+# Web 端只有 openai / gemini 真正接受 model 覆盖（见 /api/generate 与
+# /api/generate-stream）；Step 1 的生成器完全不接收 model 参数。
+# 本次不修改该行为，只如实记录，供前端提示与后续排查。
+MODEL_OVERRIDE_PROVIDERS = ('openai', 'gemini')
+
+
+def _new_run_id() -> str:
+    import uuid
+    return f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+def _web_ctx(data, task_type, module_name=None, new_run=False, model_used=False):
+    """从请求体取出三层 ID，组装 call_context 的参数。
+
+    new_run=True   -> Step 1：无条件新建 run_id（DUV 变则依赖链失效）
+    model_used     -> 该端点是否真的会把 model 传给 provider；
+                      为 False 时只要请求带了 model 就记为被忽略
+    返回 (run_id, ctx_kwargs)
+    """
+    data = data or {}
+    run_id = None if new_run else (data.get('run_id') or '').strip() or None
+    if not run_id:
+        run_id = _new_run_id()
+
+    llm_name = (data.get('llm') or '').strip().lower()
+    model_requested = (data.get('model') or '').strip() or None
+    ignored = bool(model_requested) and (
+        not model_used or llm_name not in MODEL_OVERRIDE_PROVIDERS)
+
+    try:
+        attempt = max(0, int(data.get('attempt') or 0))
+    except (TypeError, ValueError):
+        attempt = 0
+
+    ctx = {
+        'task_type': task_type,
+        'run_id': run_id,
+        'module_name': module_name,
+        'extra': {
+            'session_id': (data.get('session_id') or '').strip() or None,
+            'attempt': attempt,
+            'model_requested': model_requested,
+            'model_override_ignored': ignored,
+        },
+    }
+    return run_id, ctx
+
+
 # Initialize simulation runner
 simulation_runner = None
 if HAS_SIMULATION_MODULE:
@@ -399,6 +465,9 @@ def upload_dut():
                     'error': str(bug_check_error)
                 }
 
+        # 上传 DUV 同样是依赖链的起点：新建 run_id 供 Step 2/3/4 继承。
+        # 此端点不调用 LLM，因此只回传 ID，不需要 call_context。
+        result['run_id'] = _new_run_id()
         return jsonify(result)
 
     except Exception as e:
@@ -1052,6 +1121,14 @@ def generate_hardware():
             except Exception as e:
                 print(f"⚠️  Failed to read BDD file: {e}")
 
+    # Step 1 = 依赖链起点，无条件新建 run_id；生成器不接收 model，故 model_used=False
+    run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
+                            new_run=True, model_used=False)
+    if _ctx['extra']['model_override_ignored']:
+        print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored: "
+              f"Step 1 generators do not accept a model override "
+              f"(using {llm_name}'s default)")
+
     print(f"\n{'='*60}")
     print(f"🔧 Generating {bitwidth}-bit {module_type.upper()}")
     print(f"{'='*60}")
@@ -1059,62 +1136,64 @@ def generate_hardware():
     print(f"   Module: {module_type}")
     print(f"   Bitwidth: {bitwidth}")
     print(f"   Workflow: {workflow_mode}")
+    print(f"   Run ID: {run_id}")
     if bdd_context:
         print(f"   BDD Context: {len(bdd_context)} chars loaded")
 
     try:
-        if module_type == 'alu':
-            if not HAS_ALU_MODULE:
-                return jsonify({'success': False, 'error': 'ALU module not available'}), 500
+        with call_context(**_ctx):
+            if module_type == 'alu':
+                if not HAS_ALU_MODULE:
+                    return jsonify({'success': False, 'error': 'ALU module not available'}), 500
 
-            generator = ALUGenerator(
-                llm_provider=llm_name,
-                project_root=str(PROJECT_ROOT),
-                debug=True
-            )
-            generator.bdd_context = bdd_context  # BDD-First: pass spec context
-            hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
+                generator = ALUGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=True
+                )
+                generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
-        elif module_type == 'counter':
-            if not HAS_COUNTER_MODULE:
-                return jsonify({'success': False, 'error': 'Counter module not available'}), 500
+            elif module_type == 'counter':
+                if not HAS_COUNTER_MODULE:
+                    return jsonify({'success': False, 'error': 'Counter module not available'}), 500
 
-            generator = CounterGenerator(
-                llm_provider=llm_name,
-                project_root=str(PROJECT_ROOT),
-                debug=True
-            )
-            generator.bdd_context = bdd_context  # BDD-First: pass spec context
-            hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
+                generator = CounterGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=True
+                )
+                generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
 
-        elif module_type == 'regfile':
-            if not HAS_REGFILE_MODULE:
-                return jsonify({'success': False, 'error': 'Register File module not available'}), 500
+            elif module_type == 'regfile':
+                if not HAS_REGFILE_MODULE:
+                    return jsonify({'success': False, 'error': 'Register File module not available'}), 500
 
-            depth = data.get('depth', 32)  # Number of registers
-            generator = RegFileGenerator(
-                llm_provider=llm_name,
-                project_root=str(PROJECT_ROOT),
-                debug=True
-            )
-            generator.bdd_context = bdd_context  # BDD-First: pass spec context
-            hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
+                depth = data.get('depth', 32)  # Number of registers
+                generator = RegFileGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=True
+                )
+                generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 
-        elif module_type == 'cpu':
-            if not HAS_CPU_MODULE:
-                return jsonify({'success': False, 'error': 'CPU module not available'}), 500
+            elif module_type == 'cpu':
+                if not HAS_CPU_MODULE:
+                    return jsonify({'success': False, 'error': 'CPU module not available'}), 500
 
-            pipeline_stages = data.get('pipeline_stages', 5)
-            generator = CPUGenerator(
-                llm_provider=llm_name,
-                project_root=str(PROJECT_ROOT),
-                debug=True
-            )
-            generator.bdd_context = bdd_context  # BDD-First: pass spec context
-            hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
+                pipeline_stages = data.get('pipeline_stages', 5)
+                generator = CPUGenerator(
+                    llm_provider=llm_name,
+                    project_root=str(PROJECT_ROOT),
+                    debug=True
+                )
+                generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
-        else:
-            return jsonify({'success': False, 'error': f'Unknown module type: {module_type}'}), 400
+            else:
+                return jsonify({'success': False, 'error': f'Unknown module type: {module_type}'}), 400
 
         if not hw_path:
             return jsonify({'success': False, 'error': 'Generation failed'}), 500
@@ -1139,7 +1218,10 @@ def generate_hardware():
             'llm': llm_name,
             'bitwidth': bitwidth,
             'module_type': module_type,
-            'filepath': str(hw_path)
+            'filepath': str(hw_path),
+            'run_id': run_id,
+            'model_override_ignored': _ctx['extra']['model_override_ignored'],
+            'model_requested': _ctx['extra']['model_requested'],
         })
 
     except Exception as e:
@@ -1181,9 +1263,16 @@ def generate_hardware_stream():
         if parsed.get('module_type'):
             module_type = parsed['module_type']
 
-    def generate():
+    # Step 1 = 依赖链起点，无条件新建 run_id；生成器不接收 model，故 model_used=False
+    run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
+                            new_run=True, model_used=False)
+
+    def _generate_inner():
         try:
-            yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth, module_type=module_type)
+            yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth,
+                                   module_type=module_type, run_id=run_id,
+                                   model_override_ignored=_ctx['extra']['model_override_ignored'],
+                                   model_requested=_ctx['extra']['model_requested'])
             yield make_sse_message("info", message=f"Initializing {bitwidth}-bit {module_type.upper()} generator...")
 
             # Variable to store module name for later use
@@ -1359,6 +1448,13 @@ Make sure the module interface and behavior match the test expectations above.
             import traceback
             traceback.print_exc()
             yield make_sse_message("error", message=str(e))
+
+    def generate():
+        # call_context 必须在生成器体内。SSE 响应是惰性的：路由函数返回时
+        # 上下文早已退出，真正执行发生在 Flask 消费 body 时。用 yield from
+        # 让上下文在整个迭代期间保持有效（生成器挂起在 with 内部）。
+        with call_context(**_ctx):
+            yield from _generate_inner()
 
     return Response(
         generate(),
@@ -1762,9 +1858,17 @@ def generate_bdd_stream():
     if not user_input:
         return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
-    def generate():
+    # Step 2 继承 Step 1 的 run_id（缺失则新建）；此端点确实会对 openai/gemini
+    # 应用 model 覆盖，故 model_used=True
+    run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
+                            (data.get('module_type') or '').strip() or None,
+                            new_run=False, model_used=True)
+
+    def _generate_inner():
         try:
-            yield make_sse_message("start", llm=llm_name)
+            yield make_sse_message("start", llm=llm_name, run_id=run_id,
+                                   model_override_ignored=_ctx['extra']['model_override_ignored'],
+                                   model_requested=_ctx['extra']['model_requested'])
 
             generator = FeatureGeneratorLLM(
                 llm_provider=llm_name,
@@ -1823,12 +1927,18 @@ def generate_bdd_stream():
             last_generated_bdd['filepath'] = str(feature_path)
             last_generated_bdd['llm'] = llm_name
 
-            yield make_sse_message("complete", filename=filename, filepath=str(feature_path))
+            yield make_sse_message("complete", filename=filename,
+                                   filepath=str(feature_path), run_id=run_id)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             yield make_sse_message("error", message=str(e))
+
+    def generate():
+        # 同 Step 1 流式端点：上下文必须包在生成器体内，否则 run_id 会静默丢失
+        with call_context(**_ctx):
+            yield from _generate_inner()
 
     return Response(generate(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'
@@ -1850,6 +1960,11 @@ def generate_bdd():
         if not user_input:
             return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
+        # Step 2 继承 Step 1 的 run_id（缺失则新建）
+        run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
+                                (data.get('module_type') or '').strip() or None,
+                                new_run=False, model_used=True)
+
         generator = FeatureGeneratorLLM(
             llm_provider=llm_name,
             project_root=str(PROJECT_ROOT),
@@ -1863,8 +1978,12 @@ def generate_bdd():
                 print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
             except Exception as e:
                 print(f"⚠️  Failed to override model: {e}")
+        elif _ctx['extra']['model_override_ignored']:
+            print(f"⚠️  model '{model}' ignored for provider '{llm_name}' "
+                  f"(override only wired for {'/'.join(MODEL_OVERRIDE_PROVIDERS)})")
 
-        feature_path = generator.generate_feature(user_input)
+        with call_context(**_ctx):
+            feature_path = generator.generate_feature(user_input)
 
         if not feature_path:
             return jsonify({'success': False, 'error': 'Generation failed'}), 500
@@ -1884,7 +2003,10 @@ def generate_bdd():
             'full_content': content,
             'llm': llm_name,
             'model': model or llm_name,
-            'filepath': str(feature_path)
+            'filepath': str(feature_path),
+            'run_id': run_id,
+            'model_override_ignored': _ctx['extra']['model_override_ignored'],
+            'model_requested': _ctx['extra']['model_requested'],
         })
 
     except Exception as e:
@@ -2005,7 +2127,9 @@ def generate_testbench():
             'full_content': result['full_content'],
             'quality_summary': result['quality_summary'],
             'test_count': result['test_count'],
-            'llm': result['llm']
+            # Step 3 无 LLM 参与，只回传 BDD 的来源与生成方式
+            'source_bdd_llm': result.get('source_bdd_llm'),
+            'generator': result.get('generator', 'deterministic-template'),
         })
 
     except Exception as e:

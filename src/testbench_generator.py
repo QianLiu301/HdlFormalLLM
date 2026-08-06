@@ -821,7 +821,11 @@ class TestbenchGenerator:
                 'content': tb_content[:2000] + ('...' if len(tb_content) > 2000 else ''),
                 'full_content': tb_content,
                 'test_count': len(spec['scenarios']),
-                'llm': llm_name
+                # 这里不返回 'llm'：testbench 由确定性模板编译而成，没有 LLM 参与。
+                # llm_name 只是 BDD 文件所在目录名（即生成 BDD 的那个 LLM），
+                # 用来组织输出目录；把它当作 testbench 的作者会造成误导。
+                'source_bdd_llm': llm_name,
+                'generator': 'deterministic-template'
             }
 
         except Exception as e:
