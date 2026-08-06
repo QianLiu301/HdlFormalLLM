@@ -300,6 +300,25 @@ def _new_run_id() -> str:
     return f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
+def _apply_model_override(generator, llm_name, model) -> bool:
+    """把用户选的 model 应用到已构造的 generator，返回是否真的应用了。
+
+    生成器在 __init__ 里按 llm_provider 建好 self.llm，这里换成指定 model 的实例。
+    此前这段逻辑只内联在流式端点里，非流式端点缺失，导致同一个 Step 1
+    勾不勾 "Stream output" 会决定 model 选择是否生效。抽成函数以免两处再次漂移。
+    """
+    if not model or llm_name not in MODEL_OVERRIDE_PROVIDERS:
+        return False
+    try:
+        from llm_providers import LLMFactory
+        generator.llm = LLMFactory.create_provider(llm_name, model=model)
+        print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
+        return True
+    except Exception as e:
+        print(f"⚠️  Failed to override model: {e}")
+        return False
+
+
 def _web_ctx(data, task_type, module_name=None, new_run=False, model_used=False):
     """从请求体取出三层 ID，组装 call_context 的参数。
 
@@ -1122,14 +1141,13 @@ def generate_hardware():
                 print(f"⚠️  Failed to read BDD file: {e}")
 
     # Step 1 = 依赖链起点，无条件新建 run_id。
-    # 与流式端点不同，这里没有 model 覆盖逻辑：生成器只接收 llm_provider，
-    # 因此任何 provider 传来的 model 都不会生效，model_used=False。
+    # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
-                            new_run=True, model_used=False)
+                            new_run=True, model_used=True)
     if _ctx['extra']['model_override_ignored']:
-        print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored: "
-              f"the non-streaming Step 1 endpoint has no model override "
-              f"(using {llm_name}'s default; the streaming endpoint does support it)")
+        print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored for "
+              f"provider '{llm_name}' (override wired only for "
+              f"{'/'.join(MODEL_OVERRIDE_PROVIDERS)})")
 
     print(f"\n{'='*60}")
     print(f"🔧 Generating {bitwidth}-bit {module_type.upper()}")
@@ -1154,6 +1172,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
             elif module_type == 'counter':
@@ -1166,6 +1185,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
 
             elif module_type == 'regfile':
@@ -1179,6 +1199,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 
             elif module_type == 'cpu':
@@ -1192,6 +1213,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
             else:
@@ -1359,13 +1381,7 @@ Make sure the module interface and behavior match the test expectations above.
 
 
             # Override model if specified (for Gemini/OpenAI model selection)
-            if model and llm_name in ('gemini', 'openai'):
-                try:
-                    from llm_providers import LLMFactory
-                    generator.llm = LLMFactory.create_provider(llm_name, model=model)
-                    print(f"🔷 [{llm_name.upper()}] Model overridden to: {model}")
-                except Exception as e:
-                    print(f"⚠️  Failed to override model: {e}")
+            _apply_model_override(generator, llm_name, model)
 
             yield make_sse_message("info", message=f"Calling {llm_name.upper()} API...")
 
