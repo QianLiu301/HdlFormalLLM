@@ -370,7 +370,8 @@ def get_recent(limit: int = 20, run_id: str = None) -> list:
     conn.row_factory = sqlite3.Row
     sql = """SELECT id, created_at, provider, model, method, streaming,
                     task_type, run_id, module_name,
-                    prompt_chars, response_chars, latency_ms, success, error
+                    prompt_chars, response_chars, latency_ms, success, error,
+                    extra
              FROM llm_calls"""
     params = []
     if run_id:
@@ -378,7 +379,16 @@ def get_recent(limit: int = 20, run_id: str = None) -> list:
         params.append(run_id)
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
-    rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    rows = []
+    for r in conn.execute(sql, params).fetchall():
+        row = dict(r)
+        # extra 以 JSON 文本存储，解析后输出，避免打印成一串转义字符
+        if row.get('extra'):
+            try:
+                row['extra'] = json.loads(row['extra'])
+            except (ValueError, TypeError):
+                pass
+        rows.append(row)
     conn.close()
     return rows
 
@@ -412,11 +422,15 @@ if __name__ == '__main__':
     if cmd == 'stats':
         print(json.dumps(get_stats(), indent=2, ensure_ascii=False))
     elif cmd == 'recent':
+        # recent [N] [run_id] —— get_recent 一直支持按 run_id 过滤，这里把它暴露出来，
+        # 便于取出某一条 pipeline 依赖链的全部调用
         limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-        print(json.dumps(get_recent(limit), indent=2, ensure_ascii=False))
+        rid = sys.argv[3] if len(sys.argv) > 3 else None
+        print(json.dumps(get_recent(limit, run_id=rid), indent=2, ensure_ascii=False))
     elif cmd == 'export':
         out = sys.argv[2] if len(sys.argv) > 2 else 'llm_calls.jsonl'
         n = export_jsonl(out)
         print(f"✅ Exported {n} records to {out}")
     else:
-        print("Usage: python -m src.experiment_logger [stats|recent [N]|export [file]]")
+        print("Usage: python -m src.experiment_logger "
+              "[stats | recent [N] [run_id] | export [file]]")
