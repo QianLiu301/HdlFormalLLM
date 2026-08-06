@@ -1121,13 +1121,15 @@ def generate_hardware():
             except Exception as e:
                 print(f"⚠️  Failed to read BDD file: {e}")
 
-    # Step 1 = 依赖链起点，无条件新建 run_id；生成器不接收 model，故 model_used=False
+    # Step 1 = 依赖链起点，无条件新建 run_id。
+    # 与流式端点不同，这里没有 model 覆盖逻辑：生成器只接收 llm_provider，
+    # 因此任何 provider 传来的 model 都不会生效，model_used=False。
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
                             new_run=True, model_used=False)
     if _ctx['extra']['model_override_ignored']:
         print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored: "
-              f"Step 1 generators do not accept a model override "
-              f"(using {llm_name}'s default)")
+              f"the non-streaming Step 1 endpoint has no model override "
+              f"(using {llm_name}'s default; the streaming endpoint does support it)")
 
     print(f"\n{'='*60}")
     print(f"🔧 Generating {bitwidth}-bit {module_type.upper()}")
@@ -1263,9 +1265,11 @@ def generate_hardware_stream():
         if parsed.get('module_type'):
             module_type = parsed['module_type']
 
-    # Step 1 = 依赖链起点，无条件新建 run_id；生成器不接收 model，故 model_used=False
+    # Step 1 = 依赖链起点，无条件新建 run_id。
+    # 此端点（流式）在生成器构造后会替换 generator.llm 来应用 model 覆盖，
+    # 对 gemini/openai 生效，故 model_used=True；非流式的同名端点没有这段逻辑。
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
-                            new_run=True, model_used=False)
+                            new_run=True, model_used=True)
 
     def _generate_inner():
         try:
