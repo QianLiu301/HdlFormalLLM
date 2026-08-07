@@ -278,7 +278,8 @@ class ALUGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=max_tokens,
-                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code."
+                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    sampling=getattr(self, "sampling", None)
                 )
             else:
                 print(f"❌ LLM provider does not support _call_api method")
@@ -296,7 +297,8 @@ class ALUGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=retry_tokens,
-                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code."
+                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    sampling=getattr(self, "sampling", None)
                 )
                 if response:
                     verilog_code = self._extract_verilog(response)

@@ -151,6 +151,23 @@ def _current_labels() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 调用期事实登记
+#
+# call_context 记录的是调用方的**意图**（这属于哪次实验），而这里记录的是调用
+# 过程中观测到的**事实**：实际发出的采样参数、API 返回的 finish_reason 等。
+# provider 深处的代码无法把这些值顺着返回值传出来（_call_api 只返回字符串），
+# 因此用 threading.local 传给埋点包装器，由它并入 extra。
+# ---------------------------------------------------------------------------
+
+def record_call_meta(**fields):
+    """provider 在一次被埋点的调用内登记事实。不在此类调用内时静默忽略。"""
+    cur = getattr(_local, 'call_meta', None)
+    if cur is None:
+        return
+    cur.update({k: v for k, v in fields.items() if v is not None})
+
+
+# ---------------------------------------------------------------------------
 # 核心写入
 # ---------------------------------------------------------------------------
 
@@ -227,14 +244,20 @@ def _api_path(obj, method: str) -> str:
     return method
 
 
-def _auto_extra(obj, cls_name: str, method: str) -> Dict[str, Any]:
-    """埋点包装器能自行观测到的事实（与调用方传入的意图区分开）。"""
+def _auto_extra(obj, cls_name: str, method: str, call_meta: Dict = None) -> Dict[str, Any]:
+    """埋点包装器能自行观测到的事实（与调用方传入的意图区分开）。
+
+    call_meta 是 provider 在调用期间通过 record_call_meta() 登记的内容：
+    实际发出的采样参数、sampling_source/ignored、finish_reason 等。
+    """
     path = _api_path(obj, method)
     info = {
         'api_path': path,
         'output_mode': 'json' if path == 'json_mode' else 'text',
         'model_effective': getattr(obj, 'model', None),
     }
+    if call_meta:
+        info.update(call_meta)
     # A1a 遗留项：Groq 的 _call_api_stream 曾因缩进错误不可达，此前所有 Groq
     # "流式"实际是非流式回退。标记原生流式，便于区分修复前后的数据。
     if cls_name == 'GroqProvider' and method == '_call_api_stream':
@@ -263,23 +286,25 @@ def _wrap_regular(cls_name, name, fn):
         system_prompt = kwargs.get('system_prompt')
         start = time.time()
         _local.in_call = True
+        _local.call_meta = {}          # provider 在调用期间往里登记事实
         try:
             result = fn(self, prompt, *args, **kwargs)
             log_call(cls_name, model, name, prompt,
                      response=result if isinstance(result, str) else str(result),
                      system_prompt=system_prompt, max_tokens=max_tokens,
                      latency_ms=int((time.time() - start) * 1000), success=True,
-                     extra=_auto_extra(self, cls_name, name))
+                     extra=_auto_extra(self, cls_name, name, _local.call_meta))
             return result
         except Exception as e:
             log_call(cls_name, model, name, prompt,
                      system_prompt=system_prompt, max_tokens=max_tokens,
                      latency_ms=int((time.time() - start) * 1000),
                      success=False, error=f"{type(e).__name__}: {e}",
-                     extra=_auto_extra(self, cls_name, name))
+                     extra=_auto_extra(self, cls_name, name, _local.call_meta))
             raise
         finally:
             _local.in_call = False
+            _local.call_meta = None
     wrapper._exp_logged = True
     return wrapper
 
@@ -301,6 +326,7 @@ def _wrap_stream(cls_name, name, fn):
             # 守卫在生成器体内设置：wrapper 只负责创建生成器，真正执行发生在被消费时。
             # 流式失败时 provider 会回退调用 self._call_api()，需一并抑制其重复记录。
             _local.in_call = True
+            _local.call_meta = {}
             try:
                 for chunk in fn(self, prompt, *args, **kwargs):
                     if isinstance(chunk, str):
@@ -310,14 +336,16 @@ def _wrap_stream(cls_name, name, fn):
                 success, error = False, f"{type(e).__name__}: {e}"
                 raise
             finally:
+                meta = _local.call_meta or {}
                 _local.in_call = False
+                _local.call_meta = None
                 with call_context(**labels):
                     log_call(cls_name, model, name, prompt,
                              response=''.join(chunks),
                              system_prompt=system_prompt, max_tokens=max_tokens,
                              latency_ms=int((time.time() - start) * 1000),
                              success=success, error=error, streaming=True,
-                             extra=_auto_extra(self, cls_name, name))
+                             extra=_auto_extra(self, cls_name, name, meta))
         return gen()
     wrapper._exp_logged = True
     return wrapper
@@ -365,7 +393,13 @@ def get_stats() -> Dict:
     }
 
 
-def get_recent(limit: int = 20, run_id: str = None) -> list:
+def get_recent(limit: int = 20, run_id: str = None, include_untagged: bool = False) -> list:
+    """最近的调用记录。
+
+    默认排除 run_id 为空的行：那些是开发期打桩/探针产生的，没有归属的实验批次，
+    混在输出里只会干扰。传 include_untagged=True 可以把它们带上——它们仍然是
+    「这段时间做过什么」的痕迹，只是默认不展示。
+    """
     conn = _connect()
     conn.row_factory = sqlite3.Row
     sql = """SELECT id, created_at, provider, model, method, streaming,
@@ -377,6 +411,8 @@ def get_recent(limit: int = 20, run_id: str = None) -> list:
     if run_id:
         sql += " WHERE run_id = ?"
         params.append(run_id)
+    elif not include_untagged:
+        sql += " WHERE run_id IS NOT NULL"
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     rows = []
@@ -426,7 +462,10 @@ if __name__ == '__main__':
         # 便于取出某一条 pipeline 依赖链的全部调用
         limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
         rid = sys.argv[3] if len(sys.argv) > 3 else None
-        print(json.dumps(get_recent(limit, run_id=rid), indent=2, ensure_ascii=False))
+        # 第 4 个位置参数写 'all' 可以把未打标签的探针行也带出来
+        untagged = len(sys.argv) > 4 and sys.argv[4] == 'all'
+        print(json.dumps(get_recent(limit, run_id=rid, include_untagged=untagged),
+                         indent=2, ensure_ascii=False))
     elif cmd == 'export':
         out = sys.argv[2] if len(sys.argv) > 2 else 'llm_calls.jsonl'
         n = export_jsonl(out)

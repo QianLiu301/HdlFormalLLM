@@ -14,7 +14,7 @@ import json
 import time
 import re
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import requests
 
 # 尝试导入 google-genai,如果失败则标记
@@ -52,22 +52,154 @@ except ImportError:
 
 # 实验记录系统：自动记录所有 LLM 调用到 SQLite（可选依赖，失败不影响运行）
 try:
-    from src.experiment_logger import instrument_class as _exp_instrument
+    from src.experiment_logger import (instrument_class as _exp_instrument,
+                                       record_call_meta as _record_meta)
 except ImportError:
     try:
-        from experiment_logger import instrument_class as _exp_instrument
+        from experiment_logger import (instrument_class as _exp_instrument,
+                                       record_call_meta as _record_meta)
     except ImportError:
         _exp_instrument = None
+
+        def _record_meta(**fields):  # logger 不可用时的空实现
+            pass
 
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers"""
+
+    # ------------------------------------------------------------------
+    # 采样参数
+    #
+    # DEFAULT_SAMPLING 里填的必须是该 provider 当前**硬编码的真实值**，
+    # 按 api_path 分组（同一 provider 的不同实现路径取值可能不同，例如
+    # Gemini 的 rest=0.4 / stream=0.3）。这些值刻意不做统一——不一致是既有
+    # 事实，本机制只是把它变得可见、可覆盖、可记录。
+    #
+    # 调用方不传 sampling 时，_merge_sampling 原样返回这些默认值，
+    # 因此 payload 与引入本机制之前逐字节一致。
+    # ------------------------------------------------------------------
+    DEFAULT_SAMPLING: Dict[str, Dict[str, Any]] = {}
+
+    # 该 provider 真正支持的逻辑参数名。未列出的参数会被跳过并记为 unsupported，
+    # 而不是塞进 payload 让 API 报错或静默忽略。
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'max_tokens'}
+
+    # 逻辑名 -> API 字段名，仅在两者不同时才需要列出（如 Mistral 的 random_seed）
+    SAMPLING_FIELD_MAP: Dict[str, str] = {}
 
     def __init_subclass__(cls, **kwargs):
         """子类定义时自动包装其 _call_api* 方法，实现调用级实验记录"""
         super().__init_subclass__(**kwargs)
         if _exp_instrument is not None:
             _exp_instrument(cls)
+
+    def _forced_sampling(self, api_path: str = 'default') -> Dict[str, Any]:
+        """返回不可被用户覆盖的参数。默认没有；OpenAI 的 GPT-5 系列覆盖此方法
+        （其 API 只接受 temperature=1）。"""
+        return {}
+
+    def _merge_sampling(self, api_path: str = 'default', override: Optional[Dict] = None):
+        """合并 provider 默认值与用户覆盖，过滤不支持的参数。
+
+        返回 (payload_params, source, ignored)：
+          payload_params  已映射成该 provider API 字段名、可直接并入 payload
+          source          {逻辑参数名: 'user' | 'default' | 'forced' |
+                                       'unsupported' | 'api_default'}
+          ignored         被丢弃的参数名列表（不支持，或被强制值覆盖）
+
+        max_tokens 不在此处理：它本就是 _call_api 的形参，各 provider 的字段名
+        也不同（max_tokens / max_completion_tokens / maxOutputTokens），
+        由调用点用 _resolve_max_tokens 单独解析。
+        """
+        defaults = dict(self.DEFAULT_SAMPLING.get(api_path, {}))
+        forced = self._forced_sampling(api_path)
+        override = {k: v for k, v in (override or {}).items() if v is not None}
+
+        params, source, ignored = {}, {}, []
+
+        for name in ('temperature', 'top_p', 'seed'):
+            if name == 'max_tokens':
+                continue
+            user_val = override.get(name)
+
+            if name in forced:
+                params[name] = forced[name]
+                source[name] = 'forced'
+                if user_val is not None and user_val != forced[name]:
+                    ignored.append(name)
+                continue
+
+            if name not in self.SUPPORTED_SAMPLING:
+                # 无论用户是否传值都标注，让 sampling_source 完整反映 provider 能力；
+                # 只有用户确实传了值才算“被忽略”
+                source[name] = 'unsupported'
+                if user_val is not None:
+                    ignored.append(name)
+                continue
+
+            if user_val is not None:
+                params[name] = user_val
+                source[name] = 'user'
+            elif name in defaults:
+                params[name] = defaults[name]
+                source[name] = 'default'
+            else:
+                # provider 无默认值且用户没填 -> 根本不发送该字段，
+                # 让 API 自己的默认值生效（Claude 的 temperature 即如此）
+                source[name] = 'api_default'
+
+        # max_tokens 之外的 defaults 若未被上面覆盖，也要带上（防止漏发）
+        for name, val in defaults.items():
+            if name not in params and name not in source:
+                params[name] = val
+                source[name] = 'default'
+
+        # 登记本次实际生效的采样事实，供埋点写入 llm_calls.extra。
+        # 放在这里而不是各 provider 里：所有 provider 都会经过本方法，
+        # 因此无需逐个添加登记代码，也不会漏。
+        _record_meta(sampling_source=source,
+                     sampling_ignored=ignored,
+                     **{k: v for k, v in params.items()})
+
+        # 映射成 API 字段名
+        mapped = {self.SAMPLING_FIELD_MAP.get(k, k): v for k, v in params.items()}
+        return mapped, source, ignored
+
+    def _resolve_max_tokens(self, max_tokens: int, override: Optional[Dict] = None):
+        """用户覆盖优先于调用方传入的 max_tokens。返回 (值, 来源)。"""
+        user_val = (override or {}).get('max_tokens')
+        value, src = (int(user_val), 'user') if user_val else (max_tokens, 'default')
+        _record_meta(max_tokens=value, max_tokens_source=src)
+        return value, src
+
+    def _record_response_meta(self, result) -> None:
+        """从 API 响应里提取 finish_reason / system_fingerprint 并登记。
+
+        各家字段名不同，这里统一探测，避免在每个 provider 里写一遍：
+          OpenAI 兼容  choices[0].finish_reason + system_fingerprint
+          Gemini       candidates[0].finishReason
+          Claude       stop_reason
+        """
+        if not isinstance(result, dict):
+            # OpenAI SDK 返回的是对象而非 dict：按属性取
+            choices = getattr(result, 'choices', None)
+            if choices:
+                _record_meta(finish_reason=getattr(choices[0], 'finish_reason', None),
+                             system_fingerprint=getattr(result, 'system_fingerprint', None))
+            return
+        finish = None
+        choices = result.get('choices')
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            finish = choices[0].get('finish_reason')
+        if finish is None:
+            cands = result.get('candidates')
+            if isinstance(cands, list) and cands and isinstance(cands[0], dict):
+                finish = cands[0].get('finishReason')
+        if finish is None:
+            finish = result.get('stop_reason')
+        _record_meta(finish_reason=finish,
+                     system_fingerprint=result.get('system_fingerprint'))
 
 
     def _get_proxies(self) -> Optional[Dict[str, str]]:
@@ -168,6 +300,13 @@ class LLMProvider(ABC):
 
 
 class GeminiProvider(LLMProvider):
+    # rest 与 stream 的硬编码温度本就不同（0.4 / 0.3），如实记录、不做统一。
+    # sdk 为死代码（见 USE_GEMINI_SDK），不填。采样参数位于 generationConfig 内。
+    DEFAULT_SAMPLING = {'rest': {'temperature': 0.4},
+                        'stream': {'temperature': 0.3}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+    SAMPLING_FIELD_MAP = {'top_p': 'topP'}
+
     """
     Google Gemini API Provider - FREE!
 
@@ -246,20 +385,23 @@ class GeminiProvider(LLMProvider):
         print(f"⚠️  Gemini API failed after all attempts: {last_error}")
         return self._fallback_description(prompt)
 
-    def _call_api_rest(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
+    def _call_api_rest(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None,
+                       sampling: Optional[Dict] = None) -> str:
         # 修正模型名称 (改为稳定版)
         model_name = self.model if "gemini" in self.model else "gemini-2.0-flash-exp"
+        max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
         print(f"🔷 [Gemini] Calling REST API - Model: {model_name}, max_tokens: {max_tokens}")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+
+        # 采样参数进 generationConfig；默认 temperature=0.4（代码生成用低随机性）
+        gen_config = {"maxOutputTokens": max_tokens}
+        gen_config.update(self._merge_sampling('rest', sampling)[0])
+        gen_config["stopSequences"] = []
 
         # 正确构建 payload，加入 system_instruction
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": max_tokens,  # 调大 token 限制
-                "temperature": 0.4, # 代码生成建议调低随机性
-                "stopSequences": []
-            }
+            "generationConfig": gen_config,
         }
 
         # 如果有 system_prompt，按照 Gemini API 规范添加
@@ -271,6 +413,7 @@ class GeminiProvider(LLMProvider):
             response = requests.post(url, json=payload, timeout=60, proxies=proxies)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
 
             # 增加安全性检查，防止 index error
             if 'candidates' in result and result['candidates'][0]['content']['parts']:
@@ -280,24 +423,26 @@ class GeminiProvider(LLMProvider):
             print(f"⚠️  Gemini REST API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         """
         Streaming API call for Gemini
         Uses streamGenerateContent endpoint with alt=sse for proper SSE format
         """
         # 使用 alt=sse 获取标准 SSE 格式，避免 JSON 数组解析问题
+        max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
         print(f"🔷 [Gemini] Calling Stream API - Model: {self.model}, max_tokens: {max_tokens}")
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}"
             f":streamGenerateContent?alt=sse&key={self.api_key}"
         )
  
+        gen_config = {"maxOutputTokens": max_tokens}
+        gen_config.update(self._merge_sampling('stream', sampling)[0])
+
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": max_tokens,
-                "temperature": 0.3  # 与 REST 保持一致，代码生成用低温度
-            }
+            "generationConfig": gen_config,
         }
  
         if system_prompt:
@@ -336,6 +481,7 @@ class GeminiProvider(LLMProvider):
                     try:
                         data = json.loads(json_str)
                         if 'candidates' in data:
+                            self._record_response_meta(data)   # 末个 chunk 带 finishReason
                             for candidate in data['candidates']:
                                 if 'content' in candidate:
                                     for part in candidate['content'].get('parts', []):
@@ -350,12 +496,13 @@ class GeminiProvider(LLMProvider):
             if result:
                 yield result
 
-    def _call_api(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         """统一的 API 调用接口"""
         if self.use_sdk:
             return self._call_api_sdk(prompt, max_tokens, system_prompt)
         else:
-            return self._call_api_rest(prompt, max_tokens, system_prompt)
+            return self._call_api_rest(prompt, max_tokens, system_prompt, sampling=sampling)
 
     def generate_scenario_description(
             self,
@@ -429,6 +576,11 @@ class GroqProvider(LLMProvider):
     Models: llama3-70b, mixtral-8x7b, gemma-7b
     """
 
+    # OpenAI 兼容 API：seed 有文档支持
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+
     def __init__(self, api_key: Optional[str] = None, model: str = "llama-3.3-70b-versatile"):
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         self.model = model
@@ -437,13 +589,16 @@ class GroqProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Groq API key not provided. Get free key at: https://console.groq.com/keys")
 
-    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         """Call Groq API"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
+        max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
+        params, _, _ = self._merge_sampling('default', sampling)
         payload = {
             "model": self.model,
             "messages": [
@@ -457,8 +612,8 @@ class GroqProvider(LLMProvider):
                 }
             ],
             "max_tokens": max_tokens,
-            "temperature": 0.7
         }
+        payload.update(params)
 
         try:
             # 🆕 添加代理支持
@@ -466,12 +621,14 @@ class GroqProvider(LLMProvider):
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=30, proxies=proxies)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Groq API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         """
         Streaming API call for Groq
         Yields chunks of generated text
@@ -493,10 +650,10 @@ class GroqProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
+        payload["stream"] = True
 
         try:
             proxies = self._get_proxies()
@@ -520,6 +677,9 @@ class GroqProvider(LLMProvider):
                         try:
                             chunk_data = json.loads(data)
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                # 流式的 finish_reason 只在最后一个 chunk 非空，
+                                # 截断判定（finish_reason == 'length'）依赖它
+                                self._record_response_meta(chunk_data)
                                 delta = chunk_data['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:
@@ -588,6 +748,11 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class DeepSeekProvider(LLMProvider):
+    # seed 未见于 DeepSeek 官方文档，保守起见不声明支持
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'max_tokens'}
+
     """
     DeepSeek API Provider - FREE!
 
@@ -616,7 +781,8 @@ class DeepSeekProvider(LLMProvider):
         必须显式传 {'http': None, 'https': None} 才能真正直连。
         """
         return {'http': None, 'https': None}
-    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         """
         Call DeepSeek API with detailed debug output
 
@@ -648,9 +814,9 @@ class DeepSeekProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('default', sampling)[0])
 
         # ============================================================
         # 调试信息：请求详情
@@ -686,6 +852,7 @@ class DeepSeekProvider(LLMProvider):
 
                 if response.status_code == 200:
                     result = response.json()
+                    self._record_response_meta(result)
                     content = result['choices'][0]['message']['content'].strip()
 
                     # ============================================================
@@ -817,7 +984,8 @@ Generate a concise Feature description (2-4 sentences):
             return self._fallback_intent_json(prompt)
         return "Test ALU operation with various input values and verify correct output"
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         """
         Streaming API call for DeepSeek
         """
@@ -838,10 +1006,10 @@ Generate a concise Feature description (2-4 sentences):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
+        payload["stream"] = True
 
         try:
             proxies = self._get_proxies()
@@ -865,6 +1033,9 @@ Generate a concise Feature description (2-4 sentences):
                         try:
                             chunk_data = json.loads(data)
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                # 流式的 finish_reason 只在最后一个 chunk 非空，
+                                # 截断判定（finish_reason == 'length'）依赖它
+                                self._record_response_meta(chunk_data)
                                 delta = chunk_data['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:
@@ -883,6 +1054,20 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class OpenAIProvider(LLMProvider):
+    # GPT-5 系列的 API 只接受 temperature=1，见 _forced_sampling；
+    # 旧模型沿用此前硬编码的 0.7。
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'json_mode': {'temperature': 0.7},
+                        'text': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+
+    def _forced_sampling(self, api_path: str = 'default') -> Dict[str, Any]:
+        # GPT-5 系列拒绝 temperature != 1，用户传入的值只能记为 ignored
+        if self._is_gpt5_model(self.model):
+            return {'temperature': 1}
+        return {}
+
     """
     OpenAI API Provider - PAID
 
@@ -951,6 +1136,8 @@ class OpenAIProvider(LLMProvider):
                 temperature=1.0
             )
 
+            self._record_response_meta(response)
+
             # 调试信息
             print(f"🔗 [DEBUG] Response ID: {response.id}")
             print(f"🤖 [DEBUG] Model: {response.model}")
@@ -992,7 +1179,8 @@ class OpenAIProvider(LLMProvider):
 
             return self._fallback_text()
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         """
         Streaming API call for OpenAI
         """
@@ -1046,7 +1234,8 @@ class OpenAIProvider(LLMProvider):
             prompt: str,
             max_tokens: int = 500,
             system_prompt: str = None,
-            retry_count: int = 0
+            retry_count: int = 0,
+            sampling: Optional[Dict] = None
     ) -> Dict:
         """
         使用 JSON 模式调用 OpenAI Chat Completions API
@@ -1079,6 +1268,7 @@ class OpenAIProvider(LLMProvider):
             return self._fallback_json()
 
         try:
+            max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
             if retry_count == 0:
                 print(f"🔍 [DEBUG] JSON Mode Request - Model: {self.model}, max_tokens: {max_tokens}")
             else:
@@ -1112,8 +1302,6 @@ class OpenAIProvider(LLMProvider):
                     "model": self.model,
                     "messages": messages,
                     "max_completion_tokens": max_tokens,
-                    "temperature": 1,
-                    "response_format": {"type": "json_object"},
                 }
             else:
                 # 旧模型使用 max_tokens
@@ -1121,12 +1309,14 @@ class OpenAIProvider(LLMProvider):
                     "model": self.model,
                     "messages": messages,
                     "max_tokens": max_tokens,
-                    "temperature": 0.7,
-                    "response_format": {"type": "json_object"},
                 }
+            completion_params.update(self._merge_sampling('json_mode', sampling)[0])
+            completion_params["response_format"] = {"type": "json_object"}
 
             # 调用 API
             response = self.client.chat.completions.create(**completion_params)
+
+            self._record_response_meta(response)
 
             # 调试信息
             choice = response.choices[0]
@@ -1321,7 +1511,8 @@ Respond with ONLY the JSON object, no other text.
         """备用文本响应 (用于 codex)"""
         return "Given ALU operation, When executed, Then produce correct output"
 
-    def _call_api_text(self, prompt: str, max_tokens: int = 500, system_prompt: str = None) -> str:
+    def _call_api_text(self, prompt: str, max_tokens: int = 500, system_prompt: str = None,
+                       sampling: Optional[Dict] = None) -> str:
         """
         纯文本 chat 调用（无 JSON mode）——benchmark 用。
         主应用的 intent 解析仍走 _call_api 的 JSON 模式，两者互不影响。
@@ -1331,20 +1522,24 @@ Respond with ONLY the JSON object, no other text.
                 {"role": "system", "content": system_prompt or "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ]
+            max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
             if self._is_gpt5_model(self.model):
                 params = {"model": self.model, "messages": messages,
-                          "max_completion_tokens": max_tokens, "temperature": 1}
+                          "max_completion_tokens": max_tokens}
             else:
                 params = {"model": self.model, "messages": messages,
-                          "max_tokens": max_tokens, "temperature": 0.7}
+                          "max_tokens": max_tokens}
+            params.update(self._merge_sampling('text', sampling)[0])
             response = self.client.chat.completions.create(**params)
+            self._record_response_meta(response)
             content = response.choices[0].message.content
             return (content or "").strip()
         except Exception as e:
             print(f"⚠️  OpenAI text API request failed: {e}")
             return self._fallback_text()
 
-    def _call_api(self, prompt: str, max_tokens: int = 500, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 500, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         """
         统一的 API 调用接口
 
@@ -1373,13 +1568,19 @@ Respond with ONLY the JSON object, no other text.
                 return wrapped_json
 
         # 其他模型使用 chat completions + JSON mode
-        result = self._call_api_with_json_mode(prompt, max_tokens, system_prompt)
+        result = self._call_api_with_json_mode(prompt, max_tokens, system_prompt,
+                                               sampling=sampling)
         json_str = json.dumps(result, ensure_ascii=False, indent=2)
         print(f"   ✅ [DEBUG][OpenAI._call_api] Returning JSON string ({len(json_str)} chars)")
         return json_str
 
 
 class ClaudeProvider(LLMProvider):
+    # Claude 当前不发送 temperature，沿用 API 自身默认值 -> DEFAULT_SAMPLING 留空
+    # Anthropic Messages API 不支持 seed
+    DEFAULT_SAMPLING = {}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'max_tokens'}
+
     """
     Anthropic Claude API Provider - PAID
 
@@ -1400,7 +1601,8 @@ class ClaudeProvider(LLMProvider):
             raise ValueError(
                 "Claude API key not provided. Get key at: https://console.anthropic.com/")
 
-    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 200, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         """Call Claude API"""
         headers = {
             "x-api-key": self.api_key,
@@ -1408,6 +1610,7 @@ class ClaudeProvider(LLMProvider):
             "content-type": "application/json"
         }
 
+        max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -1418,6 +1621,8 @@ class ClaudeProvider(LLMProvider):
                 }
             ]
         }
+        # DEFAULT_SAMPLING 为空：不填时不发送 temperature，沿用 API 默认值
+        payload.update(self._merge_sampling('default', sampling)[0])
 
         if system_prompt:
             payload["system"] = system_prompt
@@ -1426,6 +1631,7 @@ class ClaudeProvider(LLMProvider):
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
             return result['content'][0]['text'].strip()
         except Exception as e:
             print(f"⚠️  Claude API request failed: {e}")
@@ -1457,7 +1663,8 @@ Generate the scenario description:
 """
         return self._call_api(prompt, max_tokens=150)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         """
         Streaming API call for Claude
         """
@@ -1469,6 +1676,7 @@ Generate the scenario description:
             "anthropic-version": "2023-06-01"
         }
 
+        max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -1480,6 +1688,7 @@ Generate the scenario description:
                 }
             ]
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
 
         if system_prompt:
             payload["system"] = system_prompt
@@ -1546,6 +1755,11 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class GrokProvider(LLMProvider):
+    # xAI 为 OpenAI 兼容 API
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+
     """
     xAI Grok API Provider
 
@@ -1566,7 +1780,8 @@ class GrokProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Grok API key not provided. Get key at: https://console.x.ai/")
 
-    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -1584,21 +1799,23 @@ class GrokProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('default', sampling)[0])
 
         try:
             proxies = self._get_proxies()
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=120, proxies=proxies)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Grok API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -1616,10 +1833,10 @@ class GrokProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
+        payload["stream"] = True
 
         try:
             proxies = self._get_proxies()
@@ -1636,6 +1853,9 @@ class GrokProvider(LLMProvider):
                         try:
                             chunk_data = json.loads(data)
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                # 流式的 finish_reason 只在最后一个 chunk 非空，
+                                # 截断判定（finish_reason == 'length'）依赖它
+                                self._record_response_meta(chunk_data)
                                 delta = chunk_data['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:
@@ -1687,6 +1907,11 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class QwenProvider(LLMProvider):
+    # DashScope compatible-mode 为 OpenAI 兼容 API
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+
     """
     Alibaba Qwen API Provider
 
@@ -1714,7 +1939,8 @@ class QwenProvider(LLMProvider):
         必须显式传 {'http': None, 'https': None} 才能真正绕过代理。"""
         return {'http': None, 'https': None}
 
-    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -1732,21 +1958,23 @@ class QwenProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('default', sampling)[0])
 
         try:
             response = requests.post(self.api_url, headers=headers, json=payload,
                                      proxies=self._get_proxies(), timeout=60)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Qwen API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -1764,10 +1992,10 @@ class QwenProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
+        payload["stream"] = True
 
         try:
             response = requests.post(self.api_url, headers=headers, json=payload,
@@ -1784,6 +2012,9 @@ class QwenProvider(LLMProvider):
                         try:
                             chunk_data = json.loads(data)
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                # 流式的 finish_reason 只在最后一个 chunk 非空，
+                                # 截断判定（finish_reason == 'length'）依赖它
+                                self._record_response_meta(chunk_data)
                                 delta = chunk_data['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:
@@ -1835,6 +2066,12 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class MistralProvider(LLMProvider):
+    # Mistral 的 seed 字段名是 random_seed
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+    SAMPLING_FIELD_MAP = {'seed': 'random_seed'}
+
     """
     Mistral AI API Provider
 
@@ -1855,7 +2092,8 @@ class MistralProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Mistral API key not provided. Get key at: https://console.mistral.ai/")
 
-    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -1873,21 +2111,23 @@ class MistralProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('default', sampling)[0])
 
         try:
             proxies = self._get_proxies()
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=60, proxies=proxies)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Mistral API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -1905,10 +2145,10 @@ class MistralProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
+        payload["stream"] = True
 
         try:
             proxies = self._get_proxies()
@@ -1925,6 +2165,9 @@ class MistralProvider(LLMProvider):
                         try:
                             chunk_data = json.loads(data)
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                # 流式的 finish_reason 只在最后一个 chunk 非空，
+                                # 截断判定（finish_reason == 'length'）依赖它
+                                self._record_response_meta(chunk_data)
                                 delta = chunk_data['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:
@@ -1976,6 +2219,11 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class TogetherProvider(LLMProvider):
+    # Together 为 OpenAI 兼容 API
+    DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
+                        'stream': {'temperature': 0.7}}
+    SUPPORTED_SAMPLING = {'temperature', 'top_p', 'seed', 'max_tokens'}
+
     """
     Together AI API Provider
 
@@ -1997,7 +2245,8 @@ class TogetherProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Together AI API key not provided. Get key at: https://api.together.xyz/")
 
-    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None) -> str:
+    def _call_api(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                  sampling: Optional[Dict] = None) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -2015,21 +2264,23 @@ class TogetherProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('default', sampling)[0])
 
         try:
             proxies = self._get_proxies()
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=60, proxies=proxies)
             response.raise_for_status()
             result = response.json()
+            self._record_response_meta(result)
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Together AI API request failed: {e}")
             return self._fallback_description(prompt)
 
-    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None):
+    def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
+                         sampling: Optional[Dict] = None):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -2047,10 +2298,10 @@ class TogetherProvider(LLMProvider):
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True
+            "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
+        payload.update(self._merge_sampling('stream', sampling)[0])
+        payload["stream"] = True
 
         try:
             proxies = self._get_proxies()
@@ -2067,6 +2318,9 @@ class TogetherProvider(LLMProvider):
                         try:
                             chunk_data = json.loads(data)
                             if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                # 流式的 finish_reason 只在最后一个 chunk 非空，
+                                # 截断判定（finish_reason == 'length'）依赖它
+                                self._record_response_meta(chunk_data)
                                 delta = chunk_data['choices'][0].get('delta', {})
                                 content = delta.get('content', '')
                                 if content:

@@ -651,6 +651,28 @@
 
 
 
+        /* ---- Advanced sampling parameters (A3-5) ---- */
+        .sampling-panel { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px;
+                          background: #fafafa; }
+        .sampling-panel > summary { cursor: pointer; padding: 10px 14px; font-size: 13px;
+                                    color: #374151; user-select: none; list-style: revert; }
+        .sampling-panel > summary:hover { color: #111827; }
+        .sampling-body { padding: 4px 14px 14px; display: grid;
+                         grid-template-columns: 108px 1fr 92px; gap: 10px 12px;
+                         align-items: center; }
+        .sampling-body label { font-size: 12.5px; color: #4b5563; }
+        .sampling-body input[type=range] { width: 100%; }
+        .sampling-body input[type=number] { width: 100%; padding: 5px 8px; font-size: 12.5px;
+                                            border: 1px solid #d1d5db; border-radius: 6px; }
+        .sampling-row-disabled { opacity: .45; }
+        .sampling-row-disabled input { cursor: not-allowed; }
+        .sampling-note { grid-column: 1 / -1; font-size: 11.5px; color: #6b7280; margin-top: 2px; }
+        .sampling-seed-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px;
+                              color: #4b5563; white-space: nowrap; }
+        /* ---- Result meta line (A3-6) ---- */
+        .call-meta { font-size: 12px; color: #6b7280; margin-top: 6px;
+                     font-family: 'JetBrains Mono', monospace; }
+        .call-warn { font-size: 12.5px; color: #b45309; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -879,6 +901,7 @@
                                 </select>
                             </div>
                         </div>
+                        <details class="sampling-panel" id="hw-sampling"></details>
                         <div class="divider"><span>or use natural language</span></div>
                         <div class="form-group">
                             <label>Natural Language Input</label>
@@ -923,6 +946,8 @@
                                 <h3 id="hw-filename">Generating...</h3>
                                 <p id="hw-info">Ready to generate</p>
                                 <p id="hw-model-hint" style="display:none;color:#b45309;font-size:12px;margin-top:4px"></p>
+                                <div class="call-meta" id="hw-call-meta"></div>
+                                <div class="call-warn" id="hw-call-warn"></div>
                             </div>
                             <div class="badge" id="hw-badge">LLM</div>
                         </div>
@@ -1218,6 +1243,7 @@
                             </select>
                         </div>
                     </div>
+                    <details class="sampling-panel" id="bdd-sampling"></details>
                     <div class="form-group">
                         <label>Requirements (auto-filled based on DUT)</label>
                         <textarea id="bdd-input"
@@ -1261,6 +1287,8 @@
                             <h3 id="bdd-filename">Generating...</h3>
                             <p id="bdd-info">Ready to generate</p>
                             <p id="bdd-model-hint" style="display:none;color:#b45309;font-size:12px;margin-top:4px"></p>
+                            <div class="call-meta" id="bdd-call-meta"></div>
+                            <div class="call-warn" id="bdd-call-warn"></div>
                         </div>
                         <div class="badge" id="bdd-badge">LLM</div>
                     </div>
@@ -1926,6 +1954,173 @@
                 run_id: currentRunId,
                 attempt: attempt
             });
+        }
+
+        // ============================================================
+        // A3-5：Advanced sampling parameters 面板
+        //
+        // 留空 = 用 provider 默认值，所以输入框一律不预填数字（预填等于
+        // 悄悄改变默认行为）。placeholder 显示该 provider 的当前默认值。
+        // 能力表来自后端 /api/sampling-info，不在前端另抄一份以免漂移。
+        // ============================================================
+        let SAMPLING_INFO = {};
+
+        const SAMPLING_FIELDS = [
+            {key: 'temperature', label: 'temperature', min: 0, max: 2, step: 0.05, slider: true},
+            {key: 'top_p', label: 'top_p', min: 0, max: 1, step: 0.05, slider: true},
+            {key: 'seed', label: 'seed', slider: false},
+            {key: 'max_tokens', label: 'max_tokens', slider: false},
+        ];
+
+        async function loadSamplingInfo() {
+            try {
+                const r = await fetch('/api/sampling-info');
+                const d = await r.json();
+                if (d.success) SAMPLING_INFO = d.providers || {};
+            } catch (e) {
+                console.warn('sampling-info unavailable', e);
+            }
+            buildSamplingPanel('hw');
+            buildSamplingPanel('bdd');
+        }
+
+        function buildSamplingPanel(step) {
+            const host = document.getElementById(`${step}-sampling`);
+            if (!host) return;
+            let rows = '';
+            for (const f of SAMPLING_FIELDS) {
+                const id = `${step}-samp-${f.key}`;
+                const slider = f.slider
+                    ? `<input type="range" id="${id}-range" min="${f.min}" max="${f.max}"
+                              step="${f.step}" value="${f.min}"
+                              oninput="document.getElementById('${id}').value = this.value">`
+                    : (f.key === 'seed'
+                        ? `<span class="sampling-seed-wrap">
+                             <input type="checkbox" id="${id}-random" checked
+                                    onchange="onSeedRandomToggle('${step}')">
+                             <label for="${id}-random">random each run</label>
+                           </span>`
+                        : '<span></span>');
+                rows += `<label id="${id}-label" for="${id}">${f.label}</label>
+                         ${slider}
+                         <input type="number" id="${id}" step="${f.step || 1}"
+                                oninput="syncSamplingSlider('${step}','${f.key}')">`;
+            }
+            host.innerHTML = `<summary>Advanced sampling parameters</summary>
+                <div class="sampling-body">${rows}
+                  <div class="sampling-note" id="${step}-samp-note">
+                    Leave blank to use the provider's default.
+                  </div>
+                </div>`;
+            refreshSamplingPanel(step);
+        }
+
+        function syncSamplingSlider(step, key) {
+            const range = document.getElementById(`${step}-samp-${key}-range`);
+            const num = document.getElementById(`${step}-samp-${key}`);
+            if (range && num && num.value !== '') range.value = num.value;
+        }
+
+        function onSeedRandomToggle(step) {
+            const cb = document.getElementById(`${step}-samp-seed-random`);
+            const num = document.getElementById(`${step}-samp-seed`);
+            if (!cb || !num) return;
+            num.disabled = cb.checked;
+            if (cb.checked) num.value = '';
+        }
+
+        /** 依据当前 provider 与 stream 开关，更新置灰状态与 placeholder。 */
+        function refreshSamplingPanel(step) {
+            const llm = (document.getElementById(`${step}-llm`) || {}).value;
+            const streamOn = (document.getElementById(`${step}-stream`) || {}).checked;
+            const info = SAMPLING_INFO[llm] || {supported: [], defaults: {}};
+            const defs = (streamOn ? info.defaults?.stream : info.defaults?.nonstream) || {};
+            const model = (document.getElementById(`${step}-model`) || {}).value || '';
+            const gpt5Forced = llm === 'openai' && /gpt-5/i.test(model);
+
+            for (const f of SAMPLING_FIELDS) {
+                const num = document.getElementById(`${step}-samp-${f.key}`);
+                const range = document.getElementById(`${step}-samp-${f.key}-range`);
+                const label = document.getElementById(`${step}-samp-${f.key}-label`);
+                if (!num) continue;
+                const supported = (info.supported || []).includes(f.key);
+                // GPT-5 系列的 temperature 由 API 强制为 1，控件置灰
+                const forced = gpt5Forced && f.key === 'temperature';
+                const off = !supported || forced;
+
+                num.disabled = off;
+                if (range) range.disabled = off;
+                [num, range, label].forEach(el => el && el.closest &&
+                    el.classList.toggle('sampling-row-disabled', off));
+                if (off) num.value = '';
+
+                const tip = forced
+                    ? 'GPT-5 series forces temperature = 1; it cannot be overridden'
+                    : (!supported ? `Not supported by ${llm}` : '');
+                [num, range, label].forEach(el => { if (el) el.title = tip; });
+
+                num.placeholder = forced ? 'forced: 1'
+                    : (!supported ? 'not supported'
+                        : (defs[f.key] !== undefined ? `default: ${defs[f.key]}` : 'API default'));
+            }
+            const seedCb = document.getElementById(`${step}-samp-seed-random`);
+            if (seedCb) {
+                const seedOk = (info.supported || []).includes('seed');
+                seedCb.disabled = !seedOk;
+                onSeedRandomToggle(step);
+                if (!seedOk) document.getElementById(`${step}-samp-seed`).disabled = true;
+            }
+        }
+
+        /** 收集面板取值；全部留空时返回 null（后端据此完全走默认路径）。 */
+        function collectSampling(step) {
+            const out = {};
+            for (const f of SAMPLING_FIELDS) {
+                const el = document.getElementById(`${step}-samp-${f.key}`);
+                if (!el || el.disabled) continue;
+                const v = el.value.trim();
+                if (v !== '') out[f.key] = Number(v);
+            }
+            return Object.keys(out).length ? out : null;
+        }
+
+        // ============================================================
+        // A3-6：结果元信息行
+        // ============================================================
+        function renderCallMeta(step, meta) {
+            const host = document.getElementById(`${step}-call-meta`);
+            const warn = document.getElementById(`${step}-call-warn`);
+            if (!host || !warn) return;
+            if (!meta) { host.textContent = ''; warn.innerHTML = ''; return; }
+
+            const src = meta.sampling_source || {};
+            const part = (k, label) => {
+                if (meta[k] === undefined || meta[k] === null) return null;
+                const s = src[k] ? ` (${src[k]})` : '';
+                return `${label}=${meta[k]}${s}`;
+            };
+            const bits = [meta.model_effective,
+                          part('temperature', 'T'),
+                          part('top_p', 'top_p'),
+                          meta.seed !== undefined && meta.seed !== null
+                              ? `seed=${meta.seed} (${src.seed || 'user'})` : 'seed=none',
+                          (meta.prompt_chars != null)
+                              ? `in ${meta.prompt_chars.toLocaleString()} / out ${(meta.response_chars || 0).toLocaleString()} chars` : null,
+                          (meta.latency_ms != null) ? `${(meta.latency_ms / 1000).toFixed(1)}s` : null,
+                         ].filter(Boolean);
+            host.textContent = bits.join(' · ');
+
+            let w = '';
+            if (meta.truncated) {
+                w += `<div>⚠ Output truncated (hit max_tokens`
+                   + (meta.max_tokens ? ` = ${meta.max_tokens}` : '')
+                   + `). Increase max_tokens and retry.</div>`;
+            }
+            const ign = meta.sampling_ignored || [];
+            if (ign.length) {
+                w += `<div>⚠ Ignored by this provider: ${ign.join(', ')}</div>`;
+            }
+            warn.innerHTML = w;
         }
 
         /** provider 不支持 model 覆盖时给出提示（后端只对 openai/gemini 生效）。 */
@@ -2944,11 +3139,13 @@
         function onHwLlmChange() {
             const llm = document.getElementById('hw-llm').value;
             updateModelSelect('hw-model', 'hw-model-group', llm);
+            refreshSamplingPanel('hw');   // 支持的参数与默认值随 provider 变化
         }
 
         function onBddLlmChange() {
             const llm = document.getElementById('bdd-llm').value;
             updateModelSelect('bdd-model', 'bdd-model-group', llm);
+            refreshSamplingPanel('bdd');
         }
 
         // ============================================================
@@ -3008,7 +3205,8 @@
                 pipeline_stages: parseInt(pipelineStages),
                 input: naturalInput,
                 model,
-                workflow_mode: currentWorkflowMode
+                workflow_mode: currentWorkflowMode,
+                sampling: collectSampling('hw')   // null = 全部留空 -> 用 provider 默认值
             }, 'duv');
 
             // In spec-first mode, pass BDD context so LLM can generate hardware matching the spec
@@ -3071,6 +3269,7 @@
                                     preview.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
                                     preview.scrollTop = preview.scrollHeight;
                                 } else if (data.type === 'complete') {
+                                    renderCallMeta('hw', data.call_meta);
                                     currentHwFilename = data.filename;
                                     document.getElementById('hw-filename').textContent = data.filename;
                                     document.getElementById('hw-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
@@ -3118,6 +3317,7 @@
 
                 adoptRunId(data.run_id);   // Step 1 起点：记下后端新建的 run_id
                 showModelIgnoredHint('hw', data);
+                renderCallMeta('hw', data.call_meta);
                 currentHwFilename = data.filename;
                 document.getElementById('hw-filename').textContent = data.filename;
                 document.getElementById('hw-info').textContent = `Generated with ${data.llm.toUpperCase()}`;
@@ -3223,7 +3423,8 @@
 
             // Step 2 继承 Step 1 的 run_id；同一 DUV 下重试只让 attempt 递增
             const payload = withRunIds(
-                { llm, model, input, module_type: currentDUT ? currentDUT.moduleType : null }, 'bdd');
+                { llm, model, input, module_type: currentDUT ? currentDUT.moduleType : null,
+                  sampling: collectSampling('bdd') }, 'bdd');
 
             if (useStreaming) {
                 await generateBddWithStreaming(payload);
@@ -3280,6 +3481,7 @@
                                     preview.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
                                     preview.scrollTop = preview.scrollHeight;
                                 } else if (data.type === 'complete') {
+                                    renderCallMeta('bdd', data.call_meta);
                                     currentBddFilename = data.filename;
                                     currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
                                     updateTbTabState();
@@ -3330,6 +3532,7 @@
 
                 adoptRunId(data.run_id);   // 通常继承自 Step 1；直接跑 Step 2 时后端会新建
                 showModelIgnoredHint('bdd', data);
+                renderCallMeta('bdd', data.call_meta);
                 currentBddFilename = data.filename;
                 currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
                 updateTbTabState();
@@ -4104,6 +4307,16 @@
 
             document.getElementById('dev-modal')?.addEventListener('click', function(e) {
                 if (e.target === this) closeDevModal();
+            });
+
+            // 采样面板：能力表来自后端，构建后按当前 provider 置灰
+            loadSamplingInfo();
+            // stream 开关会改变默认值（Gemini 非流式 0.4 / 流式 0.3）
+            ['hw', 'bdd'].forEach(step => {
+                document.getElementById(`${step}-stream`)
+                    ?.addEventListener('change', () => refreshSamplingPanel(step));
+                document.getElementById(`${step}-model`)
+                    ?.addEventListener('change', () => refreshSamplingPanel(step));
             });
         });
         // ============================================================

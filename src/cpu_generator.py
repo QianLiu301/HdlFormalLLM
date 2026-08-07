@@ -180,7 +180,8 @@ class CPUGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=20000,  # CPU needs more tokens
-                    system_prompt="You are an expert CPU architect and Verilog designer. Generate high-quality, synthesizable RTL code for a RISC-V processor."
+                    system_prompt="You are an expert CPU architect and Verilog designer. Generate high-quality, synthesizable RTL code for a RISC-V processor.",
+                    sampling=getattr(self, "sampling", None)
                 )
             else:
                 print(f"❌ LLM does not have _call_api method")

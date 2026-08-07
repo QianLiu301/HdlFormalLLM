@@ -688,7 +688,8 @@ class FeatureGeneratorLLM:
             response = self.llm._call_api(
                 prompt,
                 max_tokens=4000,  # Features can be long
-                system_prompt="You are a hardware verification expert specializing in BDD test generation."
+                system_prompt="You are a hardware verification expert specializing in BDD test generation.",
+                sampling=getattr(self, "sampling", None)
             )
 
             if self.debug:
@@ -711,6 +712,19 @@ class FeatureGeneratorLLM:
     def _call_openai_text_mode(self, prompt: str) -> Optional[str]:
         """
         Call OpenAI without JSON mode (for feature generation)
+
+        委托给 provider 的 _call_api_text。此前这里直接调
+        self.llm.client.chat.completions.create()，绕过了 provider 的
+        _call_api* 方法，导致两个后果：
+          1. experiment_logger 只包装 _call_api*，因此 OpenAI 的 Step 2 调用
+             从未在 llm_calls 里留下任何记录
+          2. 采样参数无从传入
+        改为委托后两者都解决，且 GPT-5 的 temperature=1 约束由 provider 的
+        _forced_sampling 统一处理，不再在此处硬编码。
+
+        注意：旧代码对所有 OpenAI 模型都写死 temperature=1；委托后非 GPT-5
+        模型将改用 provider 默认的 0.7（与 _call_api_text 本来的行为一致）。
+        当前配置用的是 gpt-5 系列，实际取值不变。
         """
         try:
             if not hasattr(self.llm, 'client'):
@@ -719,63 +733,27 @@ class FeatureGeneratorLLM:
 
             print(f"   📡 Calling OpenAI (text mode)...")
 
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a hardware verification expert specializing in BDD test generation. Generate feature files in strict Gherkin format."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-
-            # Check if GPT-5 model
             model = self.llm.model
-
-            # Build parameters
-            params = {
-                "model": model,
-                "messages": messages,
-                "temperature": 1,  # GPT-5 only supports temperature=1
-            }
-
-            # Use correct token parameter
-            if 'gpt-5' in model.lower():
-                params['max_completion_tokens'] = 16000
-            else:
-                params['max_tokens'] = 8000
+            # 保持原有的 token 预算：GPT-5 系列 16000，其余 8000
+            max_tokens = 16000 if 'gpt-5' in model.lower() else 8000
 
             if self.debug:
                 print(f"   🔍 Model: {model}")
-                print(f"   🔍 Max tokens: {'max_completion_tokens' if 'gpt-5' in model.lower() else 'max_tokens'} = 8000")
+                print(f"   🔍 Max tokens: {max_tokens}")
 
-            # Call API
-            response = self.llm.client.chat.completions.create(**params)
+            content = self.llm._call_api_text(
+                prompt,
+                max_tokens=max_tokens,
+                system_prompt=("You are a hardware verification expert specializing in "
+                               "BDD test generation. Generate feature files in strict "
+                               "Gherkin format."),
+                sampling=getattr(self, "sampling", None),
+            )
 
-            # Debug response
-            if self.debug:
-                print(f"   🔍 Response ID: {response.id}")
-                print(f"   🔍 Model used: {response.model}")
-                print(f"   🔍 Finish reason: {response.choices[0].finish_reason}")
-
-            # Get content
-            content = response.choices[0].message.content
-
-            # Check if content is None or empty
-            if content is None or len(content) == 0:
-                print(f"   ⚠️  WARNING: Empty or None response from OpenAI")
-                print(f"   🔍 Finish reason: {response.choices[0].finish_reason}")
-
-                # Try to get refusal message (GPT-5 feature)
-                message = response.choices[0].message
-                if hasattr(message, 'refusal') and message.refusal:
-                    print(f"   ❌ Content Refusal: {message.refusal}")
-
-                # Print usage info
-                if hasattr(response, 'usage') and response.usage:
-                    print(f"   📊 Tokens used: prompt={response.usage.prompt_tokens}, completion={response.usage.completion_tokens}")
-
+            # provider 在失败时返回兜底短句而不是抛异常；调用方按 None 处理失败，
+            # 因此这里要把兜底文本识别出来
+            if not content or content.startswith("Given ALU operation, When executed"):
+                print(f"   ⚠️  WARNING: empty or fallback response from OpenAI")
                 return None
 
             if self.debug:
@@ -784,10 +762,7 @@ class FeatureGeneratorLLM:
                 print(content[:500])
                 print()
 
-            # Clean response
-            content = self._clean_response(content)
-
-            return content
+            return self._clean_response(content)
 
         except Exception as e:
             print(f"❌ OpenAI call failed: {e}")

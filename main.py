@@ -26,6 +26,7 @@ import io
 # Path Setup
 # ============================================================================
 from werkzeug.utils import secure_filename
+from typing import Optional
 
 PROJECT_ROOT = Path(__file__).parent.absolute()
 SRC_DIR = PROJECT_ROOT / 'src'
@@ -298,6 +299,58 @@ MODEL_OVERRIDE_PROVIDERS = ('openai', 'gemini')
 def _new_run_id() -> str:
     import uuid
     return f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+SAMPLING_KEYS = ('temperature', 'top_p', 'seed', 'max_tokens')
+
+
+def _parse_sampling(data) -> Optional[dict]:
+    """从请求体取采样参数。空值一律丢弃——留空即“用 provider 默认值”，
+    返回 None 时下游行为与引入本机制之前完全一致。"""
+    raw = (data or {}).get('sampling') or {}
+    out = {}
+    for k in SAMPLING_KEYS:
+        v = raw.get(k)
+        if v is None or v == '':
+            continue
+        try:
+            out[k] = int(v) if k in ('seed', 'max_tokens') else float(v)
+        except (TypeError, ValueError):
+            continue
+    return out or None
+
+
+def _last_call_meta(run_id):
+    """取该 run 最新一条 llm_calls 的 extra + 用量，供前端显示元信息行。
+
+    埋点是唯一知道“实际发出了什么”的地方（采样值、finish_reason 由 provider
+    在调用期登记），所以从库里回读，而不是让端点再猜一遍。
+    """
+    try:
+        import sqlite3
+        from src.experiment_logger import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """SELECT model, extra, prompt_chars, response_chars, latency_ms
+               FROM llm_calls WHERE run_id = ? ORDER BY id DESC LIMIT 1""",
+            (run_id,)).fetchone()
+        conn.close()
+        if not row:
+            return None
+        meta = json.loads(row['extra']) if row['extra'] else {}
+        meta['model_effective'] = meta.get('model_effective') or row['model']
+        meta['prompt_chars'] = row['prompt_chars']
+        meta['response_chars'] = row['response_chars']
+        meta['latency_ms'] = row['latency_ms']
+        # 各家 finish_reason 大小写与别名不统一（stop/STOP、length/MAX_TOKENS），
+        # 归一成一个布尔量，前端不必再判别名
+        fr = str(meta.get('finish_reason') or '').lower()
+        meta['truncated'] = fr in ('length', 'max_tokens')
+        return meta
+    except Exception as e:
+        print(f"⚠️  read call meta failed (non-fatal): {e}")
+        return None
 
 
 def _apply_model_override(generator, llm_name, model) -> bool:
@@ -1140,6 +1193,7 @@ def generate_hardware():
             except Exception as e:
                 print(f"⚠️  Failed to read BDD file: {e}")
 
+    sampling = _parse_sampling(data)
     # Step 1 = 依赖链起点，无条件新建 run_id。
     # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
@@ -1172,6 +1226,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.sampling = sampling        # None = 用 provider 默认值
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
@@ -1185,6 +1240,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.sampling = sampling        # None = 用 provider 默认值
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
 
@@ -1199,6 +1255,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.sampling = sampling        # None = 用 provider 默认值
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 
@@ -1213,6 +1270,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.sampling = sampling        # None = 用 provider 默认值
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
@@ -1246,6 +1304,7 @@ def generate_hardware():
             'run_id': run_id,
             'model_override_ignored': _ctx['extra']['model_override_ignored'],
             'model_requested': _ctx['extra']['model_requested'],
+            'call_meta': _last_call_meta(run_id),
         })
 
     except Exception as e:
@@ -1287,6 +1346,7 @@ def generate_hardware_stream():
         if parsed.get('module_type'):
             module_type = parsed['module_type']
 
+    sampling = _parse_sampling(data)
     # Step 1 = 依赖链起点，无条件新建 run_id。
     # 此端点（流式）在生成器构造后会替换 generator.llm 来应用 model 覆盖，
     # 对 gemini/openai 生效，故 model_used=True；非流式的同名端点没有这段逻辑。
@@ -1400,7 +1460,8 @@ Make sure the module interface and behavior match the test expectations above.
                 max_tokens = 6000 + (bitwidth // 16) * 500
 
             if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens):
+                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens,
+                                                  sampling=sampling):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
@@ -1462,7 +1523,9 @@ Make sure the module interface and behavior match the test expectations above.
             last_generated_hw['llm'] = llm_name
             last_generated_hw['module_type'] = module_type
 
-            yield make_sse_message("complete", filename=filename, filepath=str(hw_path))
+            # 到这里流式生成器已耗尽，其 finally 已写入 llm_calls，可安全回读
+            yield make_sse_message("complete", filename=filename, filepath=str(hw_path),
+                                   call_meta=_last_call_meta(run_id))
 
         except Exception as e:
             import traceback
@@ -1810,7 +1873,8 @@ def generate_alu_stream():
             max_tokens = 5000 + (bitwidth // 16) * 1000 + len(operations) * 200
 
             if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens):
+                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens,
+                                                  sampling=sampling):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
@@ -1878,6 +1942,7 @@ def generate_bdd_stream():
     if not user_input:
         return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
+    sampling = _parse_sampling(data)
     # Step 2 继承 Step 1 的 run_id（缺失则新建）；此端点确实会对 openai/gemini
     # 应用 model 覆盖，故 model_used=True
     run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
@@ -1895,6 +1960,7 @@ def generate_bdd_stream():
                 project_root=str(PROJECT_ROOT),
                 debug=False
             )
+            generator.sampling = sampling   # None = 用 provider 默认值
 
             if model and llm_name in ('openai', 'gemini'):
                 try:
@@ -1924,7 +1990,8 @@ def generate_bdd_stream():
             max_tokens = 4000
 
             if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens):
+                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens,
+                                                  sampling=sampling):
                     if chunk:
                         full_content += chunk
                         yield make_sse_message("chunk", content=chunk)
@@ -1948,7 +2015,8 @@ def generate_bdd_stream():
             last_generated_bdd['llm'] = llm_name
 
             yield make_sse_message("complete", filename=filename,
-                                   filepath=str(feature_path), run_id=run_id)
+                                   filepath=str(feature_path), run_id=run_id,
+                                   call_meta=_last_call_meta(run_id))
 
         except Exception as e:
             import traceback
@@ -1980,6 +2048,7 @@ def generate_bdd():
         if not user_input:
             return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
+        sampling = _parse_sampling(data)
         # Step 2 继承 Step 1 的 run_id（缺失则新建）
         run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
                                 (data.get('module_type') or '').strip() or None,
@@ -1990,6 +2059,7 @@ def generate_bdd():
             project_root=str(PROJECT_ROOT),
             debug=True
         )
+        generator.sampling = sampling   # None = 用 provider 默认值
 
         if model and llm_name in ('openai', 'gemini'):
             try:
@@ -2027,6 +2097,7 @@ def generate_bdd():
             'run_id': run_id,
             'model_override_ignored': _ctx['extra']['model_override_ignored'],
             'model_requested': _ctx['extra']['model_requested'],
+            'call_meta': _last_call_meta(run_id),
         })
 
     except Exception as e:
@@ -2059,6 +2130,50 @@ def download_bdd(filename):
         return jsonify({'error': 'File not found'}), 404
 
     return send_from_directory(str(file_path.parent.absolute()), file_path.name, as_attachment=True, download_name=filename)
+
+
+@app.route('/api/sampling-info')
+def sampling_info():
+    """各 provider 支持哪些采样参数、默认值是多少。
+
+    前端据此决定控件置灰与 placeholder。从 provider 类直接读取，
+    避免在 JS 里另抄一份会与后端漂移的表。
+    """
+    info = {}
+    for name in ('groq', 'gemini', 'deepseek', 'openai', 'claude',
+                 'grok', 'qwen', 'mistral', 'together'):
+        cls = _provider_class(name)
+        if cls is None:
+            continue
+        defaults = getattr(cls, 'DEFAULT_SAMPLING', {}) or {}
+        # Gemini 非流式路径叫 rest，其余叫 default——统一成前端易用的两个键
+        nonstream = defaults.get('default') or defaults.get('rest') or {}
+        stream = defaults.get('stream') or {}
+        info[name] = {
+            'supported': sorted(getattr(cls, 'SUPPORTED_SAMPLING', set())),
+            'defaults': {'nonstream': nonstream, 'stream': stream},
+            'field_map': getattr(cls, 'SAMPLING_FIELD_MAP', {}),
+        }
+    # OpenAI 的 GPT-5 系列强制 temperature=1，前端需据此置灰
+    info.setdefault('openai', {})['forced_note'] = (
+        'GPT-5 series forces temperature=1; the value cannot be overridden')
+    return jsonify({'success': True, 'providers': info})
+
+
+def _provider_class(name):
+    """按名字拿到 provider 类（不实例化，因此不需要 api_key）。"""
+    try:
+        import llm_providers as lp
+    except ImportError:
+        import src.llm_providers as lp
+    mapping = {
+        'groq': 'GroqProvider', 'gemini': 'GeminiProvider',
+        'deepseek': 'DeepSeekProvider', 'openai': 'OpenAIProvider',
+        'claude': 'ClaudeProvider', 'grok': 'GrokProvider',
+        'qwen': 'QwenProvider', 'mistral': 'MistralProvider',
+        'together': 'TogetherProvider',
+    }
+    return getattr(lp, mapping.get(name, ''), None)
 
 
 @app.route('/api/llm-list')
