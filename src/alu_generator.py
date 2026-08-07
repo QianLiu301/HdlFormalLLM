@@ -43,6 +43,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
+try:
+    from src import prompt_store as _prompt_store
+except ImportError:  # 兼容把 src/ 直接加进 sys.path 的运行方式
+    try:
+        import prompt_store as _prompt_store
+    except ImportError:
+        _prompt_store = None
+
+
 
 # ============================================================================
 # Automatic Proxy Setup (from config/llm_config.json)
@@ -278,7 +287,7 @@ class ALUGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=max_tokens,
-                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
                     sampling=getattr(self, "sampling", None)
                 )
             else:
@@ -297,7 +306,7 @@ class ALUGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=retry_tokens,
-                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
                     sampling=getattr(self, "sampling", None)
                 )
                 if response:
@@ -352,6 +361,24 @@ class ALUGenerator:
             ops_list.append(f"  - {op_name} (opcode {opcode}): {desc}")
 
         ops_text = "\n".join(ops_list)
+
+        # prompt 已外置到 prompts/duv_alu/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            'bitwidth': bitwidth,
+            'bitwidth - 1': bitwidth - 1,
+            'module_name': module_name,
+            'ops_text': ops_text,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'duv_alu', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
 
         prompt = f"""Generate a high-quality, synthesizable Verilog RTL design for a {bitwidth}-bit ALU.
 REQUIREMENTS:

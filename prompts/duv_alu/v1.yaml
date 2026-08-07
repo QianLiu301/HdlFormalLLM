@@ -1,0 +1,60 @@
+"version": |-
+  v1
+"stage": |-
+  duv_alu
+"source": |-
+  alu_generator.py::_create_alu_prompt
+"system": |-
+  You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.
+"user": "Generate a high-quality, synthesizable Verilog RTL design for a {{ bitwidth }}-bit ALU.\nREQUIREMENTS:\n\n1. Module Interface:\n   - Module name: {{ module_name }}\n   - Inputs:\n     * a: {{ bitwidth }}-bit operand A\n     * b: {{ bitwidth }}-bit operand B  \n     * opcode: 4-bit operation selector\n     * clk: clock signal\n     * rst: active-high synchronous reset\n   - Outputs:\n     * result: {{ bitwidth }}-bit result\n     * zero: zero flag (result == 0)\n     * overflow: overflow flag\n     * negative: negative flag (MSB of result)\n\n2. Operations to implement:\n{{ ops_text }}\n\n3. Design Requirements:\n   - Synchronous design with registered outputs\n   - Proper reset handling (all outputs to 0 on reset)\n   - Combinational logic for operations\n   - Sequential logic for output registers\n   - Clean, readable code with comments\n   - Synthesizable RTL (no delays, no X/Z)\n\n4. Code Quality:\n   - Use Verilog-2001 syntax ONLY (NOT SystemVerilog)\n   - Do NOT use inline for-loop variable declarations like for(integer i=0;...)\n     Instead declare integer i; BEFORE the for loop\n   - Do NOT use `logic` type - use `reg` and `wire` only\n   - Include module header comments\n   - Comment each operation case\n   - Use meaningful signal names\n   - Proper indentation\n\nIMPORTANT VERILOG SYNTAX RULE:\n   - When a case branch has MORE THAN ONE statement, you MUST wrap them\n     in begin/end blocks. Failure to do so causes syntax errors.\n   - Example: 4'b0000: begin ... end  (NOT 4'b0000: stmt1; stmt2;)\n\nEXAMPLE STRUCTURE:\n```verilog\nmodule {{ module_name }} (\n    input wire clk,\n    input wire rst,\n    input wire [{{ bitwidth - 1 }}:0] a,\n    input wire [{{ bitwidth - 1 }}:0] b,\n    input wire [3:0] opcode,\n    output reg [{{ bitwidth - 1 }}:0] result,\n    output reg zero,\n    output reg overflow,\n    output reg negative\n);\n\n    // Combinational logic for operations\n    reg [{{ bitwidth - 1 }}:0] temp_result;\n    reg temp_overflow;\n\n    always @(*) begin\n        temp_overflow = 1'b0;\n        case (opcode)\n            4'b0000: begin // ADD\n                temp_result = a + b;\n                temp_overflow = (a[{{ bitwidth - 1 }}] & b[{{ bitwidth - 1 }}] & ~temp_result[{{ bitwidth - 1 }}]) |\n                                (~a[{{ bitwidth - 1 }}] & ~b[{{ bitwidth - 1 }}] & temp_result[{{ bitwidth - 1 }}]);\n            end\n            4'b0001: begin // SUB\n                temp_result = a - b;\n                temp_overflow = (a[{{ bitwidth - 1 }}] & ~b[{{ bitwidth - 1 }}] & ~temp_result[{{ bitwidth - 1 }}]) |\n                                (~a[{{ bitwidth - 1 }}] & b[{{ bitwidth - 1 }}] & temp_result[{{ bitwidth - 1 }}]);\n            end\n            4'b0010: temp_result = a & b;  // AND (single statement, no begin/end needed)\n            4'b0011: temp_result = a | b;  // OR\n            default: temp_result = {{ bitwidth }}'b0;\n        endcase\n    end\n\n    // Sequential logic for output registers\n    always @(posedge clk) begin\n        if (rst) begin\n            result <= 0;\n            zero <= 0;\n            overflow <= 0;\n            negative <= 0;\n        end else begin\n            result <= temp_result;\n            zero <= (temp_result == 0);\n            overflow <= temp_overflow;\n            negative <= temp_result[{{ bitwidth - 1 }}];\n        end\n    end\n\nendmodule\n```\n\nGenerate ONLY the Verilog code. No explanations before or after.\nStart with `module` and end with `endmodule`.\n"
+"variables":
+- |-
+  bitwidth
+- |-
+  module_name
+- |-
+  bitwidth
+- |-
+  bitwidth
+- |-
+  bitwidth
+- |-
+  ops_text
+- |-
+  module_name
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth - 1
+- |-
+  bitwidth
+- |-
+  bitwidth - 1

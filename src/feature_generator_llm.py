@@ -39,6 +39,19 @@ from pathlib import Path
 from typing import Dict, Optional, List
 from datetime import datetime
 
+try:
+    from src import prompt_store as _prompt_store
+except ImportError:
+    try:
+        import prompt_store as _prompt_store
+    except ImportError:
+        _prompt_store = None
+
+# Step 2 的 system prompt，所有 provider 共用一份，确保跨模型对比公平
+BDD_SYSTEM_PROMPT = ("You are a hardware verification expert specializing in "
+                     "BDD test generation.")
+
+
 # ============================================================================
 # Proxy Setup (same as spec_generator)
 # ============================================================================
@@ -383,6 +396,24 @@ class FeatureGeneratorLLM:
             ops_list.append(f"{op} (opcode: {opcode})")
         ops_str = '\n- '.join(ops_list)
 
+        # prompt 已外置到 prompts/bdd_alu/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            "req['num_tests']": req['num_tests'],
+            "req['bitwidth']": req['bitwidth'],
+            'max_value': max_value,
+            'ops_str': ops_str,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'bdd_alu', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
+
         prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
     Generate a Gherkin-format Feature file for ALU testing.
 
@@ -440,6 +471,24 @@ class FeatureGeneratorLLM:
     def _create_counter_prompt(self, req: Dict) -> str:
         """Create prompt for Counter Feature file"""
         max_value = (1 << req['bitwidth']) - 1
+
+        # prompt 已外置到 prompts/bdd_counter/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            "req['num_tests']": req['num_tests'],
+            "req['bitwidth']": req['bitwidth'],
+            'max_value': max_value,
+            'max_value - 1': max_value - 1,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'bdd_counter', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
 
         prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
     Generate a Gherkin-format Feature file for Counter testing.
@@ -505,6 +554,25 @@ class FeatureGeneratorLLM:
         max_value = (1 << req['bitwidth']) - 1
         depth = req.get('depth', 16)
         addr_width = (depth - 1).bit_length()
+
+        # prompt 已外置到 prompts/bdd_regfile/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            "req['num_tests']": req['num_tests'],
+            "req['bitwidth']": req['bitwidth'],
+            'max_value': max_value,
+            'depth': depth,
+            'addr_width': addr_width,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'bdd_regfile', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
 
         prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
     Generate a Gherkin-format Feature file for Register File testing.
@@ -579,6 +647,22 @@ class FeatureGeneratorLLM:
     def _create_cpu_prompt(self, req: Dict) -> str:
         """Create prompt for RISC-V CPU Feature file"""
         pipeline_stages = req.get('pipeline_stages', 3)
+
+        # prompt 已外置到 prompts/bdd_cpu/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            "req['num_tests']": req['num_tests'],
+            'pipeline_stages': pipeline_stages,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'bdd_cpu', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
 
         prompt = f"""You are an expert in hardware verification and BDD (Behavior-Driven Development).
     Generate a Gherkin-format Feature file for RISC-V CPU testing.
@@ -688,7 +772,7 @@ class FeatureGeneratorLLM:
             response = self.llm._call_api(
                 prompt,
                 max_tokens=4000,  # Features can be long
-                system_prompt="You are a hardware verification expert specializing in BDD test generation.",
+                system_prompt=getattr(self, "_rendered_system", None) or BDD_SYSTEM_PROMPT,
                 sampling=getattr(self, "sampling", None)
             )
 
@@ -744,9 +828,11 @@ class FeatureGeneratorLLM:
             content = self.llm._call_api_text(
                 prompt,
                 max_tokens=max_tokens,
-                system_prompt=("You are a hardware verification expert specializing in "
-                               "BDD test generation. Generate feature files in strict "
-                               "Gherkin format."),
+                # 与其他 provider 使用同一句 system prompt。此前这里多一句
+                # "Generate feature files in strict Gherkin format."，
+                # 意味着 OpenAI 收到的指令比其他 8 家多，跨模型对比在这一层
+                # 并不公平。那句原本是为补偿早期的 JSON mode 问题，该问题已修。
+                system_prompt=getattr(self, "_rendered_system", None) or BDD_SYSTEM_PROMPT,
                 sampling=getattr(self, "sampling", None),
             )
 

@@ -160,11 +160,31 @@ def _current_labels() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def record_call_meta(**fields):
-    """provider 在一次被埋点的调用内登记事实。不在此类调用内时静默忽略。"""
-    cur = getattr(_local, 'call_meta', None)
-    if cur is None:
+    """登记本次调用的事实。
+
+    多数登记发生在被埋点的调用内部（采样参数、finish_reason 等）。但 prompt
+    是在调用**之前**渲染的，那时 call_meta 槽还不存在——这类登记先进暂存区，
+    由下一次调用开始时取走。暂存区在取走时清空，因此至多影响紧随其后的一次调用。
+    """
+    clean = {k: v for k, v in fields.items() if v is not None}
+    if not clean:
         return
-    cur.update({k: v for k, v in fields.items() if v is not None})
+    cur = getattr(_local, 'call_meta', None)
+    if cur is not None:
+        cur.update(clean)
+        return
+    pending = getattr(_local, 'pending_meta', None)
+    if pending is None:
+        pending = {}
+        _local.pending_meta = pending
+    pending.update(clean)
+
+
+def _take_pending_meta() -> Dict[str, Any]:
+    """取走并清空暂存区（调用开始时由埋点包装器调用）。"""
+    pending = getattr(_local, 'pending_meta', None) or {}
+    _local.pending_meta = None
+    return dict(pending)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +264,13 @@ def _api_path(obj, method: str) -> str:
     return method
 
 
+def _text_sha256(text) -> Optional[str]:
+    if not text:
+        return None
+    import hashlib
+    return hashlib.sha256(str(text).encode('utf-8')).hexdigest()
+
+
 def _auto_extra(obj, cls_name: str, method: str, call_meta: Dict = None) -> Dict[str, Any]:
     """埋点包装器能自行观测到的事实（与调用方传入的意图区分开）。
 
@@ -286,21 +313,28 @@ def _wrap_regular(cls_name, name, fn):
         system_prompt = kwargs.get('system_prompt')
         start = time.time()
         _local.in_call = True
-        _local.call_meta = {}          # provider 在调用期间往里登记事实
+        # 调用前渲染 prompt 时登记的信息在暂存区，这里取走作为初值
+        _local.call_meta = _take_pending_meta()
         try:
             result = fn(self, prompt, *args, **kwargs)
             log_call(cls_name, model, name, prompt,
                      response=result if isinstance(result, str) else str(result),
                      system_prompt=system_prompt, max_tokens=max_tokens,
                      latency_ms=int((time.time() - start) * 1000), success=True,
-                     extra=_auto_extra(self, cls_name, name, _local.call_meta))
+                     extra=_auto_extra(self, cls_name, name, dict(
+                         _local.call_meta or {},
+                         prompt_sha256=_text_sha256(prompt),
+                         system_prompt_sha256=_text_sha256(system_prompt))))
             return result
         except Exception as e:
             log_call(cls_name, model, name, prompt,
                      system_prompt=system_prompt, max_tokens=max_tokens,
                      latency_ms=int((time.time() - start) * 1000),
                      success=False, error=f"{type(e).__name__}: {e}",
-                     extra=_auto_extra(self, cls_name, name, _local.call_meta))
+                     extra=_auto_extra(self, cls_name, name, dict(
+                         _local.call_meta or {},
+                         prompt_sha256=_text_sha256(prompt),
+                         system_prompt_sha256=_text_sha256(system_prompt))))
             raise
         finally:
             _local.in_call = False
@@ -318,6 +352,9 @@ def _wrap_stream(cls_name, name, fn):
         max_tokens = kwargs.get('max_tokens')
         system_prompt = kwargs.get('system_prompt')
         labels = _current_labels()  # 生成器可能在 context 退出后才被消费，先快照
+        # 暂存的 prompt 元信息同样在此刻取走：生成器创建与被消费之间可能
+        # 夹着别的调用，那时再取就会拿到别人的
+        pending = _take_pending_meta()
         start = time.time()
         chunks = []
 
@@ -326,7 +363,7 @@ def _wrap_stream(cls_name, name, fn):
             # 守卫在生成器体内设置：wrapper 只负责创建生成器，真正执行发生在被消费时。
             # 流式失败时 provider 会回退调用 self._call_api()，需一并抑制其重复记录。
             _local.in_call = True
-            _local.call_meta = {}
+            _local.call_meta = dict(pending)
             try:
                 for chunk in fn(self, prompt, *args, **kwargs):
                     if isinstance(chunk, str):
@@ -345,7 +382,10 @@ def _wrap_stream(cls_name, name, fn):
                              system_prompt=system_prompt, max_tokens=max_tokens,
                              latency_ms=int((time.time() - start) * 1000),
                              success=success, error=error, streaming=True,
-                             extra=_auto_extra(self, cls_name, name, meta))
+                             extra=_auto_extra(self, cls_name, name, dict(
+                                 meta,
+                                 prompt_sha256=_text_sha256(prompt),
+                                 system_prompt_sha256=_text_sha256(system_prompt))))
         return gen()
     wrapper._exp_logged = True
     return wrapper

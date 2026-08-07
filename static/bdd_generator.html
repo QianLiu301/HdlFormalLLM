@@ -669,6 +669,32 @@
         .sampling-note { grid-column: 1 / -1; font-size: 11.5px; color: #6b7280; margin-top: 2px; }
         .sampling-seed-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px;
                               color: #4b5563; white-space: nowrap; }
+        /* ---- Prompt panel (A5-3) ---- */
+        .prompt-panel { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 8px;
+                        background: #fafafa; }
+        .prompt-panel > summary { cursor: pointer; padding: 10px 14px; font-size: 13px;
+                                  color: #374151; user-select: none; list-style: revert; }
+        .prompt-body { padding: 4px 14px 14px; }
+        .prompt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                       margin-bottom: 10px; font-size: 12.5px; color: #4b5563; }
+        .prompt-head select { padding: 4px 8px; font-size: 12.5px;
+                              border: 1px solid #d1d5db; border-radius: 6px; }
+        .prompt-sha { font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+                      color: #6b7280; }
+        .prompt-section-label { font-size: 11.5px; color: #6b7280; text-transform: uppercase;
+                                letter-spacing: .04em; margin: 8px 0 4px; }
+        .prompt-text { width: 100%; box-sizing: border-box; font-family: 'JetBrains Mono', monospace;
+                       font-size: 11.5px; line-height: 1.5; padding: 8px 10px;
+                       border: 1px solid #d1d5db; border-radius: 6px; background: #fff;
+                       color: #111827; resize: vertical; }
+        .prompt-text[readonly] { background: #f3f4f6; color: #374151; }
+        .prompt-custom-warn { color: #b45309; font-size: 12.5px; margin-bottom: 6px; }
+        .prompt-vars { margin-top: 10px; font-family: 'JetBrains Mono', monospace;
+                       font-size: 11.5px; color: #4b5563; }
+        .prompt-vars div { padding: 1px 0; }
+        .prompt-btn { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db;
+                      border-radius: 6px; background: #fff; color: #374151; cursor: pointer; }
+        .prompt-btn:hover { background: #f3f4f6; }
         /* ---- Result meta line (A3-6) ---- */
         .call-meta { font-size: 12px; color: #6b7280; margin-top: 6px;
                      font-family: 'JetBrains Mono', monospace; }
@@ -902,6 +928,7 @@
                             </div>
                         </div>
                         <details class="sampling-panel" id="hw-sampling"></details>
+                        <details class="prompt-panel" id="hw-prompt"></details>
                         <div class="divider"><span>or use natural language</span></div>
                         <div class="form-group">
                             <label>Natural Language Input</label>
@@ -1244,6 +1271,7 @@
                         </div>
                     </div>
                     <details class="sampling-panel" id="bdd-sampling"></details>
+                    <details class="prompt-panel" id="bdd-prompt"></details>
                     <div class="form-group">
                         <label>Requirements (auto-filled based on DUT)</label>
                         <textarea id="bdd-input"
@@ -2082,6 +2110,168 @@
                 if (v !== '') out[f.key] = Number(v);
             }
             return Object.keys(out).length ? out : null;
+        }
+
+        // ============================================================
+        // A5-3：Prompt 面板
+        //
+        // prompt 此前是硬编码 f-string，无法从外部核对。现在模板存在
+        // prompts/<stage>/，这里把它取来展示、允许编辑。编辑内容按 step
+        // 存在内存里，切换 provider/model 不会丢失。
+        //
+        // stage 由 Step 与模块类型共同决定（duv_alu / bdd_counter ...），
+        // 所以换模块类型时要重新拉取。
+        // ============================================================
+        const PROMPT_TPL = {};      // stage -> {versions, templates}
+        const PROMPT_EDITS = {};    // step -> {stage, user, system}
+
+        function promptStageFor(step) {
+            const mt = step === 'hw'
+                ? (document.getElementById('hw-module') || {}).value
+                : (currentDUT ? currentDUT.moduleType : 'alu');
+            const t = (mt || 'alu').toLowerCase();
+            const key = (t === 'regfile') ? 'register' : t;
+            return step === 'hw' ? `duv_${key}`
+                                 : `bdd_${t === 'register' ? 'regfile' : t}`;
+        }
+
+        async function loadPromptTemplate(step) {
+            const stage = promptStageFor(step);
+            if (!PROMPT_TPL[stage]) {
+                try {
+                    const r = await fetch(`/api/prompts/${stage}`);
+                    const d = await r.json();
+                    if (d.success) PROMPT_TPL[stage] = d;
+                } catch (e) { console.warn('prompt template unavailable', e); }
+            }
+            renderPromptPanel(step);
+        }
+
+        function renderPromptPanel(step) {
+            const host = document.getElementById(`${step}-prompt`);
+            if (!host) return;
+            const stage = promptStageFor(step);
+            const info = PROMPT_TPL[stage];
+            if (!info) { host.innerHTML = '<summary>Prompt (unavailable)</summary>'; return; }
+
+            const edit = PROMPT_EDITS[step];
+            const custom = !!(edit && edit.stage === stage);
+            const ver = (custom && edit.version) || 'v1';
+            const tpl = info.templates[ver] || {};
+            const sysText = custom ? edit.system : (tpl.system || '');
+            const userText = custom ? edit.user : (tpl.user || '');
+            const opts = info.versions.map(v =>
+                `<option value="${v}"${v === ver ? ' selected' : ''}>${v}${v === info.default ? ' (default)' : ''}</option>`).join('');
+
+            host.innerHTML = `
+              <summary>Prompt <span style="color:#9ca3af">(${ver}${custom ? ', custom' : ''})</span></summary>
+              <div class="prompt-body">
+                <div class="prompt-head">
+                  <span>Template:</span>
+                  <select id="${step}-prompt-version" onchange="onPromptVersionChange('${step}')">${opts}</select>
+                  <span class="prompt-sha">stage: ${stage} · sha256: ${(tpl.user_sha256 || '').slice(0, 12)}</span>
+                  <span style="flex:1"></span>
+                  <button type="button" class="prompt-btn" id="${step}-prompt-edit"
+                          onclick="togglePromptEdit('${step}')">${custom ? 'Done' : 'Edit'}</button>
+                  <button type="button" class="prompt-btn" onclick="resetPrompt('${step}')"
+                          ${custom ? '' : 'disabled'}>Reset to template</button>
+                </div>
+                ${custom ? '<div class="prompt-custom-warn">⚠ Using custom prompt</div>' : ''}
+                <div class="prompt-section-label">System</div>
+                <textarea class="prompt-text" id="${step}-prompt-system" rows="3"
+                          ${custom ? '' : 'readonly'}
+                          oninput="onPromptEdited('${step}')">${escapeHtml(sysText)}</textarea>
+                <div class="prompt-section-label">User</div>
+                <textarea class="prompt-text" id="${step}-prompt-user" rows="14"
+                          ${custom ? '' : 'readonly'}
+                          oninput="onPromptEdited('${step}')">${escapeHtml(userText)}</textarea>
+                <div class="prompt-vars" id="${step}-prompt-vars"></div>
+              </div>`;
+            renderPromptVars(step, tpl.variables || []);
+        }
+
+        /** 变量列表：长文本只显示字符数，避免把整段 DUV 代码摊开 */
+        function renderPromptVars(step, variables) {
+            const host = document.getElementById(`${step}-prompt-vars`);
+            if (!host) return;
+            const vals = currentPromptVarValues(step);
+            const uniq = [...new Set(variables)];
+            if (!uniq.length) { host.innerHTML = ''; return; }
+            const rows = uniq.map(v => {
+                let shown = '(supplied at generation time)';
+                if (v in vals) {
+                    const raw = vals[v];
+                    shown = (typeof raw === 'string' && raw.length > 40)
+                        ? `<${raw.length.toLocaleString()} chars>` : JSON.stringify(raw);
+                }
+                return `<div>&nbsp;&nbsp;{{ ${escapeHtml(v)} }} = ${escapeHtml(String(shown))}</div>`;
+            }).join('');
+            host.innerHTML = `<div style="color:#6b7280">Available variables:</div>${rows}`;
+        }
+
+        /** 面板能预知的变量值（其余在生成时由后端计算） */
+        function currentPromptVarValues(step) {
+            if (step === 'hw') {
+                const bw = parseInt((document.getElementById('hw-bitwidth') || {}).value) || null;
+                const mt = (document.getElementById('hw-module') || {}).value;
+                const out = {};
+                if (bw) { out['bitwidth'] = bw; out['bitwidth - 1'] = bw - 1; }
+                if (mt) out['module_name'] = mt;
+                const depth = parseInt((document.getElementById('hw-depth') || {}).value);
+                if (depth) out['depth'] = depth;
+                const ps = parseInt((document.getElementById('hw-pipeline') || {}).value);
+                if (ps) out['pipeline_stages'] = ps;
+                return out;
+            }
+            return currentDUT ? {"req['bitwidth']": currentDUT.bitwidth} : {};
+        }
+
+        function onPromptVersionChange(step) {
+            const v = document.getElementById(`${step}-prompt-version`).value;
+            if (PROMPT_EDITS[step]) PROMPT_EDITS[step].version = v;
+            renderPromptPanel(step);
+        }
+
+        function togglePromptEdit(step) {
+            const stage = promptStageFor(step);
+            if (PROMPT_EDITS[step] && PROMPT_EDITS[step].stage === stage) {
+                onPromptEdited(step);           // 收尾时保存当前文本
+                renderPromptPanel(step);
+                return;
+            }
+            const ver = (document.getElementById(`${step}-prompt-version`) || {}).value || 'v1';
+            const tpl = (PROMPT_TPL[stage] || {}).templates[ver] || {};
+            PROMPT_EDITS[step] = {stage, version: ver,
+                                  system: tpl.system || '', user: tpl.user || ''};
+            renderPromptPanel(step);
+        }
+
+        function onPromptEdited(step) {
+            const e = PROMPT_EDITS[step];
+            if (!e) return;
+            const s = document.getElementById(`${step}-prompt-system`);
+            const u = document.getElementById(`${step}-prompt-user`);
+            if (s) e.system = s.value;
+            if (u) e.user = u.value;
+        }
+
+        function resetPrompt(step) {
+            delete PROMPT_EDITS[step];
+            renderPromptPanel(step);
+        }
+
+        /** 生成请求里附带的 prompt 相关字段 */
+        function promptPayload(step) {
+            const stage = promptStageFor(step);
+            const e = PROMPT_EDITS[step];
+            const ver = (document.getElementById(`${step}-prompt-version`) || {}).value || 'v1';
+            if (!e || e.stage !== stage) return {prompt_version: ver};
+            const tpl = (PROMPT_TPL[stage] || {}).templates[e.version || ver] || {};
+            const out = {prompt_version: e.version || ver};
+            // 只在真的改动过时发送覆盖，避免把未改动的内容当成 custom 记录
+            if (e.user !== (tpl.user || '')) out.prompt_override = e.user;
+            if (e.system !== (tpl.system || '')) out.system_override = e.system;
+            return out;
         }
 
         // ============================================================
@@ -3206,7 +3396,8 @@
                 input: naturalInput,
                 model,
                 workflow_mode: currentWorkflowMode,
-                sampling: collectSampling('hw')   // null = 全部留空 -> 用 provider 默认值
+                sampling: collectSampling('hw'),  // null = 全部留空 -> 用 provider 默认值
+                ...promptPayload('hw')
             }, 'duv');
 
             // In spec-first mode, pass BDD context so LLM can generate hardware matching the spec
@@ -3362,6 +3553,9 @@
                 llm: payload.llm
             };
 
+            // Step 2 的 prompt stage 由 DUT 类型决定，DUT 定了才能取对模板
+            loadPromptTemplate('bdd');
+
             const bddTemplate = BDD_TEMPLATES[payload.module_type] || BDD_TEMPLATES.other;
             let bddContent;
             if (payload.module_type === 'cpu') {
@@ -3424,7 +3618,7 @@
             // Step 2 继承 Step 1 的 run_id；同一 DUV 下重试只让 attempt 递增
             const payload = withRunIds(
                 { llm, model, input, module_type: currentDUT ? currentDUT.moduleType : null,
-                  sampling: collectSampling('bdd') }, 'bdd');
+                  sampling: collectSampling('bdd'), ...promptPayload('bdd') }, 'bdd');
 
             if (useStreaming) {
                 await generateBddWithStreaming(payload);
@@ -4311,6 +4505,18 @@
 
             // 采样面板：能力表来自后端，构建后按当前 provider 置灰
             loadSamplingInfo();
+            // Prompt 面板：stage 由 Step 与模块类型共同决定
+            loadPromptTemplate('hw');
+            loadPromptTemplate('bdd');
+            document.getElementById('hw-module')
+                ?.addEventListener('change', () => loadPromptTemplate('hw'));
+            ['hw-bitwidth', 'hw-depth', 'hw-pipeline'].forEach(id => {
+                document.getElementById(id)?.addEventListener('change', () => {
+                    const stage = promptStageFor('hw');
+                    const tpl = (PROMPT_TPL[stage] || {}).templates || {};
+                    renderPromptVars('hw', (tpl.v1 || {}).variables || []);
+                });
+            });
             // stream 开关会改变默认值（Gemini 非流式 0.4 / 流式 0.3）
             ['hw', 'bdd'].forEach(step => {
                 document.getElementById(`${step}-stream`)

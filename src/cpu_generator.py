@@ -20,6 +20,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List
 
+try:
+    from src import prompt_store as _prompt_store
+except ImportError:  # 兼容把 src/ 直接加进 sys.path 的运行方式
+    try:
+        import prompt_store as _prompt_store
+    except ImportError:
+        _prompt_store = None
+
+
 
 class CPUGenerator:
     """
@@ -180,7 +189,7 @@ class CPUGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=20000,  # CPU needs more tokens
-                    system_prompt="You are an expert CPU architect and Verilog designer. Generate high-quality, synthesizable RTL code for a RISC-V processor.",
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert CPU architect and Verilog designer. Generate high-quality, synthesizable RTL code for a RISC-V processor.",
                     sampling=getattr(self, "sampling", None)
                 )
             else:
@@ -228,6 +237,22 @@ class CPUGenerator:
 
     def _create_cpu_prompt(self, bitwidth: int, pipeline_stages: int, module_name: str) -> str:
         """Create prompt for CPU generation"""
+
+        # prompt 已外置到 prompts/duv_cpu/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            'pipeline_stages': pipeline_stages,
+            'module_name': module_name,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'duv_cpu', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
 
         prompt = f"""Generate a synthesizable Verilog module for a {pipeline_stages}-stage pipelined RISC-V RV32I CPU.
 

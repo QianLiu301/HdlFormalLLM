@@ -1,0 +1,34 @@
+"version": |-
+  v1
+"stage": |-
+  bdd_regfile
+"source": |-
+  feature_generator_llm.py::_create_regfile_prompt
+"system": |-
+  You are a hardware verification expert specializing in BDD test generation.
+"user": "You are an expert in hardware verification and BDD (Behavior-Driven Development).\n    Generate a Gherkin-format Feature file for Register File testing.\n\n    CRITICAL FORMAT REQUIREMENTS:\n    1. Use strict Gherkin syntax with Scenario Outline and Examples tables\n    2. Examples table MUST use pipe (|) separators with consistent spacing\n    3. Test read/write operations\n    4. Test that register 0 always reads as 0 (RISC-V style)\n\n    EXAMPLE FORMAT:\n\n    Feature: {{ depth }}x{{ req['bitwidth'] }}-bit Register File Verification\n      As a hardware verification engineer\n      I want to verify the Register File implementation\n      So that I can ensure correct read/write behavior\n\n      Background:\n        Given the Register File has {{ depth }} registers of {{ req['bitwidth'] }}-bit width\n\n      @write_read\n      Scenario Outline: Verify write and read back\n        Given I write <Write_Data> to register <Reg_Addr>\n        When I read from register <Reg_Addr>\n        Then the read data should be <Expected_Data>\n\n        Examples:\n          | Reg_Addr | Write_Data | Expected_Data |\n          | 1        | 100        | 100           |\n          | 2        | 255        | 255           |\n          | 5        | 0          | 0             |\n          | 10       | {{ max_value }}| {{ max_value }}   |\n\n      @reg_zero\n      Scenario Outline: Verify register 0 always returns 0\n        Given I write <Write_Data> to register 0\n        When I read from register 0\n        Then the read data should be 0\n\n        Examples:\n          | Write_Data |\n          | 100        |\n          | {{ max_value }}|\n          | 1          |\n\n      @dual_read\n      Scenario Outline: Verify dual port read\n        Given I write <Data1> to register <Reg1>\n        And I write <Data2> to register <Reg2>\n        When I read from register <Reg1> on port 1\n        And I read from register <Reg2> on port 2\n        Then port 1 should return <Data1>\n        And port 2 should return <Data2>\n\n        Examples:\n          | Reg1 | Data1 | Reg2 | Data2 |\n          | 1    | 100   | 2    | 200   |\n          | 5    | 50    | 10   | 100   |\n\n    NOW GENERATE:\n    - Bitwidth: {{ req['bitwidth'] }}-bit\n    - Depth: {{ depth }} registers\n    - Address width: {{ addr_width }} bits\n    - Maximum data value: {{ max_value }}\n    - Include at least {{ req['num_tests'] }} test cases per scenario type\n\n    Generate the complete Feature file following the exact format above.\n    Output ONLY the Feature file content, no explanations.\n    "
+"variables":
+- |-
+  depth
+- |-
+  req['bitwidth']
+- |-
+  depth
+- |-
+  req['bitwidth']
+- |-
+  max_value
+- |-
+  max_value
+- |-
+  max_value
+- |-
+  req['bitwidth']
+- |-
+  depth
+- |-
+  addr_width
+- |-
+  max_value
+- |-
+  req['num_tests']

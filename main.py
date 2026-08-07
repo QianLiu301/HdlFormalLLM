@@ -1194,6 +1194,9 @@ def generate_hardware():
                 print(f"⚠️  Failed to read BDD file: {e}")
 
     sampling = _parse_sampling(data)
+    prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+    prompt_override = data.get('prompt_override') or None
+    system_override = data.get('system_override') or None
     # Step 1 = 依赖链起点，无条件新建 run_id。
     # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
@@ -1227,6 +1230,9 @@ def generate_hardware():
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
                 generator.sampling = sampling        # None = 用 provider 默认值
+                generator.prompt_version = prompt_version
+                generator.prompt_override = prompt_override
+                generator.system_override = system_override
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
@@ -1241,6 +1247,9 @@ def generate_hardware():
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
                 generator.sampling = sampling        # None = 用 provider 默认值
+                generator.prompt_version = prompt_version
+                generator.prompt_override = prompt_override
+                generator.system_override = system_override
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
 
@@ -1256,6 +1265,9 @@ def generate_hardware():
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
                 generator.sampling = sampling        # None = 用 provider 默认值
+                generator.prompt_version = prompt_version
+                generator.prompt_override = prompt_override
+                generator.system_override = system_override
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 
@@ -1271,6 +1283,9 @@ def generate_hardware():
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
                 generator.sampling = sampling        # None = 用 provider 默认值
+                generator.prompt_version = prompt_version
+                generator.prompt_override = prompt_override
+                generator.system_override = system_override
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
@@ -1347,6 +1362,9 @@ def generate_hardware_stream():
             module_type = parsed['module_type']
 
     sampling = _parse_sampling(data)
+    prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+    prompt_override = data.get('prompt_override') or None
+    system_override = data.get('system_override') or None
     # Step 1 = 依赖链起点，无条件新建 run_id。
     # 此端点（流式）在生成器构造后会替换 generator.llm 来应用 model 覆盖，
     # 对 gemini/openai 生效，故 model_used=True；非流式的同名端点没有这段逻辑。
@@ -1943,6 +1961,9 @@ def generate_bdd_stream():
         return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
     sampling = _parse_sampling(data)
+    prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+    prompt_override = data.get('prompt_override') or None
+    system_override = data.get('system_override') or None
     # Step 2 继承 Step 1 的 run_id（缺失则新建）；此端点确实会对 openai/gemini
     # 应用 model 覆盖，故 model_used=True
     run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
@@ -1961,6 +1982,9 @@ def generate_bdd_stream():
                 debug=False
             )
             generator.sampling = sampling   # None = 用 provider 默认值
+            generator.prompt_version = prompt_version
+            generator.prompt_override = prompt_override
+            generator.system_override = system_override
 
             if model and llm_name in ('openai', 'gemini'):
                 try:
@@ -2049,6 +2073,9 @@ def generate_bdd():
             return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
         sampling = _parse_sampling(data)
+        prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+        prompt_override = data.get('prompt_override') or None
+        system_override = data.get('system_override') or None
         # Step 2 继承 Step 1 的 run_id（缺失则新建）
         run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
                                 (data.get('module_type') or '').strip() or None,
@@ -2060,6 +2087,9 @@ def generate_bdd():
             debug=True
         )
         generator.sampling = sampling   # None = 用 provider 默认值
+        generator.prompt_version = prompt_version
+        generator.prompt_override = prompt_override
+        generator.system_override = system_override
 
         if model and llm_name in ('openai', 'gemini'):
             try:
@@ -2130,6 +2160,52 @@ def download_bdd(filename):
         return jsonify({'error': 'File not found'}), 404
 
     return send_from_directory(str(file_path.parent.absolute()), file_path.name, as_attachment=True, download_name=filename)
+
+
+@app.route('/api/prompts/<stage>')
+def get_prompt_templates(stage):
+    """某 stage 的可用 prompt 模板版本与内容。
+
+    stage 取值见 prompts/ 目录：duv_alu / duv_counter / duv_register /
+    duv_cpu / bdd_alu / bdd_counter / bdd_regfile / bdd_cpu
+    """
+    try:
+        from src import prompt_store as ps
+    except ImportError:
+        import prompt_store as ps
+
+    versions = ps.available(stage)
+    if not versions:
+        return jsonify({'success': False, 'error': f'unknown stage: {stage}'}), 404
+    out = {}
+    for v in versions:
+        doc = ps.load(stage, v) or {}
+        out[v] = {
+            'system': doc.get('system'),
+            'user': doc.get('user'),
+            'variables': doc.get('variables') or [],
+            'source': doc.get('source'),
+            'user_sha256': ps.sha256(doc.get('user')),
+            'system_sha256': ps.sha256(doc.get('system')),
+        }
+    return jsonify({'success': True, 'stage': stage,
+                    'versions': versions, 'default': 'v1', 'templates': out})
+
+
+@app.route('/api/prompts')
+def list_prompt_stages():
+    """列出全部 stage 及其版本，供前端把 Step/模块类型映射到 stage。"""
+    try:
+        from src import prompt_store as ps
+    except ImportError:
+        import prompt_store as ps
+    stages = {}
+    if ps.PROMPTS_DIR.is_dir():
+        for d in sorted(p for p in ps.PROMPTS_DIR.iterdir() if p.is_dir()):
+            vs = ps.available(d.name)
+            if vs:
+                stages[d.name] = vs
+    return jsonify({'success': True, 'stages': stages})
 
 
 @app.route('/api/sampling-info')

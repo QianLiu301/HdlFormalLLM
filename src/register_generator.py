@@ -19,6 +19,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List
 
+try:
+    from src import prompt_store as _prompt_store
+except ImportError:  # 兼容把 src/ 直接加进 sys.path 的运行方式
+    try:
+        import prompt_store as _prompt_store
+    except ImportError:
+        _prompt_store = None
+
+
 
 class RegFileGenerator:
     """
@@ -183,7 +192,7 @@ class RegFileGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=max_tokens,
-                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
                     sampling=getattr(self, "sampling", None)
                 )
             else:
@@ -206,7 +215,7 @@ class RegFileGenerator:
                 response = self.llm._call_api(
                     prompt,
                     max_tokens=retry_tokens,
-                    system_prompt="You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
                     sampling=getattr(self, "sampling", None)
                 )
                 if response:
@@ -244,6 +253,24 @@ class RegFileGenerator:
         # Calculate address width
         import math
         addr_width = max(1, int(math.ceil(math.log2(depth))))
+
+        # prompt 已外置到 prompts/duv_register/；模板不可用时回退到下方内置 f-string
+        _vars = {
+            'bitwidth': bitwidth,
+            'depth': depth,
+            'module_name': module_name,
+            'addr_width': addr_width,
+        }
+        if _prompt_store is not None:
+            _sys, _rendered = _prompt_store.render_stage(
+                'duv_register', _vars,
+                version=getattr(self, 'prompt_version', None) or 'v1',
+                override=getattr(self, 'prompt_override', None),
+                system_override=getattr(self, 'system_override', None))
+            if _rendered is not None:
+                # 渲染出的 system 暂存到实例上，调用点据此覆盖内置默认值
+                self._rendered_system = _sys
+                return _rendered
 
         prompt = f"""Generate a synthesizable Verilog module for a {depth}-register {bitwidth}-bit Register File.
         
