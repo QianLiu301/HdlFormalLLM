@@ -177,24 +177,6 @@ def calls_for(run_id, task_type):
     return rows
 
 
-def duv_module_name(path, fallback):
-    """从生成的 DUV 里解析真实模块名。
-
-    不能照搬网页前端的 f"{type}_{bitwidth}bit" 约定：Step 1 实际生成的是
-    `module alu (...)`，两者对不上会让 Step 3 产出实例化不存在模块的
-    testbench，Step 4 必然编译失败。以文件内容为准。
-    """
-    import re
-    try:
-        text = Path(path).read_text(encoding='utf-8', errors='replace')
-        m = re.search(r'^\s*module\s+(\w+)', text, re.M)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return fallback
-
-
 def iverilog_ok(path: Path):
     """能否单独编译通过（不含 testbench）。iverilog 缺失时返回 None。"""
     import subprocess, tempfile
@@ -308,10 +290,11 @@ def run_one(client, batch, provider, module_type, seed, session_id):
     row['bdd_parse_ok'] = 1 if 'Scenario' in content else 0
 
     # ---- Step 3: Testbench（确定性模板，不调 LLM）----
+    # 不传 module_name：后端从 dut_filepath 读出真实模块名（单一事实来源）
     tb = client.post('/api/generate-testbench', json={
         'bdd_filepath': bdd.get('filepath'),
+        'dut_filepath': duv.get('filepath'),
         'dut_info': {'module_type': module_type,
-                     'module_name': duv_module_name(duv.get('filepath'), module_type),
                      'bitwidth': BITWIDTH, 'depth': 32, 'pipeline_stages': 5},
     }).get_json()
     if not (tb and tb.get('success')):
