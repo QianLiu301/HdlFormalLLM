@@ -353,6 +353,32 @@ def _last_call_meta(run_id):
         return None
 
 
+def _module_name_from_verilog(path):
+    """从 Verilog 文件里读出顶层模块名；读不到返回 None。
+
+    Step 3 生成 testbench 时需要知道实例化哪个模块，而这个名字只有 DUV 文件
+    本身说了算——任何按约定拼出来的名字都可能与实际生成的不一致。
+    """
+    if not path:
+        return None
+    p = Path(path)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / path
+    if not p.is_file():
+        return None
+    try:
+        import re
+        text = p.read_text(encoding='utf-8', errors='replace')
+        # 跳过注释里的 module 字样
+        text = re.sub(r'//[^\n]*', '', text)
+        text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+        m = re.search(r'^\s*module\s+(\w+)', text, re.M)
+        return m.group(1) if m else None
+    except Exception as e:
+        print(f"⚠️  could not read module name from {path}: {e}")
+        return None
+
+
 def _apply_model_override(generator, llm_name, model) -> bool:
     """把用户选的 model 应用到已构造的 generator，返回是否真的应用了。
 
@@ -2311,6 +2337,17 @@ def generate_testbench():
 
         if not bdd_path.exists():
             return jsonify({'success': False, 'error': f'BDD file not found: {bdd_filepath}'}), 404
+
+        # DUV 文件是模块名的唯一事实来源。调用方以前自己拼
+        # f"{type}_{bitwidth}bit"，但 Step 1 生成的是 `module alu`，两者对不上时
+        # testbench 会实例化一个不存在的模块，仿真必然 elaboration 失败。
+        derived = _module_name_from_verilog(data.get('dut_filepath'))
+        if derived:
+            given = dut_info.get('module_name')
+            if given and given != derived:
+                print(f"⚠️  module_name '{given}' from request overridden by "
+                      f"'{derived}' read from the DUV file")
+            dut_info['module_name'] = derived
 
         # Initialize generator
         generator = TestbenchGenerator(

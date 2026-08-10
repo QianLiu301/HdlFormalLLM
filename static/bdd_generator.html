@@ -3539,6 +3539,18 @@
         // ============================================================
         // DUT Info
         // ============================================================
+        /** 当前 DUV 的仓库相对路径。Step 3 和 Step 4 都要用，放一处避免走样。 */
+        function dutFilePath() {
+            if (!currentDUT) return null;
+            // 上传的文件：直接用后端返回的保存路径
+            if (currentDUT.source === 'upload' && currentDUT.savedPath) {
+                return currentDUT.savedPath;
+            }
+            // 生成的文件：按 LLM 目录结构拼
+            const llmName = currentDUT.llm || (currentBDD && currentBDD.llm) || 'default';
+            return `output/dut/${llmName}/${currentDUT.filename}`;
+        }
+
         function saveDUTInfo(payload, filename, source) {
             const moduleNames = { 'alu': 'ALU', 'counter': 'Counter', 'regfile': 'Register File', 'cpu': 'RISC-V CPU' };
 
@@ -4300,13 +4312,15 @@
                 pipelineStages: currentBDD.pipelineStages || 5
             };
 
+            // 模块名不再由前端拼凑：Step 1 生成的是 `module alu`，而按
+            // `${type}_${bitwidth}bit` 拼出来的名字与之不符，会让 testbench
+            // 实例化一个不存在的模块、Step 4 elaboration 失败。改为把 DUV
+            // 路径交给后端，由它从文件里读出真实模块名（单一事实来源）。
             const payload = {
                 bdd_filepath: currentBDD.filepath,
+                dut_filepath: dutFilePath(),
                 dut_info: {
                     module_type: moduleInfo.moduleType,
-                    module_name: moduleInfo.moduleType === 'cpu'
-                        ? `riscv_${moduleInfo.pipelineStages}stage`
-                        : `${moduleInfo.moduleType}_${moduleInfo.bitwidth}bit`,
                     bitwidth: moduleInfo.bitwidth,
                     depth: moduleInfo.depth,
                     pipeline_stages: moduleInfo.pipelineStages
@@ -4648,16 +4662,7 @@
             // Construct paths
             const tbPath = `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}`;
 
-           // DUT path: 对于上传的文件，直接使用 savedPath；对于生成的文件，构建路径
-            let dutPath;
-            if (currentDUT.source === 'upload' && currentDUT.savedPath) {
-                // 上传的文件：直接使用后端返回的保存路径
-                dutPath = currentDUT.savedPath;
-            } else {
-                // 生成的文件：使用 LLM 目录结构
-                const llmName = currentDUT?.llm || currentBDD?.llm || 'default';
-                dutPath = `output/dut/${llmName}/${currentDUT.filename}`;
-            }
+            const dutPath = dutFilePath();
 
             try {
                 const response = await fetch('/api/run-simulation', {
