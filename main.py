@@ -404,6 +404,8 @@ def _web_ctx(data, task_type, module_name=None, new_run=False, model_used=False)
             'attempt': attempt,
             'model_requested': model_requested,
             'model_override_ignored': ignored,
+            # 批量采集时带上批次标识，便于事后从 llm_calls 精确筛出某一批
+            'batch': (data.get('batch') or '').strip() or None,
         },
     }
     return run_id, ctx
