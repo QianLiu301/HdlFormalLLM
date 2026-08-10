@@ -135,17 +135,34 @@ def done_cells(batch):
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------
-def available_providers(wanted):
-    """挑出真正能构造出来的 provider；缺 key 的跳过并说明原因。"""
+def available_providers(wanted, probe=True):
+    """挑出真正可用的 provider。
+
+    只看能否构造是不够的：claude 的 key 无效、qwen 账户欠费时对象都能建起来，
+    失败发生在 API 层。上一批因此在这两家上白跑了 60 次调用（10 runs × 3 重试
+    × 2 家）。这里补一次极小的探针调用，把它们提前剔除。
+    """
     sys.path.insert(0, str(PROJECT_ROOT / "benchmark"))
     import run_experiments as rx
     usable, skipped = [], {}
     for name in wanted:
         try:
-            rx.make_provider(name)
-            usable.append(name)
+            p = rx.make_provider(name)
         except Exception as e:
-            skipped[name] = f"{type(e).__name__}: {str(e)[:70]}"
+            skipped[name] = f"构造失败 {type(e).__name__}: {str(e)[:60]}"
+            continue
+        if not probe:
+            usable.append(name)
+            continue
+        try:
+            call = getattr(p, '_call_api_text', None) or p._call_api
+            resp = call("Reply with exactly: OK", max_tokens=200) or ""
+            if is_fallback(resp):
+                skipped[name] = "探针调用失败（API 返回兜底文本；key 无效或账户异常）"
+            else:
+                usable.append(name)
+        except Exception as e:
+            skipped[name] = f"探针调用异常 {type(e).__name__}: {str(e)[:60]}"
     return usable, skipped
 
 

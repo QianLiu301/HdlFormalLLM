@@ -1541,38 +1541,24 @@ Respond with ONLY the JSON object, no other text.
     def _call_api(self, prompt: str, max_tokens: int = 500, system_prompt: str = None,
                   sampling: Optional[Dict] = None) -> str:
         """
-        统一的 API 调用接口
+        统一的 API 调用接口，返回纯文本——与其余 8 家 provider 一致。
 
-        自动路由到合适的端点:
-        - Codex 模型 → completions endpoint (返回纯文本)
-        - 其他模型 → chat completions endpoint with JSON mode (返回 JSON 字符串)
+        此前这里强制走 JSON mode 并返回 json.dumps(...)，于是生成的 Verilog
+        经序列化后换行变成字面量 "\\n"，写进 .v 文件就是单行文本，iverilog
+        直接 syntax error。基线批次里 OpenAI 的 DUV 编译通过率因此是 0/10。
+
+        JSON mode 原本是为 intent 解析设计的，而那两个用途
+        （generate_scenario_description / generate_feature_description）
+        本来就直接调用 _call_api_with_json_mode，不经过这里，所以把本方法
+        改回文本不影响它们。
         """
         print(f"   🔍 [DEBUG][OpenAI._call_api] Called with max_tokens={max_tokens}")
 
-        # 🔑 Codex 模型使用 completions 接口
+        # 🔑 Codex 模型使用 completions 接口（本就返回纯文本，不再包装成 JSON）
         if self._is_codex_model(self.model):
-            text_result = self._call_api_completions(prompt, max_tokens)
+            return self._call_api_completions(prompt, max_tokens)
 
-            # 尝试将文本包装成 JSON 格式以保持一致性
-            try:
-                # 检查是否已经是 JSON
-                json.loads(text_result)
-                return text_result
-            except:
-                # 不是 JSON,包装成 JSON
-                wrapped_json = json.dumps({
-                    "scenario": text_result,
-                    "model": self.model
-                }, ensure_ascii=False, indent=2)
-                print(f"   ✅ [DEBUG][OpenAI._call_api] Wrapped text as JSON ({len(wrapped_json)} chars)")
-                return wrapped_json
-
-        # 其他模型使用 chat completions + JSON mode
-        result = self._call_api_with_json_mode(prompt, max_tokens, system_prompt,
-                                               sampling=sampling)
-        json_str = json.dumps(result, ensure_ascii=False, indent=2)
-        print(f"   ✅ [DEBUG][OpenAI._call_api] Returning JSON string ({len(json_str)} chars)")
-        return json_str
+        return self._call_api_text(prompt, max_tokens, system_prompt, sampling=sampling)
 
 
 class ClaudeProvider(LLMProvider):
