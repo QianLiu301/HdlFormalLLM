@@ -669,6 +669,23 @@
         .sampling-note { grid-column: 1 / -1; font-size: 11.5px; color: #6b7280; margin-top: 2px; }
         .sampling-seed-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px;
                               color: #4b5563; white-space: nowrap; }
+        /* 参数名可点击展开释义 */
+        .sampling-body label.samp-label { display: inline-flex; align-items: center; gap: 5px;
+                                          cursor: help; user-select: none; }
+        .sampling-body label.samp-label:hover { color: #111827; }
+        .samp-q { display: inline-flex; align-items: center; justify-content: center;
+                  width: 14px; height: 14px; border-radius: 50%; font-size: 10px;
+                  line-height: 1; border: 1px solid #c7cdd6; color: #6b7280; }
+        label.samp-label:hover .samp-q,
+        label.samp-label-open .samp-q { border-color: #2563eb; color: #2563eb; }
+        .sampling-help { grid-column: 1 / -1; margin: -2px 0 4px; padding: 10px 12px;
+                         background: #fff; border: 1px solid #dbe3ef; border-left: 3px solid #2563eb;
+                         border-radius: 6px; font-size: 11.5px; line-height: 1.65; color: #4b5563; }
+        .sampling-help b { color: #1f2937; font-weight: 600; }
+        .sampling-help code { background: #f1f5f9; padding: 0 4px; border-radius: 3px;
+                              font-size: 11px; color: #1f2937; }
+        .sampling-help .samp-help-use { display: block; margin-top: 5px; padding-top: 5px;
+                                        border-top: 1px dashed #e2e8f0; color: #475569; }
         /* ---- Prompt panel (A5-3) ---- */
         .prompt-panel { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 8px;
                         background: #fafafa; }
@@ -1993,11 +2010,44 @@
         // ============================================================
         let SAMPLING_INFO = {};
 
+        // help：点击参数名展开的释义。写给不熟悉 LLM 采样参数的读者（评审、同行），
+        // 所以每条都说明「是什么」+「在硬件生成这个场景下该怎么用」。
         const SAMPLING_FIELDS = [
-            {key: 'temperature', label: 'temperature', min: 0, max: 2, step: 0.05, slider: true},
-            {key: 'top_p', label: 'top_p', min: 0, max: 1, step: 0.05, slider: true},
-            {key: 'seed', label: 'seed', slider: false},
-            {key: 'max_tokens', label: 'max_tokens', slider: false},
+            {key: 'temperature', label: 'temperature', min: 0, max: 2, step: 0.05, slider: true,
+             help: `<b>Randomness of the model's word choice.</b> At <code>0</code> the model always
+                    takes the most probable next token, so the same prompt tends to give the same
+                    answer. Higher values flatten the probabilities and let less likely tokens
+                    through, producing more varied — and less predictable — output.
+                    <span class="samp-help-use"><b>Here:</b> keep it low (<code>0–0.3</code>) when you
+                    want stable, compilable Verilog and repeatable experiments; raise it
+                    (<code>0.7–1.0</code>) when you deliberately want different designs or test
+                    scenarios across repeated runs.</span>`},
+            {key: 'top_p', label: 'top_p', min: 0, max: 1, step: 0.05, slider: true,
+             help: `<b>Nucleus sampling — how much of the probability mass stays in play.</b>
+                    <code>top_p = 0.9</code> means the model only samples from the smallest set of
+                    tokens whose probabilities add up to 90%, discarding the long tail. It limits
+                    randomness by cutting off unlikely tokens, whereas temperature rescales all of
+                    them.
+                    <span class="samp-help-use"><b>Here:</b> usually leave it blank and tune
+                    temperature only — changing both at once makes runs hard to attribute. Lower it
+                    (<code>0.8</code>) if the model wanders into odd syntax while you still want some
+                    variety.</span>`},
+            {key: 'seed', label: 'seed', slider: false,
+             help: `<b>Starting point of the random number generator.</b> With the same seed, prompt
+                    and model, a provider that supports seeding returns (near-)identical output.
+                    Not every provider honours it — unsupported ones grey this row out.
+                    <span class="samp-help-use"><b>Here:</b> tick <i>random each run</i> for normal
+                    experiments, so repetitions are genuinely independent samples. Fix a seed when
+                    you need to reproduce one specific result — e.g. re-showing a failure case or
+                    attaching a reproducible example to the paper.</span>`},
+            {key: 'max_tokens', label: 'max_tokens', slider: false,
+             help: `<b>Hard cap on the length of the reply.</b> The model is cut off once it emits
+                    this many tokens (roughly ¾ of a word each), even mid-line. It bounds cost and
+                    latency; it does not make the model write more.
+                    <span class="samp-help-use"><b>Here:</b> too low is a real failure mode — a
+                    truncated module has no <code>endmodule</code> and will not compile. If generated
+                    Verilog keeps ending abruptly, raise this. Leave blank to use the default the
+                    pipeline already sets per stage.</span>`},
         ];
 
         async function loadSamplingInfo() {
@@ -2029,18 +2079,31 @@
                              <label for="${id}-random">random each run</label>
                            </span>`
                         : '<span></span>');
-                rows += `<label id="${id}-label" for="${id}">${f.label}</label>
+                rows += `<label id="${id}-label" for="${id}" class="samp-label"
+                                onclick="toggleSamplingHelp('${id}')"
+                                >${f.label}<span class="samp-q">?</span></label>
                          ${slider}
                          <input type="number" id="${id}" step="${f.step || 1}"
-                                oninput="syncSamplingSlider('${step}','${f.key}')">`;
+                                oninput="syncSamplingSlider('${step}','${f.key}')">
+                         <div class="sampling-help" id="${id}-help" hidden>${f.help}</div>`;
             }
             host.innerHTML = `<summary>Advanced sampling parameters</summary>
                 <div class="sampling-body">${rows}
                   <div class="sampling-note" id="${step}-samp-note">
-                    Leave blank to use the provider's default.
+                    Leave blank to use the provider's default. Click a parameter name for an
+                    explanation of what it does.
                   </div>
                 </div>`;
             refreshSamplingPanel(step);
+        }
+
+        /** 点击参数名展开/收起释义框。置灰的行同样可以看说明——不懂才更需要看。 */
+        function toggleSamplingHelp(id) {
+            const box = document.getElementById(`${id}-help`);
+            const label = document.getElementById(`${id}-label`);
+            if (!box) return;
+            box.hidden = !box.hidden;
+            if (label) label.classList.toggle('samp-label-open', !box.hidden);
         }
 
         function syncSamplingSlider(step, key) {
