@@ -2257,6 +2257,7 @@ def sampling_info():
             'supported': sorted(getattr(cls, 'SUPPORTED_SAMPLING', set())),
             'defaults': {'nonstream': nonstream, 'stream': stream},
             'field_map': getattr(cls, 'SAMPLING_FIELD_MAP', {}),
+            'ranges': getattr(cls, 'SAMPLING_RANGES', {}),
         }
     # OpenAI 的 GPT-5 系列强制 temperature=1，前端需据此置灰
     info.setdefault('openai', {})['forced_note'] = (

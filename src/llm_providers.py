@@ -88,6 +88,17 @@ class LLMProvider(ABC):
     # 逻辑名 -> API 字段名，仅在两者不同时才需要列出（如 Mistral 的 random_seed）
     SAMPLING_FIELD_MAP: Dict[str, str] = {}
 
+    # 各参数的合法区间，供前端限制输入。省略 max 表示无明确上界。
+    # 上界并非各家一致（Anthropic 的 temperature 硬上界是 1.0，多数家是 2.0），
+    # 因此和 SUPPORTED_SAMPLING 一样由 provider 类声明、经 /api/sampling-info
+    # 下发；在 JS 里另抄一份会与后端漂移。
+    SAMPLING_RANGES: Dict[str, Dict[str, Any]] = {
+        'temperature': {'min': 0, 'max': 2, 'step': 0.05},
+        'top_p':       {'min': 0, 'max': 1, 'step': 0.05},
+        'seed':        {'min': 0, 'step': 1},
+        'max_tokens':  {'min': 1, 'step': 1},
+    }
+
     def __init_subclass__(cls, **kwargs):
         """子类定义时自动包装其 _call_api* 方法，实现调用级实验记录"""
         super().__init_subclass__(**kwargs)
@@ -1566,6 +1577,9 @@ class ClaudeProvider(LLMProvider):
     # Anthropic Messages API 不支持 seed
     DEFAULT_SAMPLING = {}
     SUPPORTED_SAMPLING = {'temperature', 'top_p', 'max_tokens'}
+    # Anthropic Messages API 的 temperature 上界是 1.0，不是多数家的 2.0
+    SAMPLING_RANGES = {**LLMProvider.SAMPLING_RANGES,
+                       'temperature': {'min': 0, 'max': 1, 'step': 0.05}}
 
     """
     Anthropic Claude API Provider - PAID

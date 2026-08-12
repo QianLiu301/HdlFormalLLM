@@ -2018,16 +2018,21 @@
                     takes the most probable next token, so the same prompt tends to give the same
                     answer. Higher values flatten the probabilities and let less likely tokens
                     through, producing more varied — and less predictable — output.
-                    <span class="samp-help-use"><b>Here:</b> keep it low (<code>0–0.3</code>) when you
-                    want stable, compilable Verilog and repeatable experiments; raise it
-                    (<code>0.7–1.0</code>) when you deliberately want different designs or test
-                    scenarios across repeated runs.</span>`},
+                    <b>Range:</b> most providers accept <code>0–2</code>, but Anthropic's Claude caps
+                    at <code>1</code> — the slider and the box adapt to the provider you picked, so
+                    you cannot enter a value its API would reject.
+                    <span class="samp-help-use"><b>Here:</b> useful settings, not limits — keep it low
+                    (<code>0–0.3</code>) when you want stable, compilable Verilog and repeatable
+                    experiments; raise it (<code>0.7–1.0</code>) when you deliberately want different
+                    designs or test scenarios across repeated runs. Above <code>1</code> output
+                    degrades quickly and is rarely useful for code.</span>`},
             {key: 'top_p', label: 'top_p', min: 0, max: 1, step: 0.05, slider: true,
              help: `<b>Nucleus sampling — how much of the probability mass stays in play.</b>
                     <code>top_p = 0.9</code> means the model only samples from the smallest set of
                     tokens whose probabilities add up to 90%, discarding the long tail. It limits
                     randomness by cutting off unlikely tokens, whereas temperature rescales all of
-                    them.
+                    them. <b>Range:</b> <code>0–1</code> for every provider — it is a share of the
+                    probability mass, so values above 1 are meaningless.
                     <span class="samp-help-use"><b>Here:</b> usually leave it blank and tune
                     temperature only — changing both at once makes runs hard to attribute. Lower it
                     (<code>0.8</code>) if the model wanders into odd syntax while you still want some
@@ -2036,6 +2041,8 @@
              help: `<b>Starting point of the random number generator.</b> With the same seed, prompt
                     and model, a provider that supports seeding returns (near-)identical output.
                     Not every provider honours it — unsupported ones grey this row out.
+                    <b>Range:</b> any non-negative integer; it is a label, not a strength setting,
+                    so <code>7</code> is no different in quality from <code>90210</code>.
                     <span class="samp-help-use"><b>Here:</b> tick <i>random each run</i> for normal
                     experiments, so repetitions are genuinely independent samples. Fix a seed when
                     you need to reproduce one specific result — e.g. re-showing a failure case or
@@ -2043,7 +2050,8 @@
             {key: 'max_tokens', label: 'max_tokens', slider: false,
              help: `<b>Hard cap on the length of the reply.</b> The model is cut off once it emits
                     this many tokens (roughly ¾ of a word each), even mid-line. It bounds cost and
-                    latency; it does not make the model write more.
+                    latency; it does not make the model write more. <b>Range:</b> a positive integer,
+                    additionally capped by the model's own output limit.
                     <span class="samp-help-use"><b>Here:</b> too low is a real failure mode — a
                     truncated module has no <code>endmodule</code> and will not compile. If generated
                     Verilog keeps ending abruptly, raise this. Leave blank to use the default the
@@ -2084,7 +2092,8 @@
                                 >${f.label}<span class="samp-q">?</span></label>
                          ${slider}
                          <input type="number" id="${id}" step="${f.step || 1}"
-                                oninput="syncSamplingSlider('${step}','${f.key}')">
+                                oninput="syncSamplingSlider('${step}','${f.key}')"
+                                onchange="clampSampling('${step}','${f.key}')">
                          <div class="sampling-help" id="${id}-help" hidden>${f.help}</div>`;
             }
             host.innerHTML = `<summary>Advanced sampling parameters</summary>
@@ -2110,6 +2119,32 @@
             const range = document.getElementById(`${step}-samp-${key}-range`);
             const num = document.getElementById(`${step}-samp-${key}`);
             if (range && num && num.value !== '') range.value = num.value;
+        }
+
+        /** 当前 provider 下某参数的合法区间。后端没下发时退回 SAMPLING_FIELDS 里的兜底值。 */
+        function samplingRange(step, key) {
+            const llm = (document.getElementById(`${step}-llm`) || {}).value;
+            const fallback = SAMPLING_FIELDS.find(f => f.key === key) || {};
+            const r = (SAMPLING_INFO[llm] || {}).ranges?.[key] || {};
+            return {
+                min: r.min !== undefined ? r.min : fallback.min,
+                max: r.max !== undefined ? r.max : fallback.max,
+                step: r.step !== undefined ? r.step : (fallback.step || 1),
+            };
+        }
+
+        /** 把输入框的值夹到合法区间。min/max 属性只做浏览器校验，挡不住手输，
+         *  所以这里在 change 时显式夹紧；collectSampling 再兜一次底。 */
+        function clampSampling(step, key) {
+            const num = document.getElementById(`${step}-samp-${key}`);
+            if (!num || num.value.trim() === '') return;
+            const {min, max} = samplingRange(step, key);
+            let v = Number(num.value);
+            if (!isFinite(v)) { num.value = ''; return; }
+            if (min !== undefined && v < min) v = min;
+            if (max !== undefined && v > max) v = max;
+            num.value = v;
+            syncSamplingSlider(step, key);
         }
 
         function onSeedRandomToggle(step) {
@@ -2145,9 +2180,27 @@
                     el.classList.toggle('sampling-row-disabled', off));
                 if (off) num.value = '';
 
+                // 合法区间随 provider 变（Claude 的 temperature 上界是 1，多数家是 2），
+                // 所以每次刷新都要重设，并把已填的值夹回新区间内。
+                const rg = samplingRange(step, f.key);
+                const setBound = (el, name, v) => {
+                    if (!el) return;
+                    if (v === undefined) el.removeAttribute(name); else el[name] = v;
+                };
+                [num, range].forEach(el => {
+                    setBound(el, 'min', rg.min);
+                    setBound(el, 'max', rg.max);
+                    setBound(el, 'step', rg.step);
+                });
+                if (range && rg.min !== undefined && range.value === '') range.value = rg.min;
+                clampSampling(step, f.key);
+
+                const bounds = rg.max !== undefined ? `${rg.min}–${rg.max}`
+                                                    : `≥ ${rg.min}`;
                 const tip = forced
                     ? 'GPT-5 series forces temperature = 1; it cannot be overridden'
-                    : (!supported ? `Not supported by ${llm}` : '');
+                    : (!supported ? `Not supported by ${llm}`
+                                  : `Accepted range for ${llm}: ${bounds}`);
                 [num, range, label].forEach(el => { if (el) el.title = tip; });
 
                 num.placeholder = forced ? 'forced: 1'
@@ -2169,6 +2222,7 @@
             for (const f of SAMPLING_FIELDS) {
                 const el = document.getElementById(`${step}-samp-${f.key}`);
                 if (!el || el.disabled) continue;
+                clampSampling(step, f.key);   // 最后一道闸：越界值不出网
                 const v = el.value.trim();
                 if (v !== '') out[f.key] = Number(v);
             }
