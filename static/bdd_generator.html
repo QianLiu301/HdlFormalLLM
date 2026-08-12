@@ -2013,19 +2013,19 @@
         // help：点击参数名展开的释义。写给不熟悉 LLM 采样参数的读者（评审、同行），
         // 所以每条都说明「是什么」+「在硬件生成这个场景下该怎么用」。
         const SAMPLING_FIELDS = [
-            {key: 'temperature', label: 'temperature', min: 0, max: 2, step: 0.05, slider: true,
+            {key: 'temperature', label: 'temperature', min: 0, max: 1, step: 0.05, slider: true,
              help: `<b>Randomness of the model's word choice.</b> At <code>0</code> the model always
                     takes the most probable next token, so the same prompt tends to give the same
                     answer. Higher values flatten the probabilities and let less likely tokens
                     through, producing more varied — and less predictable — output.
-                    <b>Range:</b> most providers accept <code>0–2</code>, but Anthropic's Claude caps
-                    at <code>1</code> — the slider and the box adapt to the provider you picked, so
-                    you cannot enter a value its API would reject.
-                    <span class="samp-help-use"><b>Here:</b> useful settings, not limits — keep it low
-                    (<code>0–0.3</code>) when you want stable, compilable Verilog and repeatable
-                    experiments; raise it (<code>0.7–1.0</code>) when you deliberately want different
-                    designs or test scenarios across repeated runs. Above <code>1</code> output
-                    degrades quickly and is rarely useful for code.</span>`},
+                    <b>Range:</b> <code>0–1</code>. Some APIs technically accept up to 2, but output
+                    degrades quickly above 1 and is not useful for generating code — and Anthropic's
+                    Claude rejects anything above 1 outright — so this tool caps every provider at 1
+                    to keep the comparison range identical across models.
+                    <span class="samp-help-use"><b>Here:</b> keep it low (<code>0–0.3</code>) when you
+                    want stable, compilable Verilog and repeatable experiments — <code>0</code> is the
+                    most deterministic setting; raise it (<code>0.7–1.0</code>) when you deliberately
+                    want different designs or test scenarios across repeated runs.</span>`},
             {key: 'top_p', label: 'top_p', min: 0, max: 1, step: 0.05, slider: true,
              help: `<b>Nucleus sampling — how much of the probability mass stays in play.</b>
                     <code>top_p = 0.9</code> means the model only samples from the smallest set of
@@ -2041,8 +2041,9 @@
              help: `<b>Starting point of the random number generator.</b> With the same seed, prompt
                     and model, a provider that supports seeding returns (near-)identical output.
                     Not every provider honours it — unsupported ones grey this row out.
-                    <b>Range:</b> any non-negative integer; it is a label, not a strength setting,
-                    so <code>7</code> is no different in quality from <code>90210</code>.
+                    <b>Range:</b> an integer from <code>0</code> to <code>2147483647</code>. It is a
+                    label, not a strength setting, so <code>7</code> is no different in quality from
+                    <code>90210</code>.
                     <span class="samp-help-use"><b>Here:</b> tick <i>random each run</i> for normal
                     experiments, so repetitions are genuinely independent samples. Fix a seed when
                     you need to reproduce one specific result — e.g. re-showing a failure case or
@@ -2050,8 +2051,9 @@
             {key: 'max_tokens', label: 'max_tokens', slider: false,
              help: `<b>Hard cap on the length of the reply.</b> The model is cut off once it emits
                     this many tokens (roughly ¾ of a word each), even mid-line. It bounds cost and
-                    latency; it does not make the model write more. <b>Range:</b> a positive integer,
-                    additionally capped by the model's own output limit.
+                    latency; it does not make the model write more. <b>Range:</b> <code>1–32768</code>
+                    here, but the real ceiling is whatever the selected model allows — ask for more
+                    than that and the API rejects the request.
                     <span class="samp-help-use"><b>Here:</b> too low is a real failure mode — a
                     truncated module has no <code>endmodule</code> and will not compile. If generated
                     Verilog keeps ending abruptly, raise this. Leave blank to use the default the

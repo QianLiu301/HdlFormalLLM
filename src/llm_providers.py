@@ -88,15 +88,20 @@ class LLMProvider(ABC):
     # 逻辑名 -> API 字段名，仅在两者不同时才需要列出（如 Mistral 的 random_seed）
     SAMPLING_FIELD_MAP: Dict[str, str] = {}
 
-    # 各参数的合法区间，供前端限制输入。省略 max 表示无明确上界。
-    # 上界并非各家一致（Anthropic 的 temperature 硬上界是 1.0，多数家是 2.0），
-    # 因此和 SUPPORTED_SAMPLING 一样由 provider 类声明、经 /api/sampling-info
-    # 下发；在 JS 里另抄一份会与后端漂移。
+    # 本工具允许用户输入的区间——注意这是**策略**，不等于各家 API 的合法区间。
+    # 和 SUPPORTED_SAMPLING 一样由 provider 类声明、经 /api/sampling-info 下发；
+    # 在 JS 里另抄一份会与后端漂移。
+    #
+    # temperature 上界取 1 而非部分 API 允许的 2：>1 时输出退化很快，对生成
+    # Verilog 没有实用价值，而 1 是所有 provider 都接受的值（Anthropic 的硬
+    # 上界恰好就是 1）。统一成 1 也让跨模型对比的取值范围一致。
     SAMPLING_RANGES: Dict[str, Dict[str, Any]] = {
-        'temperature': {'min': 0, 'max': 2, 'step': 0.05},
+        'temperature': {'min': 0, 'max': 1, 'step': 0.05},
         'top_p':       {'min': 0, 'max': 1, 'step': 0.05},
-        'seed':        {'min': 0, 'step': 1},
-        'max_tokens':  {'min': 1, 'step': 1},
+        # seed 只是标签，取值大小无意义；限成 32 位正整数以挡住手滑输入的天文数字
+        'seed':        {'min': 0, 'max': 2147483647, 'step': 1},
+        # max_tokens 的真实上界随模型而变，这里只挡明显不合理的输入
+        'max_tokens':  {'min': 1, 'max': 32768, 'step': 1},
     }
 
     def __init_subclass__(cls, **kwargs):
@@ -1577,9 +1582,8 @@ class ClaudeProvider(LLMProvider):
     # Anthropic Messages API 不支持 seed
     DEFAULT_SAMPLING = {}
     SUPPORTED_SAMPLING = {'temperature', 'top_p', 'max_tokens'}
-    # Anthropic Messages API 的 temperature 上界是 1.0，不是多数家的 2.0
-    SAMPLING_RANGES = {**LLMProvider.SAMPLING_RANGES,
-                       'temperature': {'min': 0, 'max': 1, 'step': 0.05}}
+    # 无需覆盖 SAMPLING_RANGES：Anthropic Messages API 的 temperature 硬上界
+    # 是 1.0，与基类统一采用的上界一致。
 
     """
     Anthropic Claude API Provider - PAID
