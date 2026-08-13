@@ -309,6 +309,8 @@ def run_one(client, batch, provider, module_type, seed, session_id):
     # ---- Step 3: Testbench（确定性模板，不调 LLM）----
     # 不传 module_name：后端从 dut_filepath 读出真实模块名（单一事实来源）
     tb = client.post('/api/generate-testbench', json={
+        # 带上 run_id：Step 3/4 没有 LLM 调用，产物只能靠 run_artifacts 挂回本条链
+        'run_id': run_id,
         'bdd_filepath': bdd.get('filepath'),
         'dut_filepath': duv.get('filepath'),
         'dut_info': {'module_type': module_type,
@@ -331,6 +333,7 @@ def run_one(client, batch, provider, module_type, seed, session_id):
             return p
 
     sim = client.post('/api/run-simulation', json={
+        'run_id': run_id,
         'testbench_path': rel(tb.get('filepath')),
         'dut_path': rel(duv.get('filepath')),
     }).get_json()
