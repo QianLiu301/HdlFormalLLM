@@ -35,6 +35,7 @@ sys.path.insert(0, str(SRC_DIR))
 # 统一用 src. 前缀导入 experiment_logger：模块内有单例自检，若同时以裸名加载
 # 会出现两个 threading.local，call_context 设的标签会静默丢失。
 from src.experiment_logger import call_context  # noqa: E402
+from src import prompt_store  # noqa: E402
 
 # ============================================================================
 # Configuration Loading
@@ -432,9 +433,55 @@ def _web_ctx(data, task_type, module_name=None, new_run=False, model_used=False)
             'model_override_ignored': ignored,
             # 批量采集时带上批次标识，便于事后从 llm_calls 精确筛出某一批
             'batch': (data.get('batch') or '').strip() or None,
+            # spec-first 会往 DUV prompt 里注入整份 BDD 规格，与 impl-first
+            # 的 prompt 明显不同。不记这一栏，事后就无法从数据里区分两者。
+            # 缺省按 implementation 记（与端点内部的取值口径一致），这样这一列
+            # 永不为空——空值会让人分不清"是 impl-first"还是"这批数据没记"。
+            'workflow_mode': (data.get('workflow_mode') or '').strip() or 'implementation',
         },
     }
     return run_id, ctx
+
+
+def _read_bdd_context(data):
+    """Specification-First：读取要作为设计依据的 BDD 规格。
+
+    返回 (bdd_context, error)。error 非空时调用方必须中止：用户明确选了
+    spec-first 并给了文件，读不到却照常生成，产出的是一份无视规格的硬件，
+    而前端完全看不出来——这正是要消除的静默降级。
+    """
+    if (data.get('workflow_mode') or 'implementation') != 'specification':
+        return None, None
+    bdd_filepath = data.get('bdd_filepath')
+    if not bdd_filepath:
+        return None, None          # 还没生成 BDD，由前端把关先后顺序
+
+    path = Path(bdd_filepath)
+    if not path.exists():
+        # 与 /api/generate-testbench 一致：相对路径按项目根目录再试一次
+        path = PROJECT_ROOT / bdd_filepath
+    if not path.exists():
+        return None, f'BDD spec not found: {bdd_filepath}'
+    try:
+        text = path.read_text(encoding='utf-8')
+    except Exception as e:
+        return None, f'Failed to read BDD spec {bdd_filepath}: {e}'
+    if not text.strip():
+        return None, f'BDD spec is empty: {bdd_filepath}'
+
+    print(f"📋 BDD-First mode: loaded BDD spec ({len(text)} chars)")
+    return text, None
+
+
+def _chain_start(data, step):
+    """本次调用是否为依赖链起点（据此决定新建还是继承 run_id）。
+
+    起点随工作流方向变：impl-first 是 DUV -> BDD -> TB，spec-first 是
+    BDD -> DUV -> TB。把 DUV 一律当起点，会让 spec-first 下的 BDD 和据它
+    生成的 DUV 落在两个 run_id 上，事后无法还原因果关系。
+    """
+    spec_first = (data.get('workflow_mode') or 'implementation') == 'specification'
+    return (step == 'bdd') if spec_first else (step == 'duv')
 
 
 # Initialize simulation runner
@@ -1211,24 +1258,19 @@ def generate_hardware():
             module_type = parsed['module_type']
 
     # Load BDD context for specification-first workflow
-    bdd_context = None
-    if workflow_mode == 'specification' and bdd_filepath:
-        bdd_path = Path(bdd_filepath)
-        if bdd_path.exists():
-            try:
-                bdd_context = bdd_path.read_text(encoding='utf-8')
-                print(f"📋 BDD-First mode: loaded BDD spec ({len(bdd_context)} chars)")
-            except Exception as e:
-                print(f"⚠️  Failed to read BDD file: {e}")
+    bdd_context, bdd_error = _read_bdd_context(data)
+    if bdd_error:
+        return jsonify({'success': False, 'error': bdd_error}), 400
 
     sampling = _parse_sampling(data)
     prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
-    # Step 1 = 依赖链起点，无条件新建 run_id。
+    # impl-first 下 DUV 是依赖链起点，新建 run_id；spec-first 下起点是 BDD，
+    # 这里改为继承前端传来的 run_id（详见 _chain_start）。
     # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
-                            new_run=True, model_used=True)
+                            new_run=_chain_start(data, 'duv'), model_used=True)
     if _ctx['extra']['model_override_ignored']:
         print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored for "
               f"provider '{llm_name}' (override wired only for "
@@ -1367,18 +1409,11 @@ def generate_hardware_stream():
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
     workflow_mode = data.get('workflow_mode', 'implementation')
-    bdd_filepath = data.get('bdd_filepath')
 
     # Load BDD context for specification-first workflow
-    bdd_context = None
-    if workflow_mode == 'specification' and bdd_filepath:
-        bdd_path = Path(bdd_filepath)
-        if bdd_path.exists():
-            try:
-                bdd_context = bdd_path.read_text(encoding='utf-8')
-                print(f"📋 BDD-First mode (stream): loaded BDD spec ({len(bdd_context)} chars)")
-            except Exception as e:
-                print(f"⚠️  Failed to read BDD file: {e}")
+    bdd_context, bdd_error = _read_bdd_context(data)
+    if bdd_error:
+        return jsonify({'success': False, 'error': bdd_error}), 400
 
     # Parse natural language if provided
     if natural_input:
@@ -1393,11 +1428,22 @@ def generate_hardware_stream():
     prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
-    # Step 1 = 依赖链起点，无条件新建 run_id。
+    # impl-first 下 DUV 是依赖链起点；spec-first 下起点是 BDD，此处继承其 run_id。
     # 此端点（流式）在生成器构造后会替换 generator.llm 来应用 model 覆盖，
     # 对 gemini/openai 生效，故 model_used=True；非流式的同名端点没有这段逻辑。
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
-                            new_run=True, model_used=True)
+                            new_run=_chain_start(data, 'duv'), model_used=True)
+
+    def _prep(gen):
+        """把 Prompt 面板的选择交给生成器——_create_*_prompt 从这些属性上取。
+
+        此前这三个值在本端点被解析后就再没用过，于是 Stream 打开时（默认打开）
+        改 prompt、切版本全部无声失效，而非流式路径是生效的。
+        """
+        gen.prompt_version = prompt_version
+        gen.prompt_override = prompt_override
+        gen.system_override = system_override
+        return gen
 
     def _generate_inner():
         try:
@@ -1415,11 +1461,11 @@ def generate_hardware_stream():
                 if not HAS_ALU_MODULE:
                     yield make_sse_message("error", message="ALU module not available")
                     return
-                generator = ALUGenerator(
+                generator = _prep(ALUGenerator(
                     llm_provider=llm_name,
                     project_root=str(PROJECT_ROOT),
                     debug=False
-                )
+                ))
                 operations = {
                     "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
                     "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
@@ -1433,11 +1479,11 @@ def generate_hardware_stream():
                 if not HAS_COUNTER_MODULE:
                     yield make_sse_message("error", message="Counter module not available")
                     return
-                generator = CounterGenerator(
+                generator = _prep(CounterGenerator(
                     llm_provider=llm_name,
                     project_root=str(PROJECT_ROOT),
                     debug=False
-                )
+                ))
                 modes = ['up', 'down', 'updown']
                 module_name = f"counter_{bitwidth}bit"
                 prompt = generator._create_counter_prompt(bitwidth, modes, module_name)
@@ -1447,11 +1493,11 @@ def generate_hardware_stream():
                     yield make_sse_message("error", message="Register File module not available")
                     return
                 depth = data.get('depth', 32)
-                generator = RegFileGenerator(
+                generator = _prep(RegFileGenerator(
                     llm_provider=llm_name,
                     project_root=str(PROJECT_ROOT),
                     debug=False
-                )
+                ))
                 module_name = f"regfile_{bitwidth}bit"
                 prompt = generator._create_regfile_prompt(bitwidth, depth, module_name)
 
@@ -1460,31 +1506,23 @@ def generate_hardware_stream():
                     yield make_sse_message("error", message="CPU module not available")
                     return
                 pipeline_stages = data.get('pipeline_stages', 5)
-                generator = CPUGenerator(
+                generator = _prep(CPUGenerator(
                     llm_provider=llm_name,
                     project_root=str(PROJECT_ROOT),
                     debug=False
-                )
+                ))
                 module_name = "riscv_cpu"
                 prompt = generator._create_cpu_prompt(32, pipeline_stages, module_name)
 
             else:
                 yield make_sse_message("error", message=f"Unknown module type: {module_type}")
                 return
-                # BDD-First: append BDD specification context to prompt
+
+            # BDD-First: append BDD specification context to prompt
+            # 与 4 个 generator 走同一份文本，避免同一功能因 Stream 开关而 prompt 不同
             if bdd_context:
-                prompt += f"""
-
-IMPORTANT - BDD Specification Context (Specification-First Workflow):
-The generated hardware MUST satisfy the following BDD test specifications.
-Ensure all operations, flags, and behaviors described below are correctly implemented.
-
-    {bdd_context}
-
-Make sure the module interface and behavior match the test expectations above.
-    """
+                prompt += prompt_store.bdd_context_block(bdd_context)
                 yield make_sse_message("info", message="📋 BDD spec context injected into prompt...")
-
 
             # Override model if specified (for Gemini/OpenAI model selection)
             _apply_model_override(generator, llm_name, model)
@@ -1505,8 +1543,15 @@ Make sure the module interface and behavior match the test expectations above.
             else:
                 max_tokens = 6000 + (bitwidth // 16) * 500
 
+            # 模板（或用户覆盖）渲染出的 system prompt 由 _create_*_prompt 暂存在
+            # 生成器上。此前流式路径没有取用，于是同一个 stage 在 Stream 开/关时
+            # 发出的 system prompt 并不相同，且面板里的 system 编辑框无效。
+            system_prompt = (getattr(generator, '_rendered_system', None)
+                             or "You are an expert Verilog hardware designer.")
+
             if hasattr(llm, '_call_api_stream'):
                 for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens,
+                                                  system_prompt=system_prompt,
                                                   sampling=sampling):
                     if chunk:
                         full_content += chunk
@@ -1516,7 +1561,7 @@ Make sure the module interface and behavior match the test expectations above.
                 response = llm._call_api(
                     prompt,
                     max_tokens=max_tokens,
-                    system_prompt="You are an expert Verilog hardware designer."
+                    system_prompt=system_prompt
                 )
                 if response:
                     full_content = response
@@ -1992,11 +2037,12 @@ def generate_bdd_stream():
     prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
-    # Step 2 继承 Step 1 的 run_id（缺失则新建）；此端点确实会对 openai/gemini
-    # 应用 model 覆盖，故 model_used=True
+    # impl-first 下 BDD 继承 DUV 的 run_id；spec-first 下 BDD 才是依赖链起点，
+    # 此时新建（详见 _chain_start）。此端点确实会对 openai/gemini 应用 model
+    # 覆盖，故 model_used=True
     run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
                             (data.get('module_type') or '').strip() or None,
-                            new_run=False, model_used=True)
+                            new_run=_chain_start(data, 'bdd'), model_used=True)
 
     def _generate_inner():
         try:
@@ -2104,10 +2150,10 @@ def generate_bdd():
         prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
         prompt_override = data.get('prompt_override') or None
         system_override = data.get('system_override') or None
-        # Step 2 继承 Step 1 的 run_id（缺失则新建）
+        # impl-first 下 BDD 继承 DUV 的 run_id；spec-first 下 BDD 是链起点，新建
         run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
                                 (data.get('module_type') or '').strip() or None,
-                                new_run=False, model_used=True)
+                                new_run=_chain_start(data, 'bdd'), model_used=True)
 
         generator = FeatureGeneratorLLM(
             llm_provider=llm_name,

@@ -122,6 +122,28 @@ def _record(stage: str, version: str, user_overridden: bool,
         pass  # 记录失败不应影响生成
 
 
+def bdd_context_block(bdd_context: Optional[str]) -> str:
+    """Specification-First 下追加到 DUV prompt 末尾的 BDD 规格段落。
+
+    这段话此前在 4 个 generator 和 main.py 的流式端点里各存了一份，而
+    generator 里那 4 份写在缩进的 f-string 中、每行平白多出 8 个空格——
+    同一个功能会因为 Stream 开关不同而发出逐字不同的 prompt。对一个做
+    受控对比的工具来说这是隐性变量，故收敛到此处一份。
+    """
+    if not bdd_context:
+        return ""
+    return f"""
+
+IMPORTANT - BDD Specification Context (Specification-First Workflow):
+The generated hardware MUST satisfy the following BDD test specifications.
+Ensure all operations, flags, and behaviors described below are correctly implemented.
+
+{bdd_context}
+
+Make sure the module interface and behavior match the test expectations above.
+"""
+
+
 def sha256(text: Optional[str]) -> Optional[str]:
     if text is None:
         return None

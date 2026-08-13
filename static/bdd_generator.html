@@ -2822,8 +2822,9 @@
                     return;
                 }
 
-                // 上传 DUV 同样是依赖链起点：作废旧 run_id，采用后端新建的
-                startNewRun();
+                // impl-first 下上传 DUV 同样是依赖链起点：作废旧 run_id。
+                // spec-first 下起点是 BDD，上传的硬件应挂在同一条链上。
+                if (currentWorkflowMode !== 'specification') startNewRun();
                 adoptRunId(data.run_id);
 
                 // Store parsed data
@@ -3500,8 +3501,10 @@
             setLoading('hw', true);
             updateStepStatus(1, 'in-progress');
 
-            // Step 1 是依赖链起点：作废旧 run_id，由后端新建后回传
-            startNewRun();
+            // impl-first 下 DUV 是依赖链起点，作废旧 run_id 由后端新建；
+            // spec-first 下起点是 BDD，硬件必须继承它的 run_id，否则一份 BDD 和
+            // 据它生成的硬件会落在两个 run_id 上，事后无法还原因果关系。
+            if (currentWorkflowMode !== 'specification') startNewRun();
 
             const payload = withRunIds({
                 module_type: moduleType,
@@ -3743,9 +3746,13 @@
             setLoading('bdd', true);
             updateStepStatus(2, 'in-progress');
 
-            // Step 2 继承 Step 1 的 run_id；同一 DUV 下重试只让 attempt 递增
+            // spec-first 下 BDD 是依赖链起点（硬件据它生成），故在此作废旧 run_id，
+            // 由后端新建并回传；impl-first 下 BDD 继承 DUV 的 run_id，重试只加 attempt。
+            if (currentWorkflowMode === 'specification') startNewRun();
+
             const payload = withRunIds(
                 { llm, model, input, module_type: currentDUT ? currentDUT.moduleType : null,
+                  workflow_mode: currentWorkflowMode,
                   sampling: collectSampling('bdd'), ...promptPayload('bdd') }, 'bdd');
 
             if (useStreaming) {

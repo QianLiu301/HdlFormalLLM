@@ -258,17 +258,9 @@ class ALUGenerator:
         prompt = self._create_alu_prompt(bitwidth, operations, module_name)
 
         # BDD-First: append BDD specification context if available
-        if hasattr(self, 'bdd_context') and self.bdd_context:
-            prompt += f"""
-
-        IMPORTANT - BDD Specification Context (Specification-First Workflow):
-        The generated hardware MUST satisfy the following BDD test specifications.
-        Ensure all operations, flags, and behaviors described below are correctly implemented.
-
-        {self.bdd_context}
-
-        Make sure the module interface and behavior match the test expectations above.
-        """
+        # 段落文本共用 prompt_store.bdd_context_block，与流式端点保持逐字一致
+        if getattr(self, 'bdd_context', None):
+            prompt += _prompt_store.bdd_context_block(self.bdd_context)
             print(f"📋 BDD spec context appended to prompt ({len(self.bdd_context)} chars)")
 
         if self.debug:
