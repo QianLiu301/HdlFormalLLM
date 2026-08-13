@@ -852,25 +852,6 @@ def experiment_stats():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/experiment-logs')
-def experiment_logs():
-    """查看最近的 LLM 调用记录（不含 prompt/response 全文）"""
-    try:
-        from src.experiment_logger import get_recent
-        limit = min(int(request.args.get('limit', 50)), 500)
-        run_id = request.args.get('run_id')
-        return jsonify({'success': True, 'logs': get_recent(limit=limit, run_id=run_id)})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# ============================================================================
-# Benchmark Dashboard API (实验看板)
-# ============================================================================
-BENCHMARK_DIR = PROJECT_ROOT / 'benchmark'
-_bench_runs = {}  # run_id -> {'status', 'total', 'done', 'current', 'results': []}
-
-
 def _bench_runner():
     """按需导入 benchmark/run_experiments.py（不是包，用 sys.path 挂载）"""
     import sys as _sys
@@ -1766,23 +1747,6 @@ def analyze_dut():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/yosys-status')
-def yosys_status():
-    """Check if Yosys is available on the system."""
-    try:
-        from yosys_analyzer import YosysAnalyzer
-        analyzer = YosysAnalyzer(project_root=str(PROJECT_ROOT))
-        return jsonify(analyzer.get_tool_info())
-    except Exception as e:
-        return jsonify({
-            'yosys_available': False,
-            'graphviz_available': False,
-            'yosys_path': None,
-            'graphviz_path': None,
-            'error': str(e)
-        })
-
-
 @app.route('/api/download-yosys/<path:filepath>')
 def download_yosys(filepath):
     """Download Yosys output file (DOT, SVG, JSON)."""
@@ -1814,34 +1778,6 @@ def download_hardware(filename):
         as_attachment=True,
         download_name=filename
     )
-
-
-@app.route('/api/list-hardware')
-def list_hardware_files():
-    """List generated hardware files"""
-    dut_dir = PROJECT_ROOT / 'output' / 'dut'
-    files = []
-
-    if dut_dir.exists():
-        for f in dut_dir.glob('*.v'):
-            module_type = 'unknown'
-            if 'alu' in f.name.lower():
-                module_type = 'alu'
-            elif 'counter' in f.name.lower():
-                module_type = 'counter'
-            elif 'regfile' in f.name.lower() or 'register' in f.name.lower():
-                module_type = 'regfile'
-            elif 'cpu' in f.name.lower():
-                module_type = 'cpu'
-
-            files.append({
-                'filename': f.name,
-                'module_type': module_type,
-                'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
-            })
-
-    files.sort(key=lambda x: x['modified'], reverse=True)
-    return jsonify({'files': files})
 
 
 def parse_hardware_natural_language(input_text):
@@ -1904,161 +1840,6 @@ def parse_hardware_natural_language(input_text):
 # ============================================================================
 # Legacy ALU API (backward compatibility)
 # ============================================================================
-@app.route('/api/generate-alu', methods=['POST'])
-def generate_alu():
-    """Generate ALU Verilog (non-streaming) - Legacy"""
-    data = dict(request.json) if request.json else {}
-    data['module_type'] = 'alu'
-
-    # Manually call generate_hardware logic
-    module_type = 'alu'
-    llm_name = data.get('llm', 'groq')
-    bitwidth = data.get('bitwidth', 16)
-    natural_input = data.get('input', '')
-
-    if natural_input:
-        parsed = parse_hardware_natural_language(natural_input)
-        bitwidth = parsed.get('bitwidth', bitwidth)
-        if parsed.get('llm'):
-            llm_name = parsed['llm']
-
-    if not HAS_ALU_MODULE:
-        return jsonify({'success': False, 'error': 'ALU module not available'}), 500
-
-    try:
-        generator = ALUGenerator(
-            llm_provider=llm_name,
-            project_root=str(PROJECT_ROOT),
-            debug=True
-        )
-        hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
-
-        if not hw_path:
-            return jsonify({'success': False, 'error': 'Generation failed'}), 500
-
-        hw_path_obj = Path(hw_path)
-        with open(hw_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        last_generated_hw['filename'] = hw_path_obj.name
-        last_generated_hw['filepath'] = str(hw_path)
-        last_generated_hw['llm'] = llm_name
-        last_generated_hw['module_type'] = 'alu'
-
-        return jsonify({
-            'success': True,
-            'filename': hw_path_obj.name,
-            'full_content': content,
-            'llm': llm_name,
-            'bitwidth': bitwidth,
-            'module_type': 'alu',
-            'filepath': str(hw_path)
-        })
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/generate-alu-stream', methods=['POST'])
-def generate_alu_stream():
-    """Generate ALU with streaming - Legacy"""
-    data = dict(request.json) if request.json else {}
-    module_type = 'alu'
-    llm_name = data.get('llm', 'groq')
-    bitwidth = data.get('bitwidth', 16)
-    natural_input = data.get('input', '')
-
-    if natural_input:
-        parsed = parse_hardware_natural_language(natural_input)
-        bitwidth = parsed.get('bitwidth', bitwidth)
-        if parsed.get('llm'):
-            llm_name = parsed['llm']
-
-    def generate():
-        try:
-            yield make_sse_message("start", llm=llm_name, bitwidth=bitwidth, module_type='alu')
-            yield make_sse_message("info", message=f"Initializing {bitwidth}-bit ALU generator...")
-
-            if not HAS_ALU_MODULE:
-                yield make_sse_message("error", message="ALU module not available")
-                return
-
-            generator = ALUGenerator(
-                llm_provider=llm_name,
-                project_root=str(PROJECT_ROOT),
-                debug=False
-            )
-            operations = {
-                "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
-                "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
-                "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
-                "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
-            }
-            prompt = generator._create_alu_prompt(bitwidth, operations, "alu")
-
-            yield make_sse_message("info", message=f"Calling {llm_name.upper()} API...")
-
-            llm = generator.llm
-            full_content = ""
-
-            # Dynamic token budget for ALU
-            max_tokens = 5000 + (bitwidth // 16) * 1000 + len(operations) * 200
-
-            if hasattr(llm, '_call_api_stream'):
-                for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens,
-                                                  sampling=sampling):
-                    if chunk:
-                        full_content += chunk
-                        yield make_sse_message("chunk", content=chunk)
-            else:
-                yield make_sse_message("info", message="Using standard mode...")
-                response = llm._call_api(prompt, max_tokens=max_tokens,
-                                         system_prompt="You are an expert Verilog hardware designer.")
-                if response:
-                    full_content = response
-                    for i in range(0, len(full_content), 100):
-                        yield make_sse_message("chunk", content=full_content[i:i+100])
-
-            if not full_content:
-                yield make_sse_message("error", message="LLM returned empty response")
-                return
-
-            verilog_code = generator._extract_verilog(full_content)
-            if not verilog_code:
-                verilog_code = full_content
-
-            hw_path = generator._save_alu(verilog_code, "alu", bitwidth)
-            filename = Path(hw_path).name
-
-            last_generated_hw['filename'] = filename
-            last_generated_hw['filepath'] = str(hw_path)
-            last_generated_hw['llm'] = llm_name
-            last_generated_hw['module_type'] = 'alu'
-
-            yield make_sse_message("complete", filename=filename, filepath=str(hw_path))
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            yield make_sse_message("error", message=str(e))
-
-    return Response(generate(), mimetype='text/event-stream', headers={
-        'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'
-    })
-
-
-@app.route('/api/download-alu/<filename>')
-def download_alu(filename):
-    return download_hardware(filename)
-
-
-@app.route('/api/list-alu')
-def list_alu_files():
-    return list_hardware_files()
-
-
 # ============================================================================
 # BDD Generator API
 # ============================================================================
@@ -2359,39 +2140,6 @@ def _provider_class(name):
     }
     return getattr(lp, mapping.get(name, ''), None)
 
-
-@app.route('/api/llm-list')
-def get_llm_list():
-    """Get available LLM providers and module types"""
-    return jsonify({
-        'llms': [
-            {'id': 'gemini', 'name': 'Gemini', 'description': 'Google'},
-            {'id': 'deepseek', 'name': 'DeepSeek', 'description': 'Chinese LLM'},
-            {'id': 'openai', 'name': 'OpenAI', 'description': 'GPT-5 Series'},
-            {'id': 'mistral', 'name': 'Mistral', 'description': 'Mistral/Codestral'},
-            {'id': 'claude', 'name': 'Claude', 'description': 'Anthropic'},
-            {'id': 'qwen', 'name': 'Qwen', 'description': 'Alibaba Tongyi'},
-            {'id': 'together', 'name': 'Together', 'description': 'Together AI'},
-            {'id': 'groq', 'name': 'Groq', 'description': 'Fast & Free'},
-            {'id': 'grok', 'name': 'Grok', 'description': 'xAI'}
-        ],
-        'openai_models': [
-            {'id': 'gpt-5-mini', 'name': 'GPT-5 Mini'},
-            {'id': 'gpt-5', 'name': 'GPT-5'},
-            {'id': 'gpt-5.1', 'name': 'GPT-5.1'}
-        ],
-        'gemini_models': [
-            {'id': 'gemini-3-flash-preview', 'name': 'Gemini 3 Flash Preview'},
-            {'id': 'gemini-2.5-flash', 'name': 'Gemini 2.5 Flash'}
-        ],
-        'bitwidths': [8, 16, 32, 64],
-        'module_types': [
-            {'id': 'alu', 'name': 'ALU', 'description': 'Arithmetic Logic Unit', 'available': HAS_ALU_MODULE},
-            {'id': 'counter', 'name': 'Counter', 'description': 'Up/Down Counter', 'available': HAS_COUNTER_MODULE},
-            {'id': 'regfile', 'name': 'Register File', 'description': 'Multi-port Register Bank', 'available': HAS_REGFILE_MODULE},
-            {'id': 'cpu', 'name': 'CPU', 'description': 'RISC-V 5-Stage Pipelined Processor', 'available': HAS_CPU_MODULE}
-        ]
-    })
 
 # ============================================================================
 # Testbench Generator API
@@ -2772,34 +2520,6 @@ def download_vcd(filepath):
         as_attachment=True,
         mimetype='application/x-vcd'  # VCD mimetype for GTKWave association
     )
-
-@app.route('/api/download-waveforms/<llm_name>')
-def download_waveforms_batch(llm_name):
-    """Download all VCD files for an LLM as a zip"""
-    waveform_dir = PROJECT_ROOT / 'output' / 'waveform' / llm_name
-
-    if not waveform_dir.exists():
-        return jsonify({'error': 'No waveform directory found'}), 404
-
-    vcd_files = list(waveform_dir.glob('*.vcd'))
-    if not vcd_files:
-        return jsonify({'error': 'No VCD files found'}), 404
-
-    # Create zip in memory
-    memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for vcd_file in vcd_files:
-            zf.write(vcd_file, vcd_file.name)
-
-    memory_file.seek(0)
-
-    return send_file(
-        memory_file,
-        mimetype='application/zip',
-        as_attachment=True,
-        download_name=f'waveforms_{llm_name}.zip'
-    )
-
 
 @app.route('/api/download-all-waveforms')
 def download_all_waveforms():
