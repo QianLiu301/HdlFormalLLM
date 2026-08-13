@@ -487,6 +487,39 @@ def _log_artifact(data, run_id, stage, path=None, meta=None):
                  meta=meta)
 
 
+def _resolve_output_file(subdir, filename, remembered=None):
+    """在 output/<subdir>/ 下按文件名定位产物，找不到返回 None。
+
+    三个下载端点原本各写一份查找逻辑，硬件那份漏了扫子目录——而产物恰恰都存在
+    output/<subdir>/<llm>/ 下，于是只要 last_generated_* 没指向目标就 404。
+    那个"记住最近一次"的全局是模块级的、被所有请求共享，多开一个标签页或让
+    仪表盘并行跑就会互相覆盖，因此兜底查找才是真正起作用的路径，必须正确。
+    收敛成一处，避免再次各自漂移。
+    """
+    # filename 来自 URL 的 <filename> 转换器（不匹配斜杠），这里再挡一道，
+    # 使本函数对任何调用方都安全
+    if Path(filename).name != filename:
+        return None
+
+    if remembered:
+        candidate = Path(remembered)
+        if candidate.exists() and candidate.name == filename:
+            return candidate
+
+    base = PROJECT_ROOT / 'output' / subdir
+    candidate = base / filename
+    if candidate.exists():
+        return candidate
+
+    if base.exists():
+        for sub in base.iterdir():
+            if sub.is_dir():
+                candidate = sub / filename
+                if candidate.exists():
+                    return candidate
+    return None
+
+
 def _chain_start(data, step):
     """本次调用是否为依赖链起点（据此决定新建还是继承 run_id）。
 
@@ -1771,19 +1804,7 @@ def download_hardware(filename):
     """Download generated hardware file"""
     print(f"\n📥 Hardware Download request: {filename}")
 
-    file_path = None
-
-    if last_generated_hw['filepath']:
-        candidate = Path(last_generated_hw['filepath'])
-        if candidate.exists() and candidate.name == filename:
-            file_path = candidate
-
-    if not file_path:
-        dut_dir = PROJECT_ROOT / 'output' / 'dut'
-        candidate = dut_dir / filename
-        if candidate.exists():
-            file_path = candidate
-
+    file_path = _resolve_output_file('dut', filename, last_generated_hw['filepath'])
     if not file_path:
         return jsonify({'error': 'File not found'}), 404
 
@@ -2241,23 +2262,7 @@ def generate_bdd():
 @app.route('/api/download/<filename>')
 def download_bdd(filename):
     """Download generated BDD file"""
-    file_path = None
-
-    if last_generated_bdd['filepath']:
-        candidate = Path(last_generated_bdd['filepath'])
-        if candidate.exists() and candidate.name == filename:
-            file_path = candidate
-
-    if not file_path:
-        base_dir = PROJECT_ROOT / 'output' / 'bdd'
-        if base_dir.exists():
-            for llm_dir in base_dir.iterdir():
-                if llm_dir.is_dir():
-                    candidate = llm_dir / filename
-                    if candidate.exists():
-                        file_path = candidate
-                        break
-
+    file_path = _resolve_output_file('bdd', filename, last_generated_bdd['filepath'])
     if not file_path:
         return jsonify({'error': 'File not found'}), 404
 
@@ -2651,23 +2656,7 @@ def get_quality_comparison():
 @app.route('/api/download-testbench/<filename>')
 def download_testbench(filename):
     """Download generated testbench file"""
-    file_path = None
-
-    if last_generated_tb['filepath']:
-        candidate = Path(last_generated_tb['filepath'])
-        if candidate.exists() and candidate.name == filename:
-            file_path = candidate
-
-    if not file_path:
-        base_dir = PROJECT_ROOT / 'output' / 'testbench'
-        if base_dir.exists():
-            for llm_dir in base_dir.iterdir():
-                if llm_dir.is_dir():
-                    candidate = llm_dir / filename
-                    if candidate.exists():
-                        file_path = candidate
-                        break
-
+    file_path = _resolve_output_file('testbench', filename, last_generated_tb['filepath'])
     if not file_path:
         return jsonify({'error': 'File not found'}), 404
 
