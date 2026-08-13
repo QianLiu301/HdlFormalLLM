@@ -1290,7 +1290,7 @@
                     <details class="sampling-panel" id="bdd-sampling"></details>
                     <details class="prompt-panel" id="bdd-prompt"></details>
                     <div class="form-group">
-                        <label>Requirements (auto-filled based on DUT)</label>
+                        <label id="bdd-input-label" for="bdd-input">Requirements (auto-filled based on DUT)</label>
                         <textarea id="bdd-input"
                                   placeholder="Requirements will be auto-filled when you generate or upload hardware..."></textarea>
                         <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with DUT</div>
@@ -2610,7 +2610,6 @@
             // Elements for dependency management
             const noDutWarning = document.getElementById('no-dut-warning');
             const dutStatus = document.getElementById('dut-status');
-            const bddRequirementsLabel = document.querySelector('#step-2 .form-group label[for="bdd-input"], #step-2 .form-group label');
 
             if (mode === 'specification') {
                 // BDD first: move step-2 (BDD) before step-1 (Hardware)
@@ -2638,8 +2637,7 @@
                 dutStatus.style.display = 'none';
 
                 // Update BDD requirements label
-                const reqLabel = document.querySelector('label[for="bdd-input"]') ||
-                    document.querySelector('#bdd-mode-generate .form-group label');
+                const reqLabel = document.getElementById('bdd-input-label');
                 if (reqLabel) reqLabel.textContent = 'Requirements (describe what your hardware should do)';
 
                 // If BDD input is empty, provide a helpful placeholder
@@ -2672,8 +2670,7 @@
                 updateBddTabState(); // Re-evaluate based on currentDUT
 
                 // Restore BDD requirements label
-                const reqLabel = document.querySelector('label[for="bdd-input"]') ||
-                    document.querySelector('#bdd-mode-generate .form-group label');
+                const reqLabel = document.getElementById('bdd-input-label');
                 if (reqLabel) reqLabel.textContent = 'Requirements (auto-filled based on DUT)';
 
                 // Restore placeholder
