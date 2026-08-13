@@ -34,7 +34,7 @@ sys.path.insert(0, str(SRC_DIR))
 
 # 统一用 src. 前缀导入 experiment_logger：模块内有单例自检，若同时以裸名加载
 # 会出现两个 threading.local，call_context 设的标签会静默丢失。
-from src.experiment_logger import call_context  # noqa: E402
+from src.experiment_logger import call_context, log_artifact  # noqa: E402
 from src import prompt_store  # noqa: E402
 
 # ============================================================================
@@ -471,6 +471,20 @@ def _read_bdd_context(data):
 
     print(f"📋 BDD-First mode: loaded BDD spec ({len(text)} chars)")
     return text, None
+
+
+def _log_artifact(data, run_id, stage, path=None, meta=None):
+    """把本步产物挂到依赖链上。
+
+    testbench 与仿真没有 LLM 参与，在 llm_calls 里不会留下任何行；DUV/BDD 虽有
+    调用记录，但那里存的是 prompt/response 而非输出文件路径。所以「某个 run_id
+    产出了哪些文件、仿真结果如何」只能靠这张表回答。
+    """
+    data = data or {}
+    log_artifact(run_id, stage, path=path,
+                 session_id=(data.get('session_id') or '').strip() or None,
+                 workflow_mode=(data.get('workflow_mode') or '').strip() or 'implementation',
+                 meta=meta)
 
 
 def _chain_start(data, step):
@@ -1377,6 +1391,10 @@ def generate_hardware():
         last_generated_hw['llm'] = llm_name
         last_generated_hw['module_type'] = module_type
 
+        _log_artifact(data, run_id, 'duv', hw_path,
+                      meta={'llm': llm_name, 'module_type': module_type,
+                            'bitwidth': bitwidth, 'streaming': False})
+
         return jsonify({
             'success': True,
             'filename': hw_path_obj.name,
@@ -1613,6 +1631,10 @@ def generate_hardware_stream():
             last_generated_hw['filepath'] = str(hw_path)
             last_generated_hw['llm'] = llm_name
             last_generated_hw['module_type'] = module_type
+
+            _log_artifact(data, run_id, 'duv', hw_path,
+                          meta={'llm': llm_name, 'module_type': module_type,
+                                'bitwidth': bitwidth, 'streaming': True})
 
             # 到这里流式生成器已耗尽，其 finally 已写入 llm_calls，可安全回读
             yield make_sse_message("complete", filename=filename, filepath=str(hw_path),
@@ -2112,6 +2134,9 @@ def generate_bdd_stream():
             last_generated_bdd['filepath'] = str(feature_path)
             last_generated_bdd['llm'] = llm_name
 
+            _log_artifact(data, run_id, 'bdd', feature_path,
+                          meta={'llm': llm_name, 'streaming': True})
+
             yield make_sse_message("complete", filename=filename,
                                    filepath=str(feature_path), run_id=run_id,
                                    call_meta=_last_call_meta(run_id))
@@ -2189,6 +2214,9 @@ def generate_bdd():
         last_generated_bdd['filename'] = feature_path_obj.name
         last_generated_bdd['filepath'] = str(feature_path)
         last_generated_bdd['llm'] = llm_name
+
+        _log_artifact(data, run_id, 'bdd', feature_path,
+                      meta={'llm': llm_name, 'streaming': False})
 
         return jsonify({
             'success': True,
@@ -2416,8 +2444,19 @@ def generate_testbench():
         last_generated_tb['filepath'] = result['filepath']
         last_generated_tb['bdd_source'] = bdd_filepath
 
+        # Step 3 没有 LLM 参与，llm_calls 里不会留下任何行；产物挂到链上是
+        # 「这条 run 的 testbench 是哪个文件」的唯一记录来源。
+        run_id = (data.get('run_id') or '').strip() or None
+        _log_artifact(data, run_id, 'testbench', result['filepath'],
+                      meta={'bdd_source': bdd_filepath,
+                            'module_name': dut_info.get('module_name'),
+                            'test_count': result.get('test_count'),
+                            'generator': result.get('generator'),
+                            'source_bdd_llm': result.get('source_bdd_llm')})
+
         return jsonify({
             'success': True,
+            'run_id': run_id,
             'filename': result['filename'],
             'filepath': result['filepath'],
             'content': result['content'],
@@ -2679,7 +2718,16 @@ def run_simulation():
 
         result = simulation_runner.run_single(str(tb_full), str(dut_full))
 
-        return jsonify(result)
+        # Step 4 同样没有 LLM 参与。仿真结果本身不落文件，记的是结论。
+        run_id = (data.get('run_id') or '').strip() or None
+        _log_artifact(data, run_id, 'simulation', testbench_path,
+                      meta={'dut_path': dut_path,
+                            'success': bool(result.get('success')),
+                            'pass_rate': result.get('pass_rate'),
+                            'total_tests': result.get('total_tests'),
+                            'passed_tests': result.get('passed_tests')})
+
+        return jsonify({**result, 'run_id': run_id})
 
     except Exception as e:
         import traceback

@@ -108,6 +108,25 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 CREATE INDEX IF NOT EXISTS idx_calls_run ON llm_calls(run_id);
 CREATE INDEX IF NOT EXISTS idx_calls_provider ON llm_calls(provider);
 CREATE INDEX IF NOT EXISTS idx_calls_created ON llm_calls(created_at);
+
+-- 一条依赖链产出的文件与结果。
+--
+-- llm_calls 记的是「发生过哪些 LLM 调用」，存 prompt/response 而不存输出
+-- 文件路径；testbench 与仿真更是完全没有 LLM 参与（testbench 由确定性模板
+-- 编译而成），在 llm_calls 里根本不会出现。于是此前无法回答一个基本问题：
+-- 某个 run_id 到底产出了哪些文件、仿真结果如何。这张表补上这条线索。
+CREATE TABLE IF NOT EXISTS run_artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,            -- ISO8601 UTC
+    run_id TEXT NOT NULL,
+    session_id TEXT,
+    stage TEXT,                          -- duv / bdd / testbench / simulation
+    path TEXT,                           -- 产物文件路径（仿真结果可为空）
+    workflow_mode TEXT,                  -- implementation / specification
+    meta TEXT                            -- JSON：仿真通过率、模块名等
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run ON run_artifacts(run_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_stage ON run_artifacts(stage);
 """
 
 
@@ -228,6 +247,42 @@ def log_call(provider: str, model: str, method: str, prompt: str,
             conn.close()
     except Exception as e:
         print(f"⚠️  Experiment logger write failed (non-fatal): {e}")
+
+
+def log_artifact(run_id: str, stage: str, path: str = None,
+                 session_id: str = None, workflow_mode: str = None,
+                 meta: Dict = None) -> None:
+    """记录某条依赖链在某一步产出了什么。写入失败不影响主流程。
+
+    run_id 为空时直接跳过而不是就地新建一个：没有链可挂的产物记下来也无从
+    关联，凭空造一个 run_id 反而会伪装成一条完整的链。
+    """
+    if not run_id:
+        return
+    try:
+        with _lock:
+            conn = _connect()
+            conn.execute(
+                """INSERT INTO run_artifacts
+                   (created_at, run_id, session_id, stage, path, workflow_mode, meta)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (_utcnow(), run_id, session_id, stage,
+                 str(path) if path else None, workflow_mode,
+                 json.dumps(meta, ensure_ascii=False) if meta else None))
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        print(f"⚠️  Artifact logger write failed (non-fatal): {e}")
+
+
+def get_chain(run_id: str) -> list:
+    """按时间顺序取出一条链的全部产物，用于核对 DUV -> BDD -> TB -> Sim 是否齐全。"""
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM run_artifacts WHERE run_id = ? ORDER BY id", (run_id,))]
+    conn.close()
+    return rows
 
 
 # ---------------------------------------------------------------------------

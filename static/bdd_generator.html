@@ -4439,7 +4439,11 @@
             // `${type}_${bitwidth}bit` 拼出来的名字与之不符，会让 testbench
             // 实例化一个不存在的模块、Step 4 elaboration 失败。改为把 DUV
             // 路径交给后端，由它从文件里读出真实模块名（单一事实来源）。
+            // Step 3 无 LLM 调用，llm_calls 里不会有行；run_id 在这里的作用是
+            // 把生成的 testbench 挂到当前依赖链上（run_artifacts）。
             const payload = {
+                ...withRunIds({}, 'testbench'),
+                workflow_mode: currentWorkflowMode,
                 bdd_filepath: currentBDD.filepath,
                 dut_filepath: dutFilePath(),
                 dut_info: {
@@ -4792,6 +4796,9 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        // 同 Step 3：无 LLM 调用，run_id 用于把仿真结论挂上链
+                        ...withRunIds({}, 'simulation'),
+                        workflow_mode: currentWorkflowMode,
                         testbench_path: tbPath,
                         dut_path: dutPath
                     })
