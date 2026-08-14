@@ -2398,7 +2398,9 @@
             const e = PROMPT_EDITS[step];
             const ver = (document.getElementById(`${step}-prompt-version`) || {}).value || 'v1';
             if (!e || e.stage !== stage) return {prompt_version: ver};
-            const tpl = (PROMPT_TPL[stage] || {}).templates[e.version || ver] || {};
+            // templates 也要兜底：服务器缺 PyYAML 时 PROMPT_TPL[stage] 整个不存在，
+            // 少一层 || {} 就会在这里抛 TypeError，把整次生成一起带崩
+            const tpl = ((PROMPT_TPL[stage] || {}).templates || {})[e.version || ver] || {};
             const out = {prompt_version: e.version || ver};
             // 只在真的改动过时发送覆盖，避免把未改动的内容当成 custom 记录
             if (e.user !== (tpl.user || '')) out.prompt_override = e.user;
@@ -2586,6 +2588,12 @@
         function switchWorkflowMode(mode) {
             if (mode === currentWorkflowMode) return;
             currentWorkflowMode = mode;
+
+            // 清掉上一种模式留下的提示。两张卡片在切换后换了步骤号与含义，
+            // 沿用旧提示会误导：例如在 impl-first 下空着需求点 Step 2 得到
+            // "Please enter requirements"，切到 spec-first 后这条红字仍挂在
+            // 已经变成第 1 步的 BDD 卡片上，看起来就像这一步坏了。
+            ['bdd', 'hw'].forEach(t => { hideError(t); hideSuccess(t); });
 
             // Update toggle buttons
             const implBtn = document.getElementById('wf-mode-impl-btn');
