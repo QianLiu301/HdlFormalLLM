@@ -5,6 +5,11 @@ flask-cors==4.0.0
 # HTTP requests
 requests==2.31.0
 
+# prompts/*.yaml 模板加载（src/prompt_store.py）。缺了它模板会静默失效，
+# 各 generator 回退到内置 f-string：生成内容不变，但 Prompt 面板全空、
+# 版本切换与 prompt/system override 全部无效。
+PyYAML>=6.0
+
 # Production server
 gunicorn==21.2.0
 

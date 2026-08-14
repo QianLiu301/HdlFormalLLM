@@ -2065,6 +2065,20 @@ def get_prompt_templates(stage):
     versions = ps.available(stage)
     if not versions:
         return jsonify({'success': False, 'error': f'unknown stage: {stage}'}), 404
+
+    # available() 只是 glob 目录，缺 PyYAML 时照样列得出版本，但 load() 全部
+    # 返回 None——面板于是显示一个有版本、却没有内容的空壳。把原因说出来。
+    if not ps.TEMPLATES_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'PyYAML is not installed on the server, so prompt '
+                     'templates cannot be read. Generation still works using '
+                     'each generator\'s built-in prompt, but template version '
+                     'selection and prompt overrides have no effect. '
+                     'Fix: pip install PyYAML',
+            'stage': stage, 'versions': versions,
+        }), 503
+
     out = {}
     for v in versions:
         doc = ps.load(stage, v) or {}

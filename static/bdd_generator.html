@@ -2242,6 +2242,7 @@
         // 所以换模块类型时要重新拉取。
         // ============================================================
         const PROMPT_TPL = {};      // stage -> {versions, templates}
+        const PROMPT_ERR = {};      // stage -> 取不到模板的原因（服务器给的说明）
         const PROMPT_EDITS = {};    // step -> {stage, user, system}
 
         function promptStageFor(step) {
@@ -2261,7 +2262,13 @@
                     const r = await fetch(`/api/prompts/${stage}`);
                     const d = await r.json();
                     if (d.success) PROMPT_TPL[stage] = d;
-                } catch (e) { console.warn('prompt template unavailable', e); }
+                    // 服务器缺 PyYAML 时模板读不出来。以前这里只是留下一个空面板，
+                    // 让人以为是前端坏了；把服务器给的原因带出去显示。
+                    else PROMPT_ERR[stage] = d.error || 'templates unavailable';
+                } catch (e) {
+                    PROMPT_ERR[stage] = String(e);
+                    console.warn('prompt template unavailable', e);
+                }
             }
             renderPromptPanel(step);
         }
@@ -2271,7 +2278,13 @@
             if (!host) return;
             const stage = promptStageFor(step);
             const info = PROMPT_TPL[stage];
-            if (!info) { host.innerHTML = '<summary>Prompt (unavailable)</summary>'; return; }
+            if (!info) {
+                const why = PROMPT_ERR[stage];
+                host.innerHTML = '<summary>Prompt (unavailable)</summary>' + (why
+                    ? `<div class="prompt-body"><div class="prompt-custom-warn">${why}</div></div>`
+                    : '');
+                return;
+            }
 
             const edit = PROMPT_EDITS[step];
             const custom = !!(edit && edit.stage === stage);

@@ -30,6 +30,16 @@ try:
     import yaml
 except ImportError:  # pragma: no cover - 部署环境缺 PyYAML 时退回硬编码路径
     yaml = None
+    # 这个降级曾经完全无声：线上少装 PyYAML，模板全部加载失败，各 generator
+    # 悄悄回退到内置 f-string，唯一症状是 Prompt 面板一片空白。生成内容虽然
+    # 不变（模板本就是从那些 f-string 提取的），但版本切换与 override 全部失效
+    # 而没有任何提示。至少让它在启动日志里喊一声。
+    print("⚠️  PyYAML not installed — prompt templates in prompts/ cannot be "
+          "loaded. Generators fall back to their built-in prompts; the Prompt "
+          "panel will be empty and version/override selection will have no "
+          "effect. Fix with: pip install PyYAML")
+
+TEMPLATES_AVAILABLE = yaml is not None
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
