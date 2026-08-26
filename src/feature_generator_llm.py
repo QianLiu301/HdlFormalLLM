@@ -736,12 +736,44 @@ class FeatureGeneratorLLM:
           | beq x1, x2, 8        | 1   | 10        | 2   | 10        | 0x100      | 0x108       |
           | beq x1, x2, 8        | 1   | 10        | 2   | 20        | 0x100      | 0x104       |
           | bne x1, x2, 8        | 1   | 10        | 2   | 20        | 0x100      | 0x108       |
+          | blt x1, x2, 8        | 1   | -5        | 2   | 3         | 0x100      | 0x108       |
+          | bge x1, x2, 8        | 1   | -5        | 2   | 3         | 0x100      | 0x104       |
+
+      @jump
+      Scenario Outline: Verify jump instructions
+        Given register x<Rs1> contains <Rs1_Value>
+        And PC is at <Initial_PC>
+        When I execute <Instruction>
+        Then PC should be <Expected_PC>
+        And register x<Rd> should contain <Link_Value>
+
+        Examples:
+          | Instruction          | Rs1 | Rs1_Value | Rd | Initial_PC | Expected_PC | Link_Value |
+          | jal x1, 16           | 0   | 0         | 1  | 0x100      | 0x110       | 0x104      |
+          | jalr x1, x2, 8       | 2   | 0x200     | 1  | 0x100      | 0x208       | 0x104      |
+
+      @compare
+      Scenario Outline: Verify signed and unsigned comparison
+        Given register x<Rs1> contains <Rs1_Value>
+        And register x<Rs2> contains <Rs2_Value>
+        When I execute <Instruction>
+        Then register x<Rd> should contain <Expected>
+
+        Examples:
+          | Instruction          | Rs1 | Rs1_Value | Rs2 | Rs2_Value | Rd | Expected |
+          | slt x1, x2, x3       | 2   | -1        | 3   | 1         | 1  | 1        |
+          | slt x1, x2, x3       | 2   | 5         | 3   | 3         | 1  | 0        |
+          | slti x1, x2, 0       | 2   | -1        | 0   | 0         | 1  | 1        |
 
     NOW GENERATE:
     - Architecture: RV32I
     - Pipeline: {pipeline_stages}-stage
     - Include at least {req['num_tests']} test cases per instruction category
-    - Test categories: Arithmetic, Logical, Memory, Branch
+    - Test categories: Arithmetic, Logical, Memory, Branch, Jump, Compare
+    - Cover every instruction: ADD SUB AND OR XOR SLT, ADDI ANDI ORI XORI SLTI LW,
+      SW, BEQ BNE BLT BGE, JAL JALR
+    - Also cover pipeline behaviour: EX/MEM and MEM/WB forwarding, a load-use
+      stall after LW, and a pipeline flush on a taken branch or jump
 
     Generate the complete Feature file following the exact format above.
     Output ONLY the Feature file content, no explanations.

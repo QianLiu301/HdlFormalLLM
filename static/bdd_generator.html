@@ -2495,13 +2495,20 @@
 - Single write port
 - x0 always returns 0
 - Concurrent read/write test`,
-            cpu: (stages) => `${stages || 5}-stage RISC-V CPU with:
-- R-type: ADD, SUB, AND, OR, XOR
-- I-type: ADDI, LW
+            // 必须与 cpu_generator 的 RV32I 指令表一致（19 条）。此前只列了 10 条，
+            // 于是 SLT/SLTI/ANDI/ORI/XORI/BLT/BGE/JAL/JALR 被硬件实现了却从不受测
+            // ——而跳转与有符号分支恰好是流水线冒险最容易出错的地方。
+            cpu: (stages) => `${stages || 5}-stage RISC-V CPU (RV32I subset) with:
+- R-type: ADD, SUB, AND, OR, XOR, SLT
+- I-type: ADDI, ANDI, ORI, XORI, SLTI, LW
 - S-type: SW
-- B-type: BEQ, BNE
-- Forwarding tests
-- Hazard tests`,
+- B-type: BEQ, BNE, BLT, BGE
+- J-type: JAL, JALR
+- Forwarding: EX/MEM and MEM/WB to EX
+- Load-use hazard: stall one cycle after LW
+- Control hazard: flush the pipeline on a taken branch or jump
+- Signed comparison: contrast SLT against unsigned interpretation
+- x0 stays zero on any write`,
             other: (bw) => `${bw}-bit module with:
 - Basic functionality tests
 - Boundary value tests

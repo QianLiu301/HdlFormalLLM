@@ -114,7 +114,8 @@ class TestQualityAnalyzer:
             'alu': 10,  # ADD SUB AND OR XOR SLL SRL SRA SLT SLTU
             'counter': 3,  # UP, DOWN, UPDOWN
             'regfile': 2,  # READ, WRITE
-            'cpu': 10,  # Various instructions
+            # 与 cpu_generator 的 RV32I 指令表一致（19 条），否则覆盖率分母是错的
+            'cpu': 19,  # 6 R-type + 6 I-type + 1 S-type + 4 B-type + 2 J-type
             'other': 4
         }
         return expected.get(self.module_type, 4)
