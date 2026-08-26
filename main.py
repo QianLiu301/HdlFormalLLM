@@ -520,6 +520,39 @@ def _resolve_output_file(subdir, filename, remembered=None):
     return None
 
 
+def _duv_compile_check(path):
+    """Step 1 生成后立刻单独编译一次，只报告不阻断。
+
+    不这么做的话，一份语法不合法的 DUV 会一路通过 Step 1/2/3，直到 Step 4 才
+    以 "Compilation failed" 暴露——失败被记在仿真头上，而真正的原因是 DUV 生成。
+    做失败归因时这个错位会让统计失真。
+
+    标准必须与 simulation_runner 用的一致（-g2012）：用更严格的标准检查，会把
+    实际能仿真的设计误报成编译失败。
+    """
+    import subprocess, tempfile
+    p = Path(path)
+    if not p.is_file():
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            r = subprocess.run(
+                ["iverilog", "-g2012", "-o", str(Path(tmp) / "a.out"), str(p)],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60)
+    except FileNotFoundError:
+        return None          # 没装 iverilog：不报告，而不是谎报失败
+    except Exception as e:
+        return {'ok': None, 'error': f'{type(e).__name__}: {e}'}
+
+    if r.returncode == 0:
+        return {'ok': True, 'error': None}
+    # 只取第一条错误：后面的多半是它的连锁反应
+    first = next((ln.strip() for ln in (r.stderr or '').splitlines() if 'error' in ln.lower()
+                  or 'syntax' in ln.lower()), (r.stderr or '').strip()[:200])
+    return {'ok': False, 'error': first}
+
+
 def _chain_start(data, step):
     """本次调用是否为依赖链起点（据此决定新建还是继承 run_id）。
 
@@ -1405,12 +1438,17 @@ def generate_hardware():
         last_generated_hw['llm'] = llm_name
         last_generated_hw['module_type'] = module_type
 
+        # 只报告不阻断：代码照样保存供查看，但立刻知道这份 DUV 是不是坏的
+        duv_compile = _duv_compile_check(hw_path)
+
         _log_artifact(data, run_id, 'duv', hw_path,
                       meta={'llm': llm_name, 'module_type': module_type,
-                            'bitwidth': bitwidth, 'streaming': False})
+                            'bitwidth': bitwidth, 'streaming': False,
+                            'compiles': (duv_compile or {}).get('ok')})
 
         return jsonify({
             'success': True,
+            'duv_compile': duv_compile,
             'filename': hw_path_obj.name,
             'preview': content[:1000] + ('...' if len(content) > 1000 else ''),
             'full_content': content,
@@ -1643,12 +1681,16 @@ def generate_hardware_stream():
             last_generated_hw['llm'] = llm_name
             last_generated_hw['module_type'] = module_type
 
+            duv_compile = _duv_compile_check(hw_path)
+
             _log_artifact(data, run_id, 'duv', hw_path,
                           meta={'llm': llm_name, 'module_type': module_type,
-                                'bitwidth': bitwidth, 'streaming': True})
+                                'bitwidth': bitwidth, 'streaming': True,
+                                'compiles': (duv_compile or {}).get('ok')})
 
             # 到这里流式生成器已耗尽，其 finally 已写入 llm_calls，可安全回读
             yield make_sse_message("complete", filename=filename, filepath=str(hw_path),
+                                   duv_compile=duv_compile,
                                    call_meta=_last_call_meta(run_id))
 
         except Exception as e:

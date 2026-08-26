@@ -686,6 +686,15 @@
                               font-size: 11px; color: #1f2937; }
         .sampling-help .samp-help-use { display: block; margin-top: 5px; padding-top: 5px;
                                         border-top: 1px dashed #e2e8f0; color: #475569; }
+        /* ---- Step 1 独立编译结果 ---- */
+        .compile-status { margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+                          font-size: 12px; line-height: 1.6; }
+        .compile-ok  { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+        .compile-bad { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+        .compile-status code { display: block; margin-top: 4px; font-size: 11px;
+                               font-family: 'JetBrains Mono', monospace;
+                               background: #fff; padding: 4px 6px; border-radius: 4px;
+                               overflow-x: auto; white-space: pre-wrap; }
         /* ---- Prompt panel (A5-3) ---- */
         .prompt-panel { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 8px;
                         background: #fafafa; }
@@ -992,6 +1001,7 @@
                                 <p id="hw-model-hint" style="display:none;color:#b45309;font-size:12px;margin-top:4px"></p>
                                 <div class="call-meta" id="hw-call-meta"></div>
                                 <div class="call-warn" id="hw-call-warn"></div>
+                                <div class="compile-status" id="hw-compile-status" style="display:none"></div>
                             </div>
                             <div class="badge" id="hw-badge">LLM</div>
                         </div>
@@ -2447,6 +2457,31 @@
             warn.innerHTML = w;
         }
 
+        /** Step 1 生成后的独立编译结果。只报告，不阻断后续步骤。
+         *  没有它的话，一份语法非法的 DUV 要到 Step 4 才以 "Compilation failed"
+         *  暴露，失败会被错记在仿真头上。 */
+        function renderDuvCompile(resp) {
+            const el = document.getElementById('hw-compile-status');
+            if (!el) return;
+            const c = resp && resp.duv_compile;
+            if (!c || c.ok === null || c.ok === undefined) {   // 服务器无 iverilog
+                el.style.display = 'none';
+                return;
+            }
+            el.style.display = 'block';
+            if (c.ok) {
+                el.className = 'compile-status compile-ok';
+                el.textContent = '✓ Compiles standalone (iverilog -g2012)';
+            } else {
+                el.className = 'compile-status compile-bad';
+                el.innerHTML = '✗ This design does not compile — the failure is in '
+                    + 'Step 1, not in simulation.<br><code>'
+                    + (c.error || '').replace(/[<>&]/g, ch =>
+                        ({'<': '&lt;', '>': '&gt;', '&': '&amp;'}[ch]))
+                    + '</code>';
+            }
+        }
+
         /** provider 不支持 model 覆盖时给出提示（后端只对 openai/gemini 生效）。 */
         function showModelIgnoredHint(step, resp) {
             const el = document.getElementById(`${step}-model-hint`);
@@ -3619,6 +3654,7 @@
                                     preview.scrollTop = preview.scrollHeight;
                                 } else if (data.type === 'complete') {
                                     renderCallMeta('hw', data.call_meta);
+                                    renderDuvCompile(data);
                                     currentHwFilename = data.filename;
                                     document.getElementById('hw-filename').textContent = data.filename;
                                     document.getElementById('hw-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
@@ -3667,6 +3703,7 @@
                 adoptRunId(data.run_id);   // Step 1 起点：记下后端新建的 run_id
                 showModelIgnoredHint('hw', data);
                 renderCallMeta('hw', data.call_meta);
+                renderDuvCompile(data);
                 currentHwFilename = data.filename;
                 document.getElementById('hw-filename').textContent = data.filename;
                 document.getElementById('hw-info').textContent = `Generated with ${data.llm.toUpperCase()}`;

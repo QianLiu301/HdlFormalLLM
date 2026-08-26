@@ -195,14 +195,19 @@ def calls_for(run_id, task_type):
 
 
 def iverilog_ok(path: Path):
-    """能否单独编译通过（不含 testbench）。iverilog 缺失时返回 None。"""
+    """能否单独编译通过（不含 testbench）。iverilog 缺失时返回 None。
+
+    标准必须与 simulation_runner 一致（-g2012）。此前这里用 -g2005，比实际仿真
+    严格：例如在无名 begin/end 里声明 integer 会被 -g2005 拒绝却能正常仿真，
+    于是 duv_compile 把一批实际可用的设计记成了编译失败。
+    """
     import subprocess, tempfile
     if not path or not Path(path).is_file():
         return None
     try:
         with tempfile.TemporaryDirectory() as tmp:
             r = subprocess.run(
-                ["iverilog", "-g2005", "-o", str(Path(tmp) / "a.out"), str(path)],
+                ["iverilog", "-g2012", "-o", str(Path(tmp) / "a.out"), str(path)],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=60)
         return 1 if r.returncode == 0 else 0
