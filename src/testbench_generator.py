@@ -109,7 +109,9 @@ class TestQualityAnalyzer:
     def _get_expected_operations(self) -> int:
         """Get expected number of operations based on module type"""
         expected = {
-            'alu': 4,  # ADD, SUB, AND, OR
+            # 与 alu_generator.DEFAULT_ALU_OPERATIONS 的条目数保持一致，
+            # 否则覆盖率的分母是错的（按 4 个算，测了 5 个就报 125%）
+            'alu': 10,  # ADD SUB AND OR XOR SLL SRL SRA SLT SLTU
             'counter': 3,  # UP, DOWN, UPDOWN
             'regfile': 2,  # READ, WRITE
             'cpu': 10,  # Various instructions

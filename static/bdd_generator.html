@@ -2462,15 +2462,26 @@
 
         // BDD Templates
         const BDD_TEMPLATES = {
-            alu: (bw) => `${bw}-bit ALU with:
-- ADD operation (A + B)
-- SUB operation (A - B)
-- AND operation (A & B)
-- OR operation (A | B)
-- XOR operation (A ^ B)
-- Overflow detection
-- Zero flag detection
-- Boundary value tests`,
+            // opcode 必须与 alu_generator.DEFAULT_ALU_OPERATIONS 一致：写出 opcode
+            // 是为了让 BDD 场景带上正确的 tag，testbench 才能翻译成对的激励。
+            // 此前这里列了 XOR 而 DUV 的操作表只有 4 个，BDD 会去测一个硬件
+            // 从未被要求实现的操作。
+            alu: (bw) => `${bw}-bit ALU with 4-bit opcode selecting:
+- ADD  (opcode 0000): A + B
+- SUB  (opcode 0001): A - B
+- AND  (opcode 0010): A & B
+- OR   (opcode 0011): A | B
+- XOR  (opcode 0100): A ^ B
+- SLL  (opcode 0101): A << B, shift amount is the low ${Math.log2(bw)} bits of B
+- SRL  (opcode 0110): A >> B, zero-filled
+- SRA  (opcode 0111): A >>> B, sign-extended
+- SLT  (opcode 1000): 1 if A < B as signed values, else 0
+- SLTU (opcode 1001): 1 if A < B as unsigned values, else 0
+- Zero flag: high when result is 0, for every operation
+- Overflow flag: signed overflow, meaningful for ADD and SUB
+- Boundary value tests (0, 1, max, min, all-ones)
+- Contrast SRL against SRA on a negative operand
+- Contrast SLT against SLTU on the same operand pair`,
             counter: (bw) => `${bw}-bit Counter with:
 - UP mode (increment)
 - DOWN mode (decrement)

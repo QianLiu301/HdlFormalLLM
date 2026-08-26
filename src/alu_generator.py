@@ -99,6 +99,40 @@ setup_proxy()
 # ============================================================================
 
 
+# ============================================================================
+# ALU 操作表 —— 单一事实来源
+#
+# opcode 分配必须与 testbench_generator._get_alu_operation 的映射表一致：
+# 那张表决定 BDD 场景里的 tag 会被翻译成哪个 opcode，两边对不上，生成的
+# testbench 就会用错误的 opcode 去激励 DUV，仿真结果全是假的。
+#
+# 选择依据是「每个操作暴露一类不同的错误」，而不是把指令集补全：
+#   ADD/SUB    进位与借位
+#   AND/OR/XOR 位运算基线
+#   SLL        移位量截断（只取 b 的低 log2(width) 位）
+#   SRL/SRA    最小对照对：逻辑右移 >> 与算术右移 >>>，暴露符号扩展错误
+#   SLT/SLTU   最小对照对：有符号与无符号比较
+# 刻意不含 MUL/DIV：等价性检查会指数爆炸，拖垮变异测试流程。
+# ============================================================================
+DEFAULT_ALU_OPERATIONS = {
+    "ADD":  {"opcode": "0000", "description": "Addition (A + B)"},
+    "SUB":  {"opcode": "0001", "description": "Subtraction (A - B)"},
+    "AND":  {"opcode": "0010", "description": "Bitwise AND (A & B)"},
+    "OR":   {"opcode": "0011", "description": "Bitwise OR (A | B)"},
+    "XOR":  {"opcode": "0100", "description": "Bitwise XOR (A ^ B)"},
+    "SLL":  {"opcode": "0101", "description":
+             "Logical left shift (A << B), shift amount is the low log2(WIDTH) bits of B"},
+    "SRL":  {"opcode": "0110", "description":
+             "Logical right shift (A >> B), zero-filled, same shift-amount rule as SLL"},
+    "SRA":  {"opcode": "0111", "description":
+             "Arithmetic right shift (A >>> B), sign-extended, same shift-amount rule as SLL"},
+    "SLT":  {"opcode": "1000", "description":
+             "Signed set-less-than: result is 1 when A < B treating both as two's complement, else 0"},
+    "SLTU": {"opcode": "1001", "description":
+             "Unsigned set-less-than: result is 1 when A < B treating both as unsigned, else 0"},
+}
+
+
 class ALUGenerator:
     """
     Generate deterministic ALU design using LLM.
@@ -247,12 +281,7 @@ class ALUGenerator:
 
         # Use default operations if not provided
         if operations is None:
-            operations = {
-                "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
-                "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
-                "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
-                "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
-            }
+            operations = dict(DEFAULT_ALU_OPERATIONS)
 
         # Create prompt
         prompt = self._create_alu_prompt(bitwidth, operations, module_name)

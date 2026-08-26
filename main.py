@@ -178,7 +178,7 @@ except ImportError as e:
     print(f"⚠️ BDD module not available: {e}")
 
 try:
-    from alu_generator import ALUGenerator
+    from alu_generator import ALUGenerator, DEFAULT_ALU_OPERATIONS
     HAS_ALU_MODULE = True
     print("✅ ALU Generator module loaded")
 except ImportError as e:
@@ -1498,12 +1498,9 @@ def generate_hardware_stream():
                     project_root=str(PROJECT_ROOT),
                     debug=False
                 ))
-                operations = {
-                    "ADD": {"opcode": "0000", "description": "Addition (A + B)"},
-                    "SUB": {"opcode": "0001", "description": "Subtraction (A - B)"},
-                    "AND": {"opcode": "0010", "description": "Bitwise AND (A & B)"},
-                    "OR": {"opcode": "0011", "description": "Bitwise OR (A | B)"},
-                }
+                # 与非流式路径共用同一张表。这里原本另抄了一份，两处一旦漂移，
+                # 开不开 Stream 就会生成操作集不同的硬件。
+                operations = dict(DEFAULT_ALU_OPERATIONS)
                 module_name = f"alu_{bitwidth}bit"
                 prompt = generator._create_alu_prompt(bitwidth, operations, module_name)
 
