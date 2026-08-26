@@ -611,17 +611,22 @@ class FeatureParser:
             'xnor': ('XNOR', '1111'),
         }
 
-        # 首先从 tag 中查找（这是最可靠的方式）
         tag_lower = tag.lower().strip()
 
-        # 处理复合 tag，如 "add_arithmetic" -> "add"
-        for op_name in operation_map.keys():
-            if op_name in tag_lower:
-                return operation_map[op_name]
-
-        # 如果 tag 直接匹配
+        # 先试完全相等：这是绝大多数情况（BDD 标签就是操作名）
         if tag_lower in operation_map:
             return operation_map[tag_lower]
+
+        # 再处理复合 tag，如 "add_arithmetic" -> "add"。
+        #
+        # 必须按名字从长到短匹配，并且要求命中的是完整的词。此前是按字典
+        # 顺序做子串包含，于是 'or' 先于 'xor' 命中 —— @xor 被识别成 OR，
+        # testbench 拿 opcode 0011 去测 XOR；同理 'slt' 是 'sltu' 的前缀，
+        # @sltu 被识别成 SLT。两个操作因此从统计里消失（覆盖率 8/10），
+        # 而且驱动了错误的 opcode，仿真结果毫无意义。
+        for op_name in sorted(operation_map, key=len, reverse=True):
+            if re.search(rf'(?<![a-z0-9]){op_name}(?![a-z0-9])', tag_lower):
+                return operation_map[op_name]
 
         # 如果在 self.operations 字典中已经定义了（从 Feature 文件提取的）
         # 但要验证 opcode 格式
