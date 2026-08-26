@@ -1,30 +1,16 @@
-"version": |-
-  v1
-"stage": |-
-  bdd_alu
-"source": |-
-  feature_generator_llm.py::_create_alu_prompt
-"system": |-
-  You are a hardware verification expert specializing in BDD test generation.
-"user": "You are an expert in hardware verification and BDD (Behavior-Driven Development).\n    Generate a Gherkin-format Feature file for ALU testing.\n\n    CRITICAL FORMAT REQUIREMENTS:\n    1. Use strict Gherkin syntax with Scenario Outline and Examples tables\n    2. Examples table MUST use pipe (|) separators with consistent spacing\n    3. Each operation MUST have at least {{ req['num_tests'] }} test cases\n    4. MUST include these specific edge cases:\n       - Test with (0, 0)\n       - Test with ({{ max_value }}, {{ max_value }}) - maximum values\n       - Test cases that trigger overflow\n    5. Follow the EXACT format shown below\n\n    EXAMPLE FORMAT (8-bit):\n\n    Feature: 8-bit ALU Verification\n      As a hardware verification engineer\n      I want to verify the ALU implementation\n      So that I can ensure correct operation\n\n      Background:\n        Given the ALU is initialized with 8-bit operands\n\n      @add @arithmetic\n      Scenario Outline: Verify ADD operation\n        Given I have operand A = <A>\n        And I have operand B = <B>\n        When I perform the ADD operation with opcode 0000\n        Then the result should be <Expected_Result>\n        And the zero flag should be <Zero_Flag>\n        And the overflow flag should be <Overflow>\n        And the negative flag should be <Negative_Flag>\n\n        Examples:\n          | A   | B   | Opcode | Expected_Result | Zero_Flag | Overflow | Negative_Flag |\n          | 0   | 0   | 0000   | 0               | True      | False    | False         |\n          | 0   | 1   | 0000   | 1               | False     | False    | False         |\n          | 255 | 0   | 0000   | 255             | False     | False    | True          |\n          | 255 | 255 | 0000   | 254             | False     | True     | True          |\n          | 100 | 50  | 0000   | 150             | False     | False    | True          |\n\n    NOW GENERATE:\n    - Bitwidth: {{ req['bitwidth'] }}-bit\n    - Operations to include:\n    - {{ ops_str }}\n    - Each operation needs {{ req['num_tests'] }} test cases minimum\n    - Maximum value for {{ req['bitwidth'] }}-bit: {{ max_value }}\n    - MUST include edge cases: (0,0), ({{ max_value }},{{ max_value }}), and overflow tests\n\n    Generate the complete Feature file following the exact format above.\n    Output ONLY the Feature file content, no explanations.\n    "
-"variables":
-- |-
-  req['num_tests']
-- |-
-  max_value
-- |-
-  max_value
-- |-
-  req['bitwidth']
-- |-
-  ops_str
-- |-
-  req['num_tests']
-- |-
-  req['bitwidth']
-- |-
-  max_value
-- |-
-  max_value
-- |-
-  max_value
+version: v1
+stage: bdd_alu
+source: feature_generator_llm.py::_create_alu_prompt
+system: You are a hardware verification expert specializing in BDD test generation.
+user: "You are an expert in hardware verification and BDD (Behavior-Driven Development).\n    Generate a Gherkin-format Feature file for ALU testing.\n\n    CRITICAL FORMAT REQUIREMENTS:\n    1. Use strict Gherkin syntax with Scenario Outline and Examples tables\n    2. Examples table MUST use pipe (|) separators with consistent spacing\n    3. Each operation MUST have at least {{ req['num_tests'] }} test cases\n    4. MUST include these specific edge cases:\n       - Test with (0, 0)\n       - Test with ({{ max_value }}, {{ max_value }}) - maximum values\n       - Test cases that trigger overflow\n    5. Follow the EXACT format shown below\n\n    EXAMPLE FORMAT (8-bit):\n\n    Feature: 8-bit ALU Verification\n      As a hardware verification engineer\n      I want to verify the ALU implementation\n      So that I can ensure correct operation\n\n      Background:\n        Given the ALU is initialized with 8-bit operands\n\n      @add @arithmetic\n      Scenario Outline: Verify ADD operation\n        Given I have operand A = <A>\n        And I have operand B = <B>\n        When I perform the ADD operation with opcode 0000\n        Then the result should be <Expected_Result>\n        And the zero flag should be <Zero_Flag>\n        And the overflow flag should be <Overflow>\n        And the negative flag should be <Negative_Flag>\n\n        Examples:\n          | A   | B   | Opcode | Expected_Result | Zero_Flag | Overflow | Negative_Flag |\n          | 0   | 0   | 0000   | 0               | True      | False    | False         |\n          | 0   | 1   | 0000   | 1               | False     | False    | False         |\n          | 255 | 0   | 0000   | 255             | False     | False    | True          |\n          | 255 | 255 | 0000   | 254             | False     | True     | True          |\n          | 100 | 50  | 0000   | 150             | False     | False    | True          |\n\n      @sll @shift\n      Scenario Outline: Verify SLL operation\n        Given I have operand A = <A>\n        And I have shift amount B = <B>\n        When I perform the SLL operation with opcode 0101\n        Then the result should be <Expected_Result>\n        And the zero flag should be <Zero_Flag>\n\n        Examples:\n          | A   | B   | Opcode | Expected_Result | Zero_Flag |\n          | 1   | 0   | 0101   | 1               | False     |\n          | 1   | 1   | 0101   | 2               | False     |\n          | 1   | 8   | 0101   | 0               | True      |\n          | 1   | 9   | 0101   | 2               | False     |\n\n      @slt @compare\n      Scenario Outline: Verify SLT against SLTU on the same operands\n        Given I have operand A = <A>\n        And I have operand B = <B>\n        When I perform the <Operation> operation with opcode <Opcode>\n        Then the result should be <Expected_Result>\n\n        Examples:\n          | Operation | A   | B   | Opcode | Expected_Result |\n          | SLT       | 255 | 1   | 1000   | 1               |\n          | SLTU      | 255 | 1   | 1001   | 0               |\n          | SLT       | 1   | 2   | 1000   | 1               |\n          | SLTU      | 1   | 2   | 1001   | 1               |\n\n    NOW GENERATE:\n    - Bitwidth: {{ req['bitwidth'] }}-bit\n    - Operations to include:\n    - {{ ops_str }}\n    - Each operation needs {{ req['num_tests'] }} test cases minimum\n    - Maximum value for {{ req['bitwidth'] }}-bit: {{ max_value }}\n    - MUST include edge cases: (0,0), ({{ max_value }},{{ max_value }}), and overflow tests\n    - For SLL/SRL/SRA the operand B is the shift amount, and only its low\n      log2({{ req['bitwidth'] }}) bits are used: a shift of {{ req['bitwidth'] }} behaves as a shift of 0\n    - SRL fills with zeros while SRA replicates the sign bit: cover both on a\n      negative operand so the two are distinguished\n    - SLT compares as signed and SLTU as unsigned: cover an operand pair where\n      the two disagree, and note the result is 1 or 0 rather than an arithmetic value\n    - The overflow flag is only meaningful for ADD and SUB; omit that column for\n      the other operations\n\n    Generate the complete Feature file following the exact format above.\n    Output ONLY the Feature file content, no explanations.\n    "
+variables:
+- req['num_tests']
+- max_value
+- max_value
+- req['bitwidth']
+- ops_str
+- req['num_tests']
+- req['bitwidth']
+- max_value
+- max_value
+- max_value

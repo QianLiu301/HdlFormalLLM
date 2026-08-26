@@ -47,6 +47,13 @@ except ImportError:
     except ImportError:
         _prompt_store = None
 
+# ALU 操作表与 opcode 的唯一来源。BDD 侧必须用与 DUV 侧完全相同的 opcode，
+# 否则 testbench 会拿一个 opcode 去激励执行另一个操作的硬件。
+try:
+    from src.alu_generator import DEFAULT_ALU_OPERATIONS as _ALU_OPS
+except ImportError:
+    from alu_generator import DEFAULT_ALU_OPERATIONS as _ALU_OPS
+
 # Step 2 的 system prompt，所有 provider 共用一份，确保跨模型对比公平
 BDD_SYSTEM_PROMPT = ("You are a hardware verification expert specializing in "
                      "BDD test generation.")
@@ -136,17 +143,24 @@ class FeatureGeneratorLLM:
         'TogetherProvider': 'together',
     }
 
+    # opcode 表从 alu_generator 取，不在这里另存一份。
+    #
+    # 这里原本自带 {'NOT':'0101','SHL':'0110','SHR':'0111'}，而 DUV 侧那张表把
+    # 0101/0110/0111 分给了 SLL/SRL/SRA —— 同一个 opcode 两边含义不同。BDD 一旦
+    # 写出 "SHL with opcode 0110"，testbench 就会驱动 0110 去激励一个执行 SRL 的
+    # 硬件：仿真照样通过，但测的根本不是那个操作。
+    DEFAULT_OPCODES = {name: info['opcode']
+                       for name, info in _ALU_OPS.items()}
+
+    # 从需求文本里识别操作时的候选名单。不在名单上的操作会被静默丢弃，
+    # 所以它必须覆盖 DUV 真正支持的全部操作。
+    RECOGNIZED_OPERATIONS = list(_ALU_OPS.keys())
+
     # Default operations for different levels
     DEFAULT_OPERATIONS = {
         'basic': ['ADD', 'SUB', 'AND', 'OR'],
-        'extended': ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'NOT'],
-        'full': ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'NOT', 'SHL', 'SHR']
-    }
-
-    # Default opcodes
-    DEFAULT_OPCODES = {
-        'ADD': '0000', 'SUB': '0001', 'AND': '0010', 'OR': '0011',
-        'XOR': '0100', 'NOT': '0101', 'SHL': '0110', 'SHR': '0111'
+        'extended': ['ADD', 'SUB', 'AND', 'OR', 'XOR'],
+        'full': RECOGNIZED_OPERATIONS,
     }
 
     def __init__(
@@ -283,10 +297,13 @@ class FeatureGeneratorLLM:
                     pipeline_stages = 5
 
         # Extract operations
+        #
+        # 用词边界匹配而不是子串匹配：'or' 作为子串出现在 "operand"/"operation"
+        # 里，需求文本几乎必然包含这两个词，于是 OR 永远会被认出来，无论用户
+        # 是否要它。同理 SLT 是 SLTU 的前缀，靠子串无法区分。
         operations = []
-        operation_names = ['ADD', 'SUB', 'AND', 'OR', 'XOR', 'NOT', 'SHL', 'SHR', 'NAND', 'NOR']
-        for op in operation_names:
-            if op.lower() in input_lower:
+        for op in self.RECOGNIZED_OPERATIONS:
+            if re.search(rf'\b{op}\b', user_input, re.IGNORECASE):
                 operations.append(op)
 
         # If no operations specified, use default
@@ -455,6 +472,35 @@ class FeatureGeneratorLLM:
           | 255 | 255 | 0000   | 254             | False     | True     | True          |
           | 100 | 50  | 0000   | 150             | False     | False    | True          |
 
+      @sll @shift
+      Scenario Outline: Verify SLL operation
+        Given I have operand A = <A>
+        And I have shift amount B = <B>
+        When I perform the SLL operation with opcode 0101
+        Then the result should be <Expected_Result>
+        And the zero flag should be <Zero_Flag>
+
+        Examples:
+          | A   | B   | Opcode | Expected_Result | Zero_Flag |
+          | 1   | 0   | 0101   | 1               | False     |
+          | 1   | 1   | 0101   | 2               | False     |
+          | 1   | 8   | 0101   | 0               | True      |
+          | 1   | 9   | 0101   | 2               | False     |
+
+      @slt @compare
+      Scenario Outline: Verify SLT against SLTU on the same operands
+        Given I have operand A = <A>
+        And I have operand B = <B>
+        When I perform the <Operation> operation with opcode <Opcode>
+        Then the result should be <Expected_Result>
+
+        Examples:
+          | Operation | A   | B   | Opcode | Expected_Result |
+          | SLT       | 255 | 1   | 1000   | 1               |
+          | SLTU      | 255 | 1   | 1001   | 0               |
+          | SLT       | 1   | 2   | 1000   | 1               |
+          | SLTU      | 1   | 2   | 1001   | 1               |
+
     NOW GENERATE:
     - Bitwidth: {req['bitwidth']}-bit
     - Operations to include:
@@ -462,6 +508,14 @@ class FeatureGeneratorLLM:
     - Each operation needs {req['num_tests']} test cases minimum
     - Maximum value for {req['bitwidth']}-bit: {max_value}
     - MUST include edge cases: (0,0), ({max_value},{max_value}), and overflow tests
+    - For SLL/SRL/SRA the operand B is the shift amount, and only its low
+      log2({req['bitwidth']}) bits are used: a shift of {req['bitwidth']} behaves as a shift of 0
+    - SRL fills with zeros while SRA replicates the sign bit: cover both on a
+      negative operand so the two are distinguished
+    - SLT compares as signed and SLTU as unsigned: cover an operand pair where
+      the two disagree, and note the result is 1 or 0 rather than an arithmetic value
+    - The overflow flag is only meaningful for ADD and SUB; omit that column for
+      the other operations
 
     Generate the complete Feature file following the exact format above.
     Output ONLY the Feature file content, no explanations.
