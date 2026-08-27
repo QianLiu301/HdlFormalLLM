@@ -361,6 +361,11 @@ def _reentrant() -> bool:
 def _wrap_regular(cls_name, name, fn):
     @functools.wraps(fn)
     def wrapper(self, prompt, *args, **kwargs):
+        # 类名必须取运行时实例的，不能用包装时的 cls_name：
+        # 子类继承父类已包装过的 _call_api 时不会被重新包装，
+        # 用 cls_name 会把 LlamaProvider 的调用记成 QwenProvider，
+        # 跨模型对比时两家会被合并成一家。
+        cls_name = type(self).__name__
         if _reentrant():
             return fn(self, prompt, *args, **kwargs)   # 内层转发，不重复记录
         model = getattr(self, 'model', None)
@@ -401,6 +406,11 @@ def _wrap_regular(cls_name, name, fn):
 def _wrap_stream(cls_name, name, fn):
     @functools.wraps(fn)
     def wrapper(self, prompt, *args, **kwargs):
+        # 类名必须取运行时实例的，不能用包装时的 cls_name：
+        # 子类继承父类已包装过的 _call_api 时不会被重新包装，
+        # 用 cls_name 会把 LlamaProvider 的调用记成 QwenProvider，
+        # 跨模型对比时两家会被合并成一家。
+        cls_name = type(self).__name__
         if _reentrant():
             return fn(self, prompt, *args, **kwargs)
         model = getattr(self, 'model', None)
