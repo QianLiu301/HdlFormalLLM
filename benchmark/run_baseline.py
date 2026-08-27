@@ -50,15 +50,22 @@ STEP2_TEMP = 0.7
 
 # Step 2 的需求文本，与网页 BDD_TEMPLATES 保持一致，避免基线与实际使用脱节
 BDD_INPUT = {
-    'alu': lambda bw: f"""{bw}-bit ALU with:
-- ADD operation (A + B)
-- SUB operation (A - B)
-- AND operation (A & B)
-- OR operation (A | B)
-- XOR operation (A ^ B)
-- Overflow detection
-- Zero flag detection
-- Boundary value tests""",
+    'alu': lambda bw: f"""{bw}-bit ALU with 4-bit opcode selecting:
+- ADD  (opcode 0000): A + B
+- SUB  (opcode 0001): A - B
+- AND  (opcode 0010): A & B
+- OR   (opcode 0011): A | B
+- XOR  (opcode 0100): A ^ B
+- SLL  (opcode 0101): A << B, shift amount is the low {bw.bit_length() - 1} bits of B
+- SRL  (opcode 0110): A >> B, zero-filled
+- SRA  (opcode 0111): A >>> B, sign-extended
+- SLT  (opcode 1000): 1 if A < B as signed values, else 0
+- SLTU (opcode 1001): 1 if A < B as unsigned values, else 0
+- Zero flag: high when result is 0, for every operation
+- Overflow flag: signed overflow, meaningful for ADD and SUB
+- Boundary value tests (0, 1, max, min, all-ones)
+- Contrast SRL against SRA on a negative operand
+- Contrast SLT against SLTU on the same operand pair""",
     'counter': lambda bw: f"""{bw}-bit Counter with:
 - UP mode (increment)
 - DOWN mode (decrement)
@@ -105,11 +112,26 @@ def _conn():
         bdd_success INTEGER, bdd_parse_ok INTEGER, bdd_attempts INTEGER,
         tb_success INTEGER, tb_compile INTEGER,
         sim_success INTEGER,
+        -- oracle 分解：同一份 BDD 生成两份 testbench，激励相同、期望值来源不同。
+        -- bdd  臂期望值取自 BDD，失败可能是 DUV 错、也可能是 BDD 期望值错
+        -- spec 臂期望值由生成器按规格重算，失败只可能是 DUV 错
+        -- 于是 spec 通过而 bdd 失败 = BDD 的 oracle 有误，两者第一次可区分
+        sim_success_spec INTEGER, sim_pass_rate REAL, sim_pass_rate_spec REAL,
+        oracle_error INTEGER,
         total_tokens_in INTEGER, total_tokens_out INTEGER, total_latency_ms INTEGER,
         failure_stage TEXT, failure_type TEXT,
         duv_call_ids TEXT, bdd_call_ids TEXT,
         duv_path TEXT, bdd_path TEXT, tb_path TEXT,
         notes TEXT)""")
+
+    # 迁移：表可能是旧版建的，CREATE TABLE IF NOT EXISTS 不会补列。
+    # 旧批次的这些列留空即可——它们本来就没有跑过第二臂。
+    have = {r[1] for r in conn.execute("PRAGMA table_info(baseline_runs)")}
+    for col, typ in (('sim_success_spec', 'INTEGER'), ('sim_pass_rate', 'REAL'),
+                     ('sim_pass_rate_spec', 'REAL'), ('oracle_error', 'INTEGER')):
+        if col not in have:
+            conn.execute(f"ALTER TABLE baseline_runs ADD COLUMN {col} {typ}")
+    conn.commit()
     return conn
 
 
@@ -234,6 +256,8 @@ def run_one(client, batch, provider, module_type, seed, session_id):
         'duv_success': 0, 'duv_compile': None, 'duv_attempts': 0,
         'bdd_success': 0, 'bdd_parse_ok': 0, 'bdd_attempts': 0,
         'tb_success': 0, 'tb_compile': None, 'sim_success': 0,
+        'sim_success_spec': None, 'sim_pass_rate': None,
+        'sim_pass_rate_spec': None, 'oracle_error': None,
         'total_tokens_in': 0, 'total_tokens_out': 0, 'total_latency_ms': 0,
         'failure_stage': None, 'failure_type': None,
         'duv_call_ids': None, 'bdd_call_ids': None,
@@ -313,14 +337,16 @@ def run_one(client, batch, provider, module_type, seed, session_id):
 
     # ---- Step 3: Testbench（确定性模板，不调 LLM）----
     # 不传 module_name：后端从 dut_filepath 读出真实模块名（单一事实来源）
-    tb = client.post('/api/generate-testbench', json={
+    tb_req = {
         # 带上 run_id：Step 3/4 没有 LLM 调用，产物只能靠 run_artifacts 挂回本条链
         'run_id': run_id,
         'bdd_filepath': bdd.get('filepath'),
         'dut_filepath': duv.get('filepath'),
         'dut_info': {'module_type': module_type,
                      'bitwidth': BITWIDTH, 'depth': 32, 'pipeline_stages': 5},
-    }).get_json()
+    }
+    tb = client.post('/api/generate-testbench',
+                     json={**tb_req, 'oracle_source': 'bdd'}).get_json()
     if not (tb and tb.get('success')):
         row['failure_stage'] = 'tb'
         row['failure_type'] = classify_failure('tb', tb)
@@ -337,19 +363,43 @@ def run_one(client, batch, provider, module_type, seed, session_id):
         except Exception:
             return p
 
-    sim = client.post('/api/run-simulation', json={
-        'run_id': run_id,
-        'testbench_path': rel(tb.get('filepath')),
-        'dut_path': rel(duv.get('filepath')),
-    }).get_json()
-    if sim and sim.get('success'):
+    def simulate(tb_path):
+        return client.post('/api/run-simulation', json={
+            'run_id': run_id,
+            'testbench_path': rel(tb_path),
+            'dut_path': rel(duv.get('filepath')),
+        }).get_json() or {}
+
+    sim = simulate(tb.get('filepath'))
+    row['sim_pass_rate'] = sim.get('pass_rate')
+    if sim.get('success'):
         row['sim_success'] = 1
         row['tb_compile'] = 1
     else:
-        row['tb_compile'] = 0 if 'compil' in json.dumps(sim or {}).lower() else 1
+        row['tb_compile'] = 0 if 'compil' in json.dumps(sim).lower() else 1
         row['failure_stage'] = 'sim'
         row['failure_type'] = classify_failure('sim', sim)
-        row['notes'] = str((sim or {}).get('error') or (sim or {}).get('output'))[:300]
+        row['notes'] = str(sim.get('error') or sim.get('output'))[:300]
+
+    # 第二臂：同一份 BDD、同样的激励，但期望值由生成器按规格重算。
+    # 这条臂的 oracle 由构造保证正确，所以它的失败只可能来自 DUV。
+    # 对照之下，「spec 通过而 bdd 失败」把 BDD 期望值写错这一类错误单独分离
+    # 出来——此前这两种失败在 sim_success 这一个 0/1 里无法区分。
+    tb_spec = client.post('/api/generate-testbench',
+                          json={**tb_req, 'oracle_source': 'spec'}).get_json() or {}
+    if tb_spec.get('success'):
+        sim_spec = simulate(tb_spec.get('filepath'))
+        row['sim_success_spec'] = 1 if sim_spec.get('success') else 0
+        row['sim_pass_rate_spec'] = sim_spec.get('pass_rate')
+        # 判定必须用通过率而不是 success：simulation_runner 的 success 只表示
+        # vvp 退出码为 0，即「仿真跑起来了」。生成的 testbench 在断言失败时只
+        # $display 不 $fatal，所以哪怕一半测试点失败 success 仍然是 True。
+        #
+        # spec 臂的 oracle 由构造保证正确，它的失败只可能来自 DUV；两臂激励
+        # 完全相同，所以 spec 通过得更多的那部分，就是 BDD 期望值写错的测试点。
+        a, b = row.get('sim_pass_rate'), row.get('sim_pass_rate_spec')
+        if a is not None and b is not None:
+            row['oracle_error'] = int(b > a)
 
     _attach_metrics(row, run_id)
     return row
@@ -383,6 +433,8 @@ CSV_COLUMNS = ['run_id', 'provider', 'model_effective', 'module_type', 'seed',
                'duv_success', 'duv_compile', 'duv_attempts',
                'bdd_success', 'bdd_parse_ok', 'bdd_attempts',
                'tb_success', 'tb_compile', 'sim_success',
+               'sim_success_spec', 'sim_pass_rate', 'sim_pass_rate_spec',
+               'oracle_error',
                'total_tokens_in', 'total_tokens_out', 'total_latency_ms',
                'failure_stage', 'failure_type']
 
@@ -437,6 +489,26 @@ def report(batch, start_id, elapsed):
           f"{pct('tb_success'):>7s}{pct('sim_success'):>7s}"
           f"{sum(r['total_tokens_in'] for r in rows):>12,d}"
           f"{sum(r['total_tokens_out'] for r in rows):>12,d}")
+
+    # oracle 分解：把「BDD 期望值写错」从「DUV 实现错」里分离出来
+    scored = [r for r in rows
+              if r.get('sim_pass_rate') is not None
+              and r.get('sim_pass_rate_spec') is not None]
+    if scored:
+        print(f"\noracle 分解（{len(scored)} 个 run 两臂都跑到了 Step 4）：")
+        print(f"  {'provider':10s}{'spec 臂':>10s}{'bdd 臂':>10s}{'差值':>8s}"
+              f"{'oracle 有误':>13s}")
+        for p in sorted({r['provider'] for r in scored}):
+            rs = [r for r in scored if r['provider'] == p]
+            m = len(rs)
+            spec = sum(r['sim_pass_rate_spec'] for r in rs) / m
+            bdd = sum(r['sim_pass_rate'] for r in rs) / m
+            orc = sum(r['oracle_error'] or 0 for r in rs)
+            print(f"  {p:10s}{spec:>9.1f}%{bdd:>9.1f}%{spec - bdd:>7.1f}%"
+                  f"{orc:>9d}/{m}")
+        print("  spec 臂 = 期望值按规格重算时的测试通过率（失败只可能是 DUV 错）")
+        print("  bdd 臂  = 期望值取自 BDD 时的测试通过率")
+        print("  差值    = LLM 挑对了输入、却算错了期望值的那部分")
 
     fails = [r for r in rows if r['failure_stage']]
     if fails:
