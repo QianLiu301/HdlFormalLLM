@@ -413,14 +413,26 @@ class TestQualityAnalyzer:
 class FeatureParser:
     """Parse .feature files and extract test scenarios"""
 
-    def __init__(self, feature_file: str, debug: bool = False):
+    def __init__(self, feature_file: str, debug: bool = False,
+                 module_type_override: Optional[str] = None):
         self.feature_file = feature_file
         self.debug = debug
         self.bitwidth = 16
         self.module_type = 'alu'
+        # 调用方通常已经知道模块类型（Step 3 收到 dut_info.module_type）。
+        # 交给它比从正文猜可靠：猜的规则是子串匹配，任何 feature 里出现
+        # "count" 都会被判成 counter，连 "bit count" 这种措辞都会中招。
+        self.module_type_override = module_type_override
         self.operations = {}
         self.scenarios = []
         self.number_format = NumberFormat.DECIMAL
+        # 解析过程中被丢弃的内容。此前这些都是静默的，于是"BDD 里有多少
+        # 东西工具读不懂"既看不见、也无法作为质量指标使用。
+        self.stats = {
+            'rows_dropped_malformed': 0,   # Examples 行的列数与表头不符
+            'scenarios_unmapped': 0,       # tag 无法对应到任何已知操作
+            'scenarios_plain': 0,          # 普通 Scenario（非 Outline），解析器读不了
+        }
 
     def parse(self) -> Dict:
         """Parse a .feature file"""
@@ -448,10 +460,18 @@ class FeatureParser:
         self.depth = depth
 
         # Detect module type
-        self._detect_module_type(content)
+        if self.module_type_override:
+            self.module_type = self.module_type_override
+        else:
+            self._detect_module_type(content)
         self._detect_number_format(content)
         self._extract_operations(content)
         self._extract_scenarios(content)
+
+        # 普通 Scenario（非 Outline）不带 Examples 表，本解析器读不了。数量记下来，
+        # 否则一个偏好这种写法的 LLM 会得到 0 个场景，看上去像它不会写测试。
+        self.stats['scenarios_plain'] = len(
+            re.findall(r'^\s*Scenario:', content, re.MULTILINE))
 
         if not bitwidth_match and self.scenarios:
             self.bitwidth = self._infer_bitwidth_from_scenarios()
@@ -462,7 +482,8 @@ class FeatureParser:
             'module_type': self.module_type,
             'operations': self.operations,
             'scenarios': self.scenarios,
-            'number_format': self.number_format.value
+            'number_format': self.number_format.value,
+            'parse_stats': dict(self.stats),
         }
 
     def _detect_module_type(self, content: str):
@@ -527,7 +548,9 @@ class FeatureParser:
     def _extract_scenarios(self, content: str):
         """Extract test scenarios from Examples tables with operation/mode detection"""
 
-        scenario_pattern = r'@(\w+)(?:\s+@\w+)*\s*\n\s*Scenario Outline:'
+        # 捕获整行 tag 而不只是第一个：@arithmetic @add 与 @add @arithmetic
+        # 都应该解析成 ADD，此前只看第一个 tag，前者会落到"未知"分支。
+        scenario_pattern = r'((?:@\w+[ \t]*)+)\n\s*Scenario Outline:'
         scenario_blocks = re.split(scenario_pattern, content)
 
         for i in range(1, len(scenario_blocks), 2):
@@ -540,6 +563,15 @@ class FeatureParser:
             # 根据模块类型和 tag 确定操作
             if self.module_type == 'alu':
                 operation, opcode = self._get_alu_operation(tag, block_content)
+                if operation is None:
+                    # 认不出来就跳过，不再伪造成 ADD。伪造出的测试因为期望值
+                    # 也会被算成 ADD，在 golden 上必然通过，既抬高 test count
+                    # 又用无意义的用例稀释 mutation score。
+                    self.stats['scenarios_unmapped'] += 1
+                    if self.debug:
+                        print(f"⚠️  scenario tag {tag.strip()!r} maps to no known "
+                              f"operation — scenario skipped")
+                    continue
             elif self.module_type == 'counter':
                 operation = None
                 opcode = self._get_counter_mode(tag)
@@ -562,6 +594,7 @@ class FeatureParser:
                     cols = [col.strip() for col in row.split('|') if col.strip()]
 
                     if len(cols) != len(header):
+                        self.stats['rows_dropped_malformed'] += 1
                         continue
 
                     scenario = {}
@@ -613,9 +646,13 @@ class FeatureParser:
 
         tag_lower = tag.lower().strip()
 
+        # 一行可能有多个 tag（@add @arithmetic），逐个试
+        candidates = re.findall(r'@?(\w+)', tag_lower) or [tag_lower]
+
         # 先试完全相等：这是绝大多数情况（BDD 标签就是操作名）
-        if tag_lower in operation_map:
-            return operation_map[tag_lower]
+        for cand in candidates:
+            if cand in operation_map:
+                return operation_map[cand]
 
         # 再处理复合 tag，如 "add_arithmetic" -> "add"。
         #
@@ -636,9 +673,9 @@ class FeatureParser:
             if len(opcode) == 4 and all(c in '01' for c in opcode):
                 return (tag.upper(), opcode)
 
-        # 默认返回 ADD
-        print(f"⚠️ Unknown operation tag: '{tag}', defaulting to ADD")
-        return ('ADD', '0000')
+        # 认不出来就说认不出来。此前这里默默返回 ADD/0000，等于凭空造出
+        # 一批测试，调用方无从知晓。
+        return (None, None)
 
     def _get_counter_mode(self, tag: str) -> str:
         """Get counter mode from tag"""
@@ -736,7 +773,8 @@ class TestbenchGenerator:
             self,
             bdd_filepath: str,
             dut_info: Dict,
-            output_filename: Optional[str] = None
+            output_filename: Optional[str] = None,
+            oracle_source: str = 'bdd'
     ) -> Dict:
         """
         Generate testbench for a single BDD file.
@@ -764,8 +802,10 @@ class TestbenchGenerator:
             if not bdd_path.exists():
                 return {'success': False, 'error': f'BDD file not found: {bdd_filepath}'}
 
-            # Parse feature file
-            parser = FeatureParser(str(bdd_path), debug=self.debug)
+            # Parse feature file. 模块类型优先用调用方给的，别从正文猜。
+            parser = FeatureParser(
+                str(bdd_path), debug=self.debug,
+                module_type_override=(dut_info or {}).get('module_type'))
             spec = parser.parse()
 
             if not spec['scenarios']:
@@ -800,7 +840,7 @@ class TestbenchGenerator:
 
             # Generate testbench
             tb_content, quality_analysis = self._generate_testbench_content(
-                spec, module_name, llm_name, module_type
+                spec, module_name, llm_name, module_type, oracle_source=oracle_source
             )
 
             # Save testbench
@@ -833,7 +873,12 @@ class TestbenchGenerator:
                 # llm_name 只是 BDD 文件所在目录名（即生成 BDD 的那个 LLM），
                 # 用来组织输出目录；把它当作 testbench 的作者会造成误导。
                 'source_bdd_llm': llm_name,
-                'generator': 'deterministic-template'
+                'generator': 'deterministic-template',
+                # oracle 的来源必须随结果一起报出去：它决定了这份 testbench
+                # 衡量的到底是 BDD 的整体质量，还是只有激励部分。
+                'oracle_source': oracle_source,
+                # 解析过程中丢掉了什么。以前是静默的，现在是可用的质量信号。
+                'parse_stats': spec.get('parse_stats', {}),
             }
 
         except Exception as e:
@@ -841,6 +886,45 @@ class TestbenchGenerator:
             if self.debug:
                 traceback.print_exc()
             return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    def _reference_result(op: str, a: int, b: int, w: int):
+        """按 ALU 规格算出参考结果；未知操作返回 None。
+
+        只在 oracle_source='spec' 时使用。把它和 'bdd' 分开是实验设计的需要：
+
+          oracle='bdd'   testbench 的期望值全部来自 BDD，衡量 LLM 选激励与
+                         预测输出的综合能力
+          oracle='spec'  期望值由此函数给出，BDD 只提供激励，于是衡量的是
+                         "LLM 会不会挑输入"这一项
+
+        此前生成器无条件覆盖 ADD/SUB/AND/OR/XOR 的期望值而不管其余五个操作，
+        结果是：一份写错期望值的 BDD 和一份正确的 BDD 会生成相同的 testbench，
+        BDD 这一臂因此在消融对照中白得一份正确性补贴；同时指标成了"五个操作
+        测生成器 + 五个操作测 BDD"的混合物，两种解释都站不住。
+        """
+        if not all(isinstance(x, int) for x in (a, b)):
+            return None
+        m = (1 << w) - 1
+        a &= m
+        b &= m
+        sh = b & (w - 1)          # 移位量取低 log2(w) 位
+
+        def signed(x):
+            return x - (1 << w) if x >> (w - 1) else x
+
+        return {
+            'ADD': (a + b) & m,
+            'SUB': (a - b) & m,
+            'AND': a & b,
+            'OR': a | b,
+            'XOR': a ^ b,
+            'SLL': (a << sh) & m,
+            'SRL': a >> sh,
+            'SRA': (signed(a) >> sh) & m,
+            'SLT': int(signed(a) < signed(b)),
+            'SLTU': int(a < b),
+        }.get(op.upper())
 
     def _format_verilog_value(self, value, bitwidth: int) -> str:
         """
@@ -872,7 +956,8 @@ class TestbenchGenerator:
             spec: Dict,
             module_name: str,
             llm_name: str,
-            module_type: str
+            module_type: str,
+            oracle_source: str = 'bdd'
     ) -> Tuple[str, Dict]:
         """Generate testbench content based on module type"""
 
@@ -883,14 +968,16 @@ class TestbenchGenerator:
         elif module_type == 'cpu':
             return self._generate_cpu_testbench(spec, module_name, llm_name)
         else:
-            # Default to ALU
-            return self._generate_alu_testbench(spec, module_name, llm_name)
+            # Default to ALU（目前只有 ALU 支持 oracle_source）
+            return self._generate_alu_testbench(spec, module_name, llm_name,
+                                                oracle_source=oracle_source)
 
     def _generate_alu_testbench(
             self,
             spec: Dict,
             module_name: str,
-            llm_name: str
+            llm_name: str,
+            oracle_source: str = 'bdd'
     ) -> Tuple[str, Dict]:
         """Generate ALU testbench"""
         bitwidth = spec['bitwidth']
@@ -978,20 +1065,16 @@ class TestbenchGenerator:
             b_val = scenario.get('b', scenario.get('B', 0))
             expected = scenario.get('expected_result', scenario.get('result', 0))
 
-            # 自动计算正确的期望值（覆盖 LLM 可能错误的值）
             max_val = (1 << bitwidth) - 1
             op_name = scenario.get('operation', 'ADD').upper()
 
-            if op_name == 'ADD':
-                expected = (a_val + b_val) & max_val
-            elif op_name == 'SUB':
-                expected = (a_val - b_val) & max_val
-            elif op_name == 'AND':
-                expected = a_val & b_val
-            elif op_name == 'OR':
-                expected = a_val | b_val
-            elif op_name == 'XOR':
-                expected = a_val ^ b_val
+            # oracle 的来源是受控变量，见 _reference_result 的说明。
+            # 'bdd'  —— 用 BDD 写的期望值（默认）
+            # 'spec' —— 由本生成器按规格重算
+            if oracle_source == 'spec':
+                ref = self._reference_result(op_name, a_val, b_val, bitwidth)
+                if ref is not None:
+                    expected = ref
 
             # Get operation and convert to opcode
             op = scenario.get('opcode', scenario.get('operation', 'ADD'))

@@ -2237,9 +2237,18 @@ def generate_testbench():
         )
 
         # Generate testbench
+        # oracle 的来源是受控变量：'bdd'（默认）用 BDD 写的期望值，
+        # 'spec' 让生成器按规格重算，只保留 BDD 提供的激励。
+        oracle_source = (data.get('oracle_source') or 'bdd').strip().lower()
+        if oracle_source not in ('bdd', 'spec'):
+            return jsonify({'success': False,
+                            'error': f"oracle_source must be 'bdd' or 'spec', "
+                                     f"got {oracle_source!r}"}), 400
+
         result = generator.generate_single(
             bdd_filepath=str(bdd_path),
-            dut_info=dut_info
+            dut_info=dut_info,
+            oracle_source=oracle_source
         )
 
         if not result['success']:
@@ -2258,7 +2267,11 @@ def generate_testbench():
                             'module_name': dut_info.get('module_name'),
                             'test_count': result.get('test_count'),
                             'generator': result.get('generator'),
-                            'source_bdd_llm': result.get('source_bdd_llm')})
+                            'source_bdd_llm': result.get('source_bdd_llm'),
+                            # 决定这份 testbench 衡量的是 BDD 整体质量还是仅激励
+                            'oracle_source': result.get('oracle_source'),
+                            # BDD 里有多少内容工具读不懂——本身就是质量信号
+                            'parse_stats': result.get('parse_stats')})
 
         return jsonify({
             'success': True,
@@ -2272,6 +2285,8 @@ def generate_testbench():
             # Step 3 无 LLM 参与，只回传 BDD 的来源与生成方式
             'source_bdd_llm': result.get('source_bdd_llm'),
             'generator': result.get('generator', 'deterministic-template'),
+            'oracle_source': result.get('oracle_source'),
+            'parse_stats': result.get('parse_stats'),
         })
 
     except Exception as e:
