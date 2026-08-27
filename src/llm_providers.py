@@ -1974,7 +1974,7 @@ class QwenProvider(LLMProvider):
             self._record_response_meta(result)
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
-            print(f"⚠️  Qwen API request failed: {e}")
+            print(f"⚠️  {type(self).__name__} API request failed: {e}")
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
@@ -2026,7 +2026,7 @@ class QwenProvider(LLMProvider):
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
-            print(f"⚠️ Qwen streaming failed: {e}")
+            print(f"⚠️  {type(self).__name__} streaming failed: {e}")
             result = self._call_api(prompt, max_tokens, system_prompt)
             if result:
                 yield result
@@ -2480,6 +2480,18 @@ class LLMFactory:
         if provider_type not in providers:
             print(f"⚠️  Unknown provider type: {provider_type}, using local template provider")
             provider_type = 'local'
+
+        # 未显式指定 model 时，采用配置文件里为该 provider 设定的模型
+        # （由 main.load_config 导出成 {NAME}_MODEL）。没有配置就退回类默认值。
+        if 'model' not in kwargs or not kwargs.get('model'):
+            canonical = {
+                'google': 'gemini', 'tongyi': 'qwen', 'meta': 'llama',
+                'gpt': 'openai', 'chatgpt': 'openai', 'anthropic': 'claude',
+                'xai': 'grok', 'codestral': 'mistral', 'together_ai': 'together',
+            }.get(provider_type, provider_type)
+            configured = os.getenv(f"{canonical.upper()}_MODEL")
+            if configured:
+                kwargs['model'] = configured
 
         try:
             provider = providers[provider_type](**kwargs)

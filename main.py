@@ -167,6 +167,15 @@ def setup_api_keys():
 
     # Build provider->model mapping from config
     providers_cfg = CONFIG.get('providers', {})
+
+    # config 里的 model 此前只用于下面那行启动横幅，从不传给 provider——横幅
+    # 因此会显示一个根本没被使用的模型名（例如 config 写 gpt-5.1，实际调用的
+    # 是代码默认的 gpt-5-mini）。这里把它导出成环境变量，由 LLMFactory 读取，
+    # 让配置文件真正说了算，横幅也不再与事实脱节。
+    for prov_key, prov_cfg in providers_cfg.items():
+        if isinstance(prov_cfg, dict) and prov_cfg.get('model'):
+            os.environ[f"{prov_key.upper()}_MODEL"] = prov_cfg['model']
+
     print("🔑 API Keys status:")
     for display_name, env_var in display_mapping.items():
         status = "✅" if os.environ.get(env_var) else "❌"

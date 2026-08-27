@@ -67,50 +67,23 @@ class CPUGenerator:
     def _setup_llm(self):
         """Setup LLM provider"""
         try:
+            # provider 名单统一由 LLMFactory 维护。此前这里各自抄了一份，四份
+            # 都不认识后加的 provider（例如 llama），未知名字会静默回落到
+            # Gemini —— 用户以为在测 A，实际测的是 B，实验数据因此失真。
             import sys
             sys.path.insert(0, str(Path(__file__).parent))
+            try:
+                from src.llm_providers import LLMFactory
+            except ImportError:
+                from llm_providers import LLMFactory
 
-            from llm_providers import (
-                GeminiProvider,
-                OpenAIProvider,
-                ClaudeProvider,
-                GroqProvider,
-                DeepSeekProvider,
-                GrokProvider,
-                QwenProvider,
-                MistralProvider,
-                TogetherProvider
-            )
-
-            providers = {
-                'gemini': GeminiProvider,
-                'openai': OpenAIProvider,
-                'gpt': OpenAIProvider,
-                'claude': ClaudeProvider,
-                'groq': GroqProvider,
-                'deepseek': DeepSeekProvider,
-                'grok': GrokProvider,
-                'xai': GrokProvider,
-                'qwen': QwenProvider,
-                'mistral': MistralProvider,
-                'codestral': MistralProvider,
-                'together': TogetherProvider,
-            }
-
-            if self.llm_provider not in providers:
-                print(f"⚠️  Unknown LLM provider: {self.llm_provider}")
-                print(f"   Available: {', '.join(providers.keys())}")
-                print(f"   Falling back to Groq")
-                self.llm_provider = 'groq'
-
-            provider_class = providers[self.llm_provider]
-            llm = provider_class()
-
-            print(f"✅ LLM provider loaded: {provider_class.__name__}")
+            llm = LLMFactory.create_provider(self.llm_provider)
+            print(f"✅ LLM provider loaded: {type(llm).__name__}")
             return llm
 
         except ImportError as e:
             print(f"❌ Failed to import LLM providers: {e}")
+            print(f"   Please ensure llm_providers.py is available")
             return None
 
     def _setup_output_dir(self, output_dir: Optional[str], project_root: Optional[str]) -> Path:
