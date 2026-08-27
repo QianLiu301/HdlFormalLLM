@@ -61,6 +61,10 @@ def load_config():
     for provider_name, provider_data in providers_config.items():
         if isinstance(provider_data, dict) and provider_data.get('api_key'):
             config['api_keys'][provider_name] = provider_data['api_key']
+        # 少数 provider 的端点可能随账号所在区域而变（例如 DashScope 分国内站
+        # 与国际站）。允许在 config 里写 api_url，省得为了换区域去改代码。
+        if isinstance(provider_data, dict) and provider_data.get('api_url'):
+            os.environ[f"{provider_name.upper()}_API_URL"] = provider_data['api_url']
 
     env_keys = {
         'GROQ_API_KEY': 'groq',
@@ -70,13 +74,26 @@ def load_config():
         'GEMINI_API_KEY': 'gemini',
         'XAI_API_KEY': 'grok',
         'QWEN_API_KEY': 'qwen',
+        'LLAMA_API_KEY': 'llama',
         'MISTRAL_API_KEY': 'mistral',
         'TOGETHER_API_KEY': 'together'
     }
 
+    # 环境变量优先于配置文件（Render 等平台只能通过环境变量注入 key）。
+    # 但本地如果留着一把过期的环境变量，改 config 就完全不生效，而且没有任何
+    # 提示——症状是 provider 静默返回兜底文本，看起来像模型不会写 Verilog。
+    # 两边不一致时明确说出来，别让人对着配置文件调试一把根本没被使用的 key。
     for env_var, provider in env_keys.items():
-        if os.environ.get(env_var):
-            config['api_keys'][provider] = os.environ[env_var]
+        env_val = os.environ.get(env_var)
+        if not env_val:
+            continue
+        cfg_val = config['api_keys'].get(provider)
+        if cfg_val and not cfg_val.startswith('your_') and cfg_val != env_val:
+            print(f"⚠️  {provider}: environment variable {env_var} overrides the key "
+                  f"in config/llm_config.json (env ...{env_val[-4:]} wins over "
+                  f"config ...{cfg_val[-4:]}). Editing the config file will have no "
+                  f"effect until that variable is unset.")
+        config['api_keys'][provider] = env_val
 
     if os.environ.get('ENABLE_PROXY', '').lower() == 'false':
         config['proxy']['enabled'] = False
@@ -125,6 +142,7 @@ def setup_api_keys():
         'gemini': 'GEMINI_API_KEY',
         'grok': 'XAI_API_KEY',
         'qwen': 'QWEN_API_KEY',
+        'llama': 'LLAMA_API_KEY',
         'mistral': 'MISTRAL_API_KEY',
         'together': 'TOGETHER_API_KEY'
     }
@@ -142,6 +160,7 @@ def setup_api_keys():
         'GEMINI': 'GEMINI_API_KEY',
         'GROK': 'XAI_API_KEY',
         'QWEN': 'QWEN_API_KEY',
+        'LLAMA': 'LLAMA_API_KEY',
         'MISTRAL': 'MISTRAL_API_KEY',
         'TOGETHER': 'TOGETHER_API_KEY'
     }
@@ -1849,6 +1868,7 @@ def parse_hardware_natural_language(input_text):
         'gemini': ['gemini', 'google'],
         'grok': ['grok', 'xai'],
         'qwen': ['qwen', 'tongyi', 'alibaba'],
+        'llama': ['llama', 'meta'],
         'mistral': ['mistral', 'codestral'],
         'together': ['together'],
     }
@@ -2158,7 +2178,7 @@ def sampling_info():
     """
     info = {}
     for name in ('groq', 'gemini', 'deepseek', 'openai', 'claude',
-                 'grok', 'qwen', 'mistral', 'together'):
+                 'grok', 'qwen', 'mistral', 'together', 'llama'):
         cls = _provider_class(name)
         if cls is None:
             continue
@@ -2189,6 +2209,7 @@ def _provider_class(name):
         'deepseek': 'DeepSeekProvider', 'openai': 'OpenAIProvider',
         'claude': 'ClaudeProvider', 'grok': 'GrokProvider',
         'qwen': 'QwenProvider', 'mistral': 'MistralProvider',
+        'llama': 'LlamaProvider',
         'together': 'TogetherProvider',
     }
     return getattr(lp, mapping.get(name, ''), None)

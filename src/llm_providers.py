@@ -2411,6 +2411,36 @@ So that I can ensure it correctly performs all {operations_count} supported arit
 including {', '.join(operations_list[:5])}{' and more' if len(operations_list) > 5 else ''}"""
 
 
+class LlamaProvider(QwenProvider):
+    """Meta Llama，走与 Qwen 相同的 OpenAI 兼容端点、同一把 API key。
+
+    继承 QwenProvider 是因为两者的请求/响应格式、采样参数映射完全一致，
+    只有默认模型不同。单独立为一个 provider（而不是 Qwen 的一个 model 选项）
+    是为了在实验数据里独立成一家：llm_calls.provider 会记成 LlamaProvider，
+    跨模型对比时不会和 Qwen 混在一起。
+
+    Key：优先 LLAMA_API_KEY，缺失时回退 QWEN_API_KEY / DASHSCOPE_API_KEY，
+    所以只配一处也能用。
+    端点：默认与 Qwen 相同，可用 LLAMA_API_URL 覆盖（换服务商时不必改代码）。
+    """
+
+    def __init__(self, api_key: Optional[str] = None,
+                 model: str = "llama-3.3-70b-instruct"):
+        api_key = (api_key or os.getenv("LLAMA_API_KEY")
+                   or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY"))
+        if not api_key:
+            raise ValueError(
+                "Llama API key not provided. It shares the key with Qwen — set "
+                "LLAMA_API_KEY, QWEN_API_KEY or DASHSCOPE_API_KEY.")
+        super().__init__(api_key=api_key, model=model)
+        # 默认走国际站：探测确认 llama-3.3-70b-instruct 在国内站返回 404
+        # (model does not exist)，在国际站返回 401 (incorrect API key) —— 也就是
+        # 国际站认得这个模型，只是需要有效 key。换服务商时用 LLAMA_API_URL 覆盖。
+        self.api_url = os.getenv(
+            "LLAMA_API_URL",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions")
+
+
 # ========== FACTORY ==========
 
 
@@ -2428,6 +2458,8 @@ class LLMFactory:
             'deepseek': DeepSeekProvider,
             'qwen': QwenProvider,
             'tongyi': QwenProvider,
+            'llama': LlamaProvider,
+            'meta': LlamaProvider,
             'local': LocalLLMProvider,
 
             # PAID providers
