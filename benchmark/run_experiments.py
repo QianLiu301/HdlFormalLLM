@@ -55,9 +55,18 @@ BDD_PROMPT = """Below is the specification of a hardware module.
 
 Write BDD test scenarios in Gherkin format (Feature / Scenario / Given / When / Then)
 that thoroughly verify this module. Cover normal operation, boundary values,
-corner cases, and any priority or flag behavior described in the spec.
+corner cases, and every behavior the specification describes — including, where
+the specification calls for it, priority and flag behavior, reset behavior, and
+behavior that spans multiple clock cycles such as state sequences, the cycle in
+which an output becomes valid, and how long it stays asserted.
 Output ONLY the Gherkin feature file content, no explanations.
 """
+# 覆盖提示必须对组合逻辑与时序逻辑同样中立。此前只列了 boundary values、
+# corner cases、priority、flag —— 全是组合逻辑的概念，一个字没提周期或状态。
+# 拿这样的提示去比较 Control 类与 Arithmetic 类，测到的是提示词偏置，而不是
+# Gherkin 的表达力边界：模型在 FSM 上表现差，可能只是因为没人让它往时序上想。
+# 措辞用 "where the specification calls for it"，组合模块的 spec 里没有这些
+# 行为，因此不会被诱导去编造；同时不泄露具体功能点（FP 列表仍然withheld）。
 
 TB_SYSTEM = "You are a hardware verification engineer expert in Verilog testbench design."
 TB_PROMPT = """Below is a hardware module specification, its port declaration, and BDD test
