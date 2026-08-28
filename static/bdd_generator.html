@@ -2290,6 +2290,10 @@
             }
             ta.value = text;
             bddAutoFilledText = text;
+
+            // 模块类型决定用哪个 prompt 模板（bdd_alu / bdd_counter / ...），
+            // 换了类型必须重新加载，否则面板显示的和实际发出的都还是上一个。
+            loadPromptTemplate('bdd');
         }
 
         /** 依据当前 provider 与 stream 开关，更新置灰状态与 placeholder。 */
@@ -2381,9 +2385,13 @@
         const PROMPT_EDITS = {};    // step -> {stage, user, system}
 
         function promptStageFor(step) {
+            // BDD 侧以卡片上的 Module Type 为准：spec-first 下没有 DUT，
+            // 沿用 currentDUT 会永远落到 alu，选了 Counter 也照样显示并使用
+            // bdd_alu 模板。impl-first 下该控件已与 DUT 同步，结果一致。
             const mt = step === 'hw'
                 ? (document.getElementById('hw-module') || {}).value
-                : (currentDUT ? currentDUT.moduleType : 'alu');
+                : ((document.getElementById('bdd-module-type') || {}).value
+                   || (currentDUT ? currentDUT.moduleType : 'alu'));
             const t = (mt || 'alu').toLowerCase();
             const key = (t === 'regfile') ? 'register' : t;
             return step === 'hw' ? `duv_${key}`
