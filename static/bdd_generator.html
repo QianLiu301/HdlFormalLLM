@@ -933,17 +933,23 @@
                             <div class="form-group">
                                 <label>LLM Provider</label>
                                 <select id="hw-llm" onchange="onHwLlmChange()">
-                                    <option value="gemini">Gemini</option>
-                                    <option value="mistral">Mistral</option>
-                                    <option value="deepseek">DeepSeek</option>
-                                    <option value="openai">OpenAI</option>
-                                    <option value="qwen">Qwen3 Coder</option>
-                                    <option value="llama">Llama (Meta)</option>
-                                    <option value="gptoss">GPT-OSS 120B</option>
-                                    <option value="deepseekv4">DeepSeek V4 Flash</option>
-                                    <option value="glm">GLM 4.7</option>
-                                    <option value="together">Together AI</option>
-                                    <option value="groq">Groq</option>
+                                    <!-- 按「谁在托管」分组：同组内推理栈与硬件相同，组间才有部署差异。
+                                         这也解释了为什么会出现两个 DeepSeek——它们是不同模型、不同托管。 -->
+                                    <optgroup label="Academic Cloud (GWDG) — 同一端点 · 同一套硬件">
+                                        <option value="deepseekv4" selected>DeepSeek V4 Flash</option>
+                                        <option value="gptoss">GPT-OSS 120B (open weights)</option>
+                                        <option value="qwen">Qwen3 Coder</option>
+                                        <option value="glm">GLM 4.7</option>
+                                        <option value="llama">Llama 3.1 8B</option>
+                                    </optgroup>
+                                    <optgroup label="厂商官方 API">
+                                        <option value="gemini">Gemini</option>
+                                        <option value="openai">OpenAI GPT-5</option>
+                                        <option value="deepseek">DeepSeek (official)</option>
+                                        <option value="mistral">Mistral</option>
+                                        <option value="together">Together AI</option>
+                                        <option value="groq">Groq</option>
+                                    </optgroup>
                                     <!--                                    <option value="claude">Claude</option>-->
                                     <!--                                    <option value="grok">Grok (xAI)</option>-->
                                 </select>
@@ -1281,19 +1287,23 @@
                         <div class="form-group">
                             <label>LLM Provider</label>
                             <select id="bdd-llm" onchange="onBddLlmChange()">
-                                <option value="gemini">Gemini</option>
-                                <option value="mistral">Mistral</option>
-                                <option value="deepseek">DeepSeek</option>
-                                <option value="openai">OpenAI</option>
-                                <!--                                <option value="claude">Claude</option>-->
-                                <!--                                <option value="grok">Grok (xAI)</option>-->
-                                <option value="qwen">Qwen3 Coder</option>
-                                <option value="llama">Llama (Meta)</option>
-                                <option value="gptoss">GPT-OSS 120B</option>
-                                <option value="deepseekv4">DeepSeek V4 Flash</option>
-                                <option value="glm">GLM 4.7</option>
-                                <option value="together">Together AI</option>
-                                <option value="groq">Groq</option>
+                                <optgroup label="Academic Cloud (GWDG) — 同一端点 · 同一套硬件">
+                                    <option value="deepseekv4" selected>DeepSeek V4 Flash</option>
+                                    <option value="gptoss">GPT-OSS 120B (open weights)</option>
+                                    <option value="qwen">Qwen3 Coder</option>
+                                    <option value="glm">GLM 4.7</option>
+                                    <option value="llama">Llama 3.1 8B</option>
+                                </optgroup>
+                                <optgroup label="厂商官方 API">
+                                    <option value="gemini">Gemini</option>
+                                    <option value="openai">OpenAI GPT-5</option>
+                                    <option value="deepseek">DeepSeek (official)</option>
+                                    <option value="mistral">Mistral</option>
+                                    <option value="together">Together AI</option>
+                                    <option value="groq">Groq</option>
+                                    <!-- <option value="claude">Claude</option> -->
+                                    <!-- <option value="grok">Grok (xAI)</option> -->
+                                </optgroup>
                             </select>
                         </div>
                         <div class="form-group" id="bdd-model-group" style="display: none;">
@@ -3476,6 +3486,11 @@
         // ============================================================
         // LLM Change
         // ============================================================
+        // 只列后端真正支持 model 覆盖的 provider（main.MODEL_OVERRIDE_PROVIDERS
+        // = openai, gemini）。此前这里还有 qwen / mistral / together / grok，
+        // 下拉框照常显示、选了却不起作用；qwen 那份更是列着阿里云 DashScope 的
+        // 旧模型，而 qwen 现已指向 GWDG，选中会发出一个那边不存在的模型名。
+        // 其余 provider 的模型固定在 config/llm_config.json 里，改配置即可。
         const modelOptions = {
             'gemini': [
                 {value: 'gemini-3-flash-preview', text: 'Gemini 3 Flash Preview'},
@@ -3485,26 +3500,6 @@
                 {value: 'gpt-5-mini', text: 'GPT-5 Mini (Recommended)'},
                 {value: 'gpt-5', text: 'GPT-5'},
                 {value: 'gpt-5.1', text: 'GPT-5.1'}
-            ],
-            'grok': [
-                {value: 'grok-3-mini', text: 'Grok-3 Mini (Recommended)'},
-                {value: 'grok-3', text: 'Grok-3'},
-                {value: 'grok-2', text: 'Grok-2'}
-            ],
-            'qwen': [
-                {value: 'qwen-coder-plus', text: 'Qwen Coder Plus'},
-                {value: 'qwen-max', text: 'Qwen Max'}
-<!--                {value: 'qwen-plus', text: 'Qwen Plus'},-->
-<!--                {value: 'qwen-turbo', text: 'Qwen Turbo'}-->
-            ],
-            'mistral': [
-                {value: 'codestral-latest', text: 'Codestral'},
-                {value: 'mistral-large-latest', text: 'Mistral Large'},
-                {value: 'mistral-small-latest', text: 'Mistral Small'}
-            ],
-            'together': [
-                {value: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', text: 'Llama 3.3 70B'},
-                {value: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8', text: 'Llama 4 Maverick'}
             ]
         };
 
