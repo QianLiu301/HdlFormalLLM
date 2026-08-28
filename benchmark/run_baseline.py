@@ -40,8 +40,12 @@ from src.experiment_logger import DB_PATH                # noqa: E402
 # ---------------------------------------------------------------------------
 # 矩阵定义
 # ---------------------------------------------------------------------------
-ALL_PROVIDERS = ['gemini', 'groq', 'deepseek', 'openai',
-                 'claude', 'qwen', 'mistral', 'together']
+ALL_PROVIDERS = [
+    # Academic Cloud (GWDG)：同端点、同 key、同硬件，组内对比不含部署差异
+    'deepseekv4', 'glm', 'gptoss', 'llama', 'qwen',
+    # 厂商官方 API
+    'deepseek', 'gemini', 'groq', 'mistral', 'openai', 'together',
+]
 MODULE_TYPES = ['alu', 'counter']
 SEEDS = [1, 2, 3, 4, 5]
 BITWIDTH = 32

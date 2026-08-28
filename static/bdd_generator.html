@@ -933,25 +933,27 @@
                             <div class="form-group">
                                 <label>LLM Provider</label>
                                 <select id="hw-llm" onchange="onHwLlmChange()">
-                                    <!-- 按「谁在托管」分组：同组内推理栈与硬件相同，组间才有部署差异。
-                                         这也解释了为什么会出现两个 DeepSeek——它们是不同模型、不同托管。 -->
-                                    <optgroup label="Academic Cloud (GWDG) — 同一端点 · 同一套硬件">
+                                    <!-- 分组依据是「谁在托管」：组内推理栈与硬件相同，组间才有部署差异。
+                                         组内按字母序，刻意不按实测表现排 —— 研究工具若在 UI 里给模型排名，
+                                         会诱导优先测排前面的，数据集因此失衡。默认项用 selected 显式指定，
+                                         与排序解耦。 -->
+                                    <optgroup label="Academic Cloud (GWDG) · 同一端点 · 同一套硬件">
                                         <option value="deepseekv4" selected>DeepSeek V4 Flash</option>
-                                        <option value="gptoss">GPT-OSS 120B (open weights)</option>
-                                        <option value="qwen">Qwen3 Coder</option>
                                         <option value="glm">GLM 4.7</option>
+                                        <option value="gptoss">GPT-OSS 120B (open weights)</option>
                                         <option value="llama">Llama 3.1 8B</option>
+                                        <option value="qwen">Qwen3 Coder</option>
                                     </optgroup>
-                                    <optgroup label="厂商官方 API">
-                                        <option value="gemini">Gemini</option>
-                                        <option value="openai">OpenAI GPT-5</option>
+                                    <optgroup label="厂商官方 API · 各自的云">
                                         <option value="deepseek">DeepSeek (official)</option>
-                                        <option value="mistral">Mistral</option>
-                                        <option value="together">Together AI</option>
+                                        <option value="gemini">Gemini</option>
                                         <option value="groq">Groq</option>
+                                        <option value="mistral">Mistral</option>
+                                        <option value="openai">OpenAI GPT-5</option>
+                                        <option value="together">Together AI</option>
+                                        <!-- <option value="claude">Claude</option> -->
+                                        <!-- <option value="grok">Grok (xAI)</option> -->
                                     </optgroup>
-                                    <!--                                    <option value="claude">Claude</option>-->
-                                    <!--                                    <option value="grok">Grok (xAI)</option>-->
                                 </select>
                             </div>
                             <div class="form-group" id="hw-model-group" style="display: none;">
@@ -1287,20 +1289,24 @@
                         <div class="form-group">
                             <label>LLM Provider</label>
                             <select id="bdd-llm" onchange="onBddLlmChange()">
-                                <optgroup label="Academic Cloud (GWDG) — 同一端点 · 同一套硬件">
+                                <!-- 分组依据是「谁在托管」：组内推理栈与硬件相同，组间才有部署差异。
+                                     组内按字母序，刻意不按实测表现排 —— 研究工具若在 UI 里给模型排名，
+                                     会诱导优先测排前面的，数据集因此失衡。默认项用 selected 显式指定，
+                                     与排序解耦。 -->
+                                <optgroup label="Academic Cloud (GWDG) · 同一端点 · 同一套硬件">
                                     <option value="deepseekv4" selected>DeepSeek V4 Flash</option>
-                                    <option value="gptoss">GPT-OSS 120B (open weights)</option>
-                                    <option value="qwen">Qwen3 Coder</option>
                                     <option value="glm">GLM 4.7</option>
+                                    <option value="gptoss">GPT-OSS 120B (open weights)</option>
                                     <option value="llama">Llama 3.1 8B</option>
+                                    <option value="qwen">Qwen3 Coder</option>
                                 </optgroup>
-                                <optgroup label="厂商官方 API">
-                                    <option value="gemini">Gemini</option>
-                                    <option value="openai">OpenAI GPT-5</option>
+                                <optgroup label="厂商官方 API · 各自的云">
                                     <option value="deepseek">DeepSeek (official)</option>
-                                    <option value="mistral">Mistral</option>
-                                    <option value="together">Together AI</option>
+                                    <option value="gemini">Gemini</option>
                                     <option value="groq">Groq</option>
+                                    <option value="mistral">Mistral</option>
+                                    <option value="openai">OpenAI GPT-5</option>
+                                    <option value="together">Together AI</option>
                                     <!-- <option value="claude">Claude</option> -->
                                     <!-- <option value="grok">Grok (xAI)</option> -->
                                 </optgroup>

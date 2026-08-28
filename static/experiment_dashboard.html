@@ -358,7 +358,13 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
 </div>
 
 <script>
-const LLMS = ['mock','groq','gemini','deepseek','openai','claude','grok','qwen','mistral','together'];
+// 与 bdd_generator.html 的下拉框保持同一批 provider，顺序也一致。
+// 这份名单此前落后了：新加的 4 家在网页能选、在仪表盘却跑不了。
+const LLMS = ['mock',
+    // Academic Cloud (GWDG)
+    'deepseekv4','glm','gptoss','llama','qwen',
+    // 厂商官方 API
+    'deepseek','gemini','groq','mistral','openai','together'];
 let polling = null;
 
 function el(tag, cls, text) {
