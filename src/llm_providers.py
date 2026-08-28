@@ -2511,8 +2511,12 @@ class LLMFactory:
             # 以下五家同在 GWDG Academic Cloud（同端点、同 key、同推理栈）
             'qwen': QwenProvider3,        # qwen3-coder-next，取代原 DashScope Qwen
             'tongyi': QwenProvider3,
-            'llama': LlamaProvider,       # meta-llama-3.1-8b-instruct
-            'meta': LlamaProvider,
+            # Llama 3.1 8B 暂不登记：它只有 8B，而其余都是 27B-120B+，不在一个
+            # 量级；实测通过率 63.3% 全场最低，得出的「它最差」近乎先验，信息量低。
+            # Together 那条 Llama 3.3 70B 才是同量级的 Llama。类保留，想加回来
+            # 去掉下面两行注释即可。
+            # 'llama': LlamaProvider,
+            # 'meta': LlamaProvider,
             'gptoss': GptOssProvider,     # openai-gpt-oss-120b（≠ api.openai.com）
             'gpt-oss': GptOssProvider,
             # DeepSeek V4 Flash 暂不登记：官方 API 的 deepseek-chat 已有 334 次
