@@ -1304,6 +1304,25 @@
                                 <option value="64">64-bit</option>
                             </select>
                         </div>
+                        <!-- 与 Step 1 硬件卡片一致的条件字段：regfile 需要寄存器个数、
+                             cpu 用流水级数取代位宽。缺了它们，BDD 只能沿用后端从正文
+                             推断的默认值（regfile 16 个、cpu 5 级），与硬件那步的选择
+                             无关，同一条链的两端会各说各的。 -->
+                        <div class="form-group" id="bdd-depth-group" style="display: none;">
+                            <label for="bdd-depth">Registers</label>
+                            <select id="bdd-depth" onchange="onBddSpecChange()">
+                                <option value="8">8 registers</option>
+                                <option value="16">16 registers</option>
+                                <option value="32" selected>32 registers</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="bdd-pipeline-group" style="display: none;">
+                            <label for="bdd-pipeline">Pipeline</label>
+                            <select id="bdd-pipeline" onchange="onBddSpecChange()">
+                                <option value="5" selected>5-stage</option>
+                                <option value="3">3-stage</option>
+                            </select>
+                        </div>
                         <div class="form-group">
                             <label>LLM Provider</label>
                             <select id="bdd-llm" onchange="onBddLlmChange()">
@@ -2210,21 +2229,35 @@
             const bw = document.getElementById('bdd-bitwidth');
             const hint = document.getElementById('bdd-module-hint');
             if (!sel) return;
+            const depth = document.getElementById('bdd-depth');
+            const pipe = document.getElementById('bdd-pipeline');
             const synced = currentWorkflowMode !== 'specification' && currentDUT;
             if (synced) {
                 sel.value = currentDUT.moduleType || 'alu';
                 if (bw && currentDUT.bitwidth) bw.value = String(currentDUT.bitwidth);
-                sel.disabled = true;
-                if (bw) bw.disabled = true;
-                hint.textContent = `synced with the generated hardware `
-                    + `(${sel.value}, ${bw ? bw.value : '?'}-bit)`;
+                if (depth && currentDUT.depth) depth.value = String(currentDUT.depth);
+                if (pipe && currentDUT.pipelineStages) pipe.value = String(currentDUT.pipelineStages);
+                hint.textContent = `synced with the generated hardware (${sel.value}, `
+                    + (sel.value === 'cpu' ? `${pipe ? pipe.value : '?'}-stage`
+                       : sel.value === 'regfile' ? `${depth ? depth.value : '?'}x${bw ? bw.value : '?'}-bit`
+                       : `${bw ? bw.value : '?'}-bit`) + ')';
             } else {
-                sel.disabled = false;
-                if (bw) bw.disabled = false;
                 hint.textContent = currentWorkflowMode === 'specification'
                     ? 'no hardware yet — pick what the scenarios are for'
                     : '';
             }
+            [sel, bw, depth, pipe].forEach(el => { if (el) el.disabled = synced; });
+
+            // 显隐规则与 Step 1 的 onModuleChange 完全一致
+            const t = sel.value;
+            const show = (id, on) => {
+                const g = document.getElementById(id);
+                if (g) g.style.display = on ? 'block' : 'none';
+            };
+            show('bdd-bitwidth-group', t !== 'cpu');
+            show('bdd-depth-group', t === 'regfile');
+            show('bdd-pipeline-group', t === 'cpu');
+
             onBddSpecChange();
         }
 
@@ -2244,12 +2277,14 @@
 
             const type = sel.value;
             const width = parseInt((bw || {}).value || '32', 10);
+            const depth = parseInt((document.getElementById('bdd-depth') || {}).value || '32', 10);
+            const stages = parseInt((document.getElementById('bdd-pipeline') || {}).value || '5', 10);
             const tpl = BDD_TEMPLATES[type] || BDD_TEMPLATES.other;
             let text;
             if (type === 'cpu') {
-                text = tpl(currentDUT ? currentDUT.pipelineStages : 5);
+                text = tpl(stages);
             } else if (type === 'regfile') {
-                text = tpl(width, currentDUT ? currentDUT.depth : 32);
+                text = tpl(width, depth);
             } else {
                 text = tpl(width);
             }
@@ -3928,6 +3963,10 @@
                   // 位宽同样以界面为准，不让后端从正文猜
                   bitwidth: parseInt((document.getElementById('bdd-bitwidth') || {}).value
                                      || (currentDUT ? currentDUT.bitwidth : 32), 10),
+                  depth: parseInt((document.getElementById('bdd-depth') || {}).value
+                                  || (currentDUT ? currentDUT.depth : 32), 10),
+                  pipeline_stages: parseInt((document.getElementById('bdd-pipeline') || {}).value
+                                            || (currentDUT ? currentDUT.pipelineStages : 5), 10),
                   workflow_mode: currentWorkflowMode,
                   sampling: collectSampling('bdd'), ...promptPayload('bdd') }, 'bdd');
 

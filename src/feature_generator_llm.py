@@ -231,7 +231,9 @@ class FeatureGeneratorLLM:
 
     def parse_user_input(self, user_input: str,
                          module_type: Optional[str] = None,
-                         bitwidth: Optional[int] = None) -> Dict:
+                         bitwidth: Optional[int] = None,
+                         depth: Optional[int] = None,
+                         pipeline_stages: Optional[int] = None) -> Dict:
         """
         Parse user input to extract requirements
 
@@ -295,6 +297,7 @@ class FeatureGeneratorLLM:
                 module_type = 'cpu'
 
         # Extract depth for regfile (e.g., "8x", "16 registers", "8x8")
+        caller_depth = depth if depth in (8, 16, 32) else None
         depth = 16  # default
         if module_type == 'regfile':
             depth_patterns = [
@@ -307,8 +310,11 @@ class FeatureGeneratorLLM:
                 if match:
                     depth = extract(match)
                     break
+        if caller_depth is not None:
+            depth = caller_depth          # 界面上的 Registers 优先于正文推断
 
         # Extract pipeline stages for CPU (e.g., "5-stage", "3 stage")
+        caller_stages = pipeline_stages if pipeline_stages in (3, 5) else None
         pipeline_stages = 5  # default
         if module_type == 'cpu':
             pipeline_match = re.search(r'(\d+)[\s-]*stage', input_lower)
@@ -317,6 +323,8 @@ class FeatureGeneratorLLM:
                 if pipeline_stages not in [3, 5]:
                     print(f"⚠️  Invalid pipeline stages: {pipeline_stages}, using 5")
                     pipeline_stages = 5
+        if caller_stages is not None:
+            pipeline_stages = caller_stages   # 界面上的 Pipeline 优先于正文推断
 
         # Extract operations
         #
@@ -367,7 +375,9 @@ class FeatureGeneratorLLM:
 
     def generate_feature(self, user_input: str,
                          module_type: Optional[str] = None,
-                         bitwidth: Optional[int] = None) -> Optional[str]:
+                         bitwidth: Optional[int] = None,
+                         depth: Optional[int] = None,
+                         pipeline_stages: Optional[int] = None) -> Optional[str]:
         """
         Generate Feature file from user input
 
@@ -383,7 +393,8 @@ class FeatureGeneratorLLM:
 
         # Parse input（module_type 由调用方指定时优先于正文推断）
         requirements = self.parse_user_input(user_input, module_type=module_type,
-                                             bitwidth=bitwidth)
+                                             bitwidth=bitwidth, depth=depth,
+                                             pipeline_stages=pipeline_stages)
 
         print(f"✅ Parsed requirements:")
         print(f"   Bitwidth: {requirements['bitwidth']}-bit")
