@@ -2515,8 +2515,11 @@ class LLMFactory:
             'meta': LlamaProvider,
             'gptoss': GptOssProvider,     # openai-gpt-oss-120b（≠ api.openai.com）
             'gpt-oss': GptOssProvider,
-            'deepseekv4': DeepSeekV4Provider,   # deepseek-v4-flash（≠ api.deepseek.com）
-            'deepseek-v4': DeepSeekV4Provider,
+            # DeepSeek V4 Flash 暂不登记：官方 API 的 deepseek-chat 已有 334 次
+            # 历史调用、base01/base02 两批都用它，保留那条数据线比多一个同厂
+            # 模型更有价值。类保留着，想换回来去掉下面两行注释即可。
+            # 'deepseekv4': DeepSeekV4Provider,
+            # 'deepseek-v4': DeepSeekV4Provider,
             'glm': GlmProvider,           # glm-4.7
             'zhipu': GlmProvider,
             'local': LocalLLMProvider,

@@ -34,6 +34,8 @@ def factory_names():
     src = (ROOT / 'src' / 'llm_providers.py').read_text(encoding='utf-8')
     block = src[src.index('providers = {', src.index('class LLMFactory')):]
     block = block[:block.index('}')]
+    # 注释掉的注册项不算——停用某个 provider 的做法就是把那两行注释掉
+    block = '\n'.join(l for l in block.split('\n') if not l.lstrip().startswith('#'))
     pairs = re.findall(r"'([\w\-]+)':\s*(\w+)", block)
     by_class = {}
     for name, cls in pairs:

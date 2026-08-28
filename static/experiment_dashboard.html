@@ -360,11 +360,10 @@ button.secondary { background: var(--bg-primary); color: var(--text-primary); bo
 <script>
 // 与 bdd_generator.html 的下拉框保持同一批 provider，顺序也一致。
 // 这份名单此前落后了：新加的 4 家在网页能选、在仪表盘却跑不了。
+// 与 bdd_generator.html 的下拉框同一批 provider、同一顺序。
 const LLMS = ['mock',
-    // Academic Cloud (GWDG)
-    'deepseekv4','glm','gptoss','llama','qwen',
-    // 厂商官方 API
-    'deepseek','gemini','groq','mistral','openai','together'];
+    'gemini','mistral','deepseek','openai','qwen',
+    'llama','gptoss','glm','together','groq'];
 let polling = null;
 
 function el(tag, cls, text) {
