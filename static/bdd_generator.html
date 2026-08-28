@@ -2247,18 +2247,7 @@
                     : '';
             }
             [sel, bw, depth, pipe].forEach(el => { if (el) el.disabled = synced; });
-
-            // 显隐规则与 Step 1 的 onModuleChange 完全一致
-            const t = sel.value;
-            const show = (id, on) => {
-                const g = document.getElementById(id);
-                if (g) g.style.display = on ? 'block' : 'none';
-            };
-            show('bdd-bitwidth-group', t !== 'cpu');
-            show('bdd-depth-group', t === 'regfile');
-            show('bdd-pipeline-group', t === 'cpu');
-
-            onBddSpecChange();
+            onBddSpecChange();   // 显隐与文本由它统一处理
         }
 
         /** Module Type / Bitwidth 变化时，把需求文本更新成对应的模板。
@@ -2272,7 +2261,26 @@
             const sel = document.getElementById('bdd-module-type');
             const bw = document.getElementById('bdd-bitwidth');
             if (!ta || !sel) return;
-            // 用户手动改过就不覆盖
+
+            // 显隐规则与 Step 1 的 onModuleChange 完全一致。
+            // 必须放在这个函数里：下拉框的 onchange 绑的是它，而不是
+            // refreshBddModuleType —— 之前把逻辑放在后者，用户真实点击时
+            // 字段根本不切换，只有代码主动调用 refresh 时才对。
+            const t = sel.value;
+            const show = (id, on) => {
+                const g = document.getElementById(id);
+                if (g) g.style.display = on ? 'block' : 'none';
+            };
+            show('bdd-bitwidth-group', t !== 'cpu');
+            show('bdd-depth-group', t === 'regfile');
+            show('bdd-pipeline-group', t === 'cpu');
+
+            // 模块类型决定用哪个 prompt 模板（bdd_alu / bdd_counter / ...）。
+            // 必须在下面那个提前返回之前重载：否则用户一旦手改过需求文本，
+            // 再换模块类型时面板与实际发出的都还停在上一个模板。
+            loadPromptTemplate('bdd');
+
+            // 需求文本用户手动改过就不覆盖
             if (ta.value.trim() && ta.value !== bddAutoFilledText) return;
 
             const type = sel.value;
@@ -2290,10 +2298,6 @@
             }
             ta.value = text;
             bddAutoFilledText = text;
-
-            // 模块类型决定用哪个 prompt 模板（bdd_alu / bdd_counter / ...），
-            // 换了类型必须重新加载，否则面板显示的和实际发出的都还是上一个。
-            loadPromptTemplate('bdd');
         }
 
         /** 依据当前 provider 与 stream 开关，更新置灰状态与 placeholder。 */
