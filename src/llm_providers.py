@@ -2506,7 +2506,12 @@ class LLMFactory:
             # FREE providers
             'gemini': GeminiProvider,
             'google': GeminiProvider,
-            'groq': GroqProvider,
+            # Groq 暂不登记：免费层限流已实际毁掉过整批数据（base01 失败
+            # 10/30、base02 失败 27/30），而批量采集要连跑数小时。它的
+            # 默认模型 openai/gpt-oss-120b 与 GWDG 的 gptoss 是同一份权重，
+            # 其余候选（gpt-oss-20b 是小号、两个 qwen3 与 Qwen3 Coder 重叠）
+            # 也不带来新家族，所以去掉它不损失任何独特模型。
+            # 'groq': GroqProvider,
             'deepseek': DeepSeekProvider,
             # 以下五家同在 GWDG Academic Cloud（同端点、同 key、同推理栈）
             'qwen': QwenProvider3,        # qwen3-coder-next，取代原 DashScope Qwen

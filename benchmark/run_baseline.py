@@ -42,7 +42,7 @@ from src.experiment_logger import DB_PATH                # noqa: E402
 # ---------------------------------------------------------------------------
 ALL_PROVIDERS = [
     'gemini', 'mistral', 'deepseek', 'openai', 'qwen',
-    'gptoss', 'glm', 'together', 'groq',
+    'gptoss', 'glm', 'together',
 ]
 MODULE_TYPES = ['alu', 'counter']
 SEEDS = [1, 2, 3, 4, 5]
