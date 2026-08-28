@@ -91,7 +91,21 @@ def load_config():
         if not env_val:
             continue
         cfg_val = config['api_keys'].get(provider)
-        if cfg_val and not cfg_val.startswith('your_') and cfg_val != env_val:
+        cfg_has_key = bool(cfg_val) and not cfg_val.startswith('your_')
+
+        # 例外：配置文件同时给了 api_key 和 api_url 时，二者是一对——key 属于
+        # 那个端点。而环境变量里的 key 是为它当初对应的服务申请的，把它配到另一
+        # 个端点上必然 401。qwen 就踩过：换到 GWDG 后，系统里那把旧的
+        # DashScope QWEN_API_KEY 仍在覆盖配置，请求被发到 GWDG 然后失败，
+        # 表象是「模型不会写 Verilog」。这种情况下配置优先。
+        cfg_has_url = bool((providers_config.get(provider) or {}).get('api_url'))
+        if cfg_has_key and cfg_has_url and cfg_val != env_val:
+            print(f"ℹ️  {provider}: using the key from config/llm_config.json, not "
+                  f"{env_var} — config pins a specific api_url and the key must "
+                  f"match that endpoint.")
+            continue
+
+        if cfg_has_key and cfg_val != env_val:
             print(f"⚠️  {provider}: environment variable {env_var} overrides the key "
                   f"in config/llm_config.json (env ...{env_val[-4:]} wins over "
                   f"config ...{cfg_val[-4:]}). Editing the config file will have no "
