@@ -342,10 +342,19 @@ def allowed_file(filename):
 # DUV 变了整条链就失效，因此 Step 1 必须新建。
 # ============================================================================
 
-# Web 端只有 openai / gemini 真正接受 model 覆盖（见 /api/generate 与
-# /api/generate-stream）；Step 1 的生成器完全不接收 model 参数。
-# 本次不修改该行为，只如实记录，供前端提示与后续排查。
-MODEL_OVERRIDE_PROVIDERS = ('openai', 'gemini')
+# 哪些 provider 接受调用方指定 model。
+#
+# 这里原本只有 openai / gemini，是早期只给这两家接了线的遗留限制：其余 provider
+# 传了 model 会被静默丢弃。现在 _apply_model_override 走
+# LLMFactory.create_provider(name, model=...)，而工厂对每一家都支持 model 参数，
+# 限制已无技术依据，故放开——脚本或前端指定的模型现在对所有 provider 都生效。
+#
+# 注意这不等于前端会给每家都显示 MODEL 下拉框：只有确实存在多个可用模型时才值得
+# 显示。硬编码的候选模型会随服务商下线而失效（Groq 的 llama-3.3-70b-versatile、
+# DeepSeek 的 deepseek-chat、Together 的 Llama-4-Maverick 都已下线），所以候选表
+# 要用 benchmark/check_models_live.py 定期核对。
+MODEL_OVERRIDE_PROVIDERS = ('openai', 'gemini', 'deepseek', 'groq', 'mistral',
+                            'together', 'qwen', 'llama', 'gptoss', 'glm')
 
 
 def _new_run_id() -> str:
