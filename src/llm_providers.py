@@ -1972,7 +1972,20 @@ class QwenProvider(LLMProvider):
             response.raise_for_status()
             result = response.json()
             self._record_response_meta(result)
-            return result['choices'][0]['message']['content'].strip()
+            choice = result['choices'][0]
+            content = choice['message'].get('content')
+            if content is None:
+                # 推理模型（如 openai-gpt-oss-120b）把思维链放在 message.reasoning，
+                # 最终答案放在 content。预算被推理吃光时 content 会是 null 且
+                # finish_reason='length' —— 直接 .strip() 会抛 NoneType 异常，
+                # 然后被下面的 except 吞掉、降级成兜底文本，看起来像模型不会答题。
+                # 说清楚是截断，让调用方知道该加 max_tokens。
+                reasoning = choice['message'].get('reasoning') or ''
+                raise ValueError(
+                    f"empty content (finish_reason={choice.get('finish_reason')}); "
+                    f"this is a reasoning model and the token budget was consumed by "
+                    f"{len(reasoning)} chars of reasoning — increase max_tokens")
+            return content.strip()
         except Exception as e:
             print(f"⚠️  {type(self).__name__} API request failed: {e}")
             return self._fallback_description(prompt)
@@ -2411,34 +2424,73 @@ So that I can ensure it correctly performs all {operations_count} supported arit
 including {', '.join(operations_list[:5])}{' and more' if len(operations_list) > 5 else ''}"""
 
 
-class LlamaProvider(QwenProvider):
-    """Meta Llama，走与 Qwen 相同的 OpenAI 兼容端点、同一把 API key。
+class AcademicCloudProvider(QwenProvider):
+    """GWDG Academic Cloud (SAIA)：OpenAI 兼容端点，一把 key 服务多个模型族。
 
-    继承 QwenProvider 是因为两者的请求/响应格式、采样参数映射完全一致，
-    只有默认模型不同。单独立为一个 provider（而不是 Qwen 的一个 model 选项）
-    是为了在实验数据里独立成一家：llm_calls.provider 会记成 LlamaProvider，
-    跨模型对比时不会和 Qwen 混在一起。
+    继承 QwenProvider 只是复用它的 OpenAI 兼容请求/响应处理与采样参数映射，
+    与阿里云无关——端点和 key 都是独立的。
 
-    Key：优先 LLAMA_API_KEY，缺失时回退 QWEN_API_KEY / DASHSCOPE_API_KEY，
-    所以只配一处也能用。
-    端点：默认与 Qwen 相同，可用 LLAMA_API_URL 覆盖（换服务商时不必改代码）。
+    每个模型族派生一个子类而不是共用一个 provider 加 model 选项：这样
+    llm_calls.provider 能区分开，跨模型对比时不会被合并成一家。
+
+    因为同一套推理栈、同一批硬件，这几个模型之间的对比反而比跨服务商更干净
+    （消除了部署差异这个混淆因素）。
+
+    Key 与端点：ACADEMIC_API_KEY / ACADEMIC_API_URL；也接受各子类自己的
+    {NAME}_API_KEY，由 main.load_config 从配置文件导出。
     """
 
-    def __init__(self, api_key: Optional[str] = None,
-                 model: str = "llama-3.3-70b-instruct"):
-        api_key = (api_key or os.getenv("LLAMA_API_KEY")
-                   or os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY"))
+    DEFAULT_MODEL = "meta-llama-3.1-8b-instruct"
+    BASE_URL = "https://chat-ai.academiccloud.de/v1/chat/completions"
+    # 与 config/llm_config.json 里的键、LLMFactory 的注册名保持一致。
+    # 不能从类名推导：QwenProvider3 会推出 QWEN3_API_KEY，而配置导出的是
+    # QWEN_API_KEY，取不到 key 就会构造失败并被工厂静默降级成本地模板。
+    CONFIG_KEY = "llama"
+
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+        env_prefix = self.CONFIG_KEY.upper()
+        api_key = (api_key or os.getenv(f"{env_prefix}_API_KEY")
+                   or os.getenv("ACADEMIC_API_KEY"))
         if not api_key:
             raise ValueError(
-                "Llama API key not provided. It shares the key with Qwen — set "
-                "LLAMA_API_KEY, QWEN_API_KEY or DASHSCOPE_API_KEY.")
-        super().__init__(api_key=api_key, model=model)
-        # 默认走国际站：探测确认 llama-3.3-70b-instruct 在国内站返回 404
-        # (model does not exist)，在国际站返回 401 (incorrect API key) —— 也就是
-        # 国际站认得这个模型，只是需要有效 key。换服务商时用 LLAMA_API_URL 覆盖。
-        self.api_url = os.getenv(
-            "LLAMA_API_URL",
-            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions")
+                f"{type(self).__name__}: no API key. Set {env_prefix}_API_KEY or "
+                f"ACADEMIC_API_KEY (GWDG Academic Cloud). "
+                f"Keys: https://saia.gwdg.de/dashboard")
+        super().__init__(api_key=api_key, model=model or self.DEFAULT_MODEL)
+        self.api_url = (os.getenv(f"{env_prefix}_API_URL")
+                        or os.getenv("ACADEMIC_API_URL") or self.BASE_URL)
+
+
+class LlamaProvider(AcademicCloudProvider):
+    """Meta Llama 3.1 8B。注意只有 8B 可用，不是 70B —— 与其他家的 70B 级
+    模型直接对比并不对等，报结果时需注明。"""
+    CONFIG_KEY = "llama"
+    DEFAULT_MODEL = "meta-llama-3.1-8b-instruct"
+
+
+class QwenProvider3(AcademicCloudProvider):
+    """Qwen3 Coder。取代原先走阿里云 DashScope 的 QwenProvider。"""
+    CONFIG_KEY = "qwen"
+    DEFAULT_MODEL = "qwen3-coder-next"
+
+
+class GptOssProvider(AcademicCloudProvider):
+    """OpenAI GPT-OSS 120B（开放权重），与走 api.openai.com 的 OpenAIProvider
+    是两回事，故独立成一家。"""
+    CONFIG_KEY = "gptoss"
+    DEFAULT_MODEL = "openai-gpt-oss-120b"
+
+
+class DeepSeekV4Provider(AcademicCloudProvider):
+    """DeepSeek V4 Flash，与走 api.deepseek.com 的 DeepSeekProvider 区分开。"""
+    CONFIG_KEY = "deepseekv4"
+    DEFAULT_MODEL = "deepseek-v4-flash-0731"
+
+
+class GlmProvider(AcademicCloudProvider):
+    """智谱 GLM-4.7。"""
+    CONFIG_KEY = "glm"
+    DEFAULT_MODEL = "glm-4.7"
 
 
 # ========== FACTORY ==========
@@ -2456,10 +2508,17 @@ class LLMFactory:
             'google': GeminiProvider,
             'groq': GroqProvider,
             'deepseek': DeepSeekProvider,
-            'qwen': QwenProvider,
-            'tongyi': QwenProvider,
-            'llama': LlamaProvider,
+            # 以下五家同在 GWDG Academic Cloud（同端点、同 key、同推理栈）
+            'qwen': QwenProvider3,        # qwen3-coder-next，取代原 DashScope Qwen
+            'tongyi': QwenProvider3,
+            'llama': LlamaProvider,       # meta-llama-3.1-8b-instruct
             'meta': LlamaProvider,
+            'gptoss': GptOssProvider,     # openai-gpt-oss-120b（≠ api.openai.com）
+            'gpt-oss': GptOssProvider,
+            'deepseekv4': DeepSeekV4Provider,   # deepseek-v4-flash（≠ api.deepseek.com）
+            'deepseek-v4': DeepSeekV4Provider,
+            'glm': GlmProvider,           # glm-4.7
+            'zhipu': GlmProvider,
             'local': LocalLLMProvider,
 
             # PAID providers
@@ -2488,6 +2547,7 @@ class LLMFactory:
                 'google': 'gemini', 'tongyi': 'qwen', 'meta': 'llama',
                 'gpt': 'openai', 'chatgpt': 'openai', 'anthropic': 'claude',
                 'xai': 'grok', 'codestral': 'mistral', 'together_ai': 'together',
+                'gpt-oss': 'gptoss', 'deepseek-v4': 'deepseekv4', 'zhipu': 'glm',
             }.get(provider_type, provider_type)
             configured = os.getenv(f"{canonical.upper()}_MODEL")
             if configured:

@@ -75,6 +75,9 @@ def load_config():
         'XAI_API_KEY': 'grok',
         'QWEN_API_KEY': 'qwen',
         'LLAMA_API_KEY': 'llama',
+        'GPTOSS_API_KEY': 'gptoss',
+        'DEEPSEEKV4_API_KEY': 'deepseekv4',
+        'GLM_API_KEY': 'glm',
         'MISTRAL_API_KEY': 'mistral',
         'TOGETHER_API_KEY': 'together'
     }
@@ -143,6 +146,9 @@ def setup_api_keys():
         'grok': 'XAI_API_KEY',
         'qwen': 'QWEN_API_KEY',
         'llama': 'LLAMA_API_KEY',
+        'gptoss': 'GPTOSS_API_KEY',
+        'deepseekv4': 'DEEPSEEKV4_API_KEY',
+        'glm': 'GLM_API_KEY',
         'mistral': 'MISTRAL_API_KEY',
         'together': 'TOGETHER_API_KEY'
     }
@@ -161,6 +167,9 @@ def setup_api_keys():
         'GROK': 'XAI_API_KEY',
         'QWEN': 'QWEN_API_KEY',
         'LLAMA': 'LLAMA_API_KEY',
+        'GPTOSS': 'GPTOSS_API_KEY',
+        'DEEPSEEKV4': 'DEEPSEEKV4_API_KEY',
+        'GLM': 'GLM_API_KEY',
         'MISTRAL': 'MISTRAL_API_KEY',
         'TOGETHER': 'TOGETHER_API_KEY'
     }
@@ -2187,7 +2196,8 @@ def sampling_info():
     """
     info = {}
     for name in ('groq', 'gemini', 'deepseek', 'openai', 'claude',
-                 'grok', 'qwen', 'mistral', 'together', 'llama'):
+                 'grok', 'qwen', 'mistral', 'together', 'llama',
+                 'gptoss', 'deepseekv4', 'glm'):
         cls = _provider_class(name)
         if cls is None:
             continue
@@ -2217,8 +2227,9 @@ def _provider_class(name):
         'groq': 'GroqProvider', 'gemini': 'GeminiProvider',
         'deepseek': 'DeepSeekProvider', 'openai': 'OpenAIProvider',
         'claude': 'ClaudeProvider', 'grok': 'GrokProvider',
-        'qwen': 'QwenProvider', 'mistral': 'MistralProvider',
-        'llama': 'LlamaProvider',
+        'qwen': 'QwenProvider3', 'mistral': 'MistralProvider',
+        'llama': 'LlamaProvider', 'gptoss': 'GptOssProvider',
+        'deepseekv4': 'DeepSeekV4Provider', 'glm': 'GlmProvider',
         'together': 'TogetherProvider',
     }
     return getattr(lp, mapping.get(name, ''), None)
