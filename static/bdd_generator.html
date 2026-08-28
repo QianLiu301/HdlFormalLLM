@@ -1283,13 +1283,26 @@
                              并置灰，避免与 Step 1 的选择冲突。 -->
                         <div class="form-group" id="bdd-module-group">
                             <label for="bdd-module-type">Module Type</label>
-                            <select id="bdd-module-type">
+                            <select id="bdd-module-type" onchange="onBddSpecChange()">
                                 <option value="alu">ALU - Arithmetic Logic Unit</option>
                                 <option value="counter">Counter - Up/Down Counter</option>
                                 <option value="regfile">Register File</option>
                                 <option value="cpu">CPU - RISC-V Processor</option>
                             </select>
                             <div class="module-type-hint" id="bdd-module-hint"></div>
+                        </div>
+                        <!-- BITWIDTH 与 MODULE TYPE 同理：spec-first 下没有 DUT，
+                             位宽只能由用户指定。缺了它就只能从正文推断，而正文
+                             没写位宽时默认 16，硬件那步的下拉框却默认 32 —— 会静默
+                             产出 16 位的 BDD 配 32 位的设计。 -->
+                        <div class="form-group" id="bdd-bitwidth-group">
+                            <label for="bdd-bitwidth">Bitwidth</label>
+                            <select id="bdd-bitwidth" onchange="onBddSpecChange()">
+                                <option value="8">8-bit</option>
+                                <option value="16">16-bit</option>
+                                <option value="32" selected>32-bit</option>
+                                <option value="64">64-bit</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label>LLM Provider</label>
@@ -2188,20 +2201,60 @@
         /** BDD 卡片的 Module Type：impl-first 跟随 DUT 并置灰，spec-first 由用户选。
 
          *  两种模式下它都会随请求发给后端，取代此前从需求正文猜模块类型的做法。 */
+        // 由 Module Type + Bitwidth 自动填入的需求文本，用来判断能否覆盖：
+        // 只要文本还是自动填的原样，就跟着选择更新；用户一旦改过就不再动它。
+        let bddAutoFilledText = null;
+
         function refreshBddModuleType() {
             const sel = document.getElementById('bdd-module-type');
+            const bw = document.getElementById('bdd-bitwidth');
             const hint = document.getElementById('bdd-module-hint');
             if (!sel) return;
-            if (currentWorkflowMode !== 'specification' && currentDUT) {
+            const synced = currentWorkflowMode !== 'specification' && currentDUT;
+            if (synced) {
                 sel.value = currentDUT.moduleType || 'alu';
+                if (bw && currentDUT.bitwidth) bw.value = String(currentDUT.bitwidth);
                 sel.disabled = true;
-                hint.textContent = `synced with the generated hardware (${sel.value})`;
+                if (bw) bw.disabled = true;
+                hint.textContent = `synced with the generated hardware `
+                    + `(${sel.value}, ${bw ? bw.value : '?'}-bit)`;
             } else {
                 sel.disabled = false;
+                if (bw) bw.disabled = false;
                 hint.textContent = currentWorkflowMode === 'specification'
                     ? 'no hardware yet — pick what the scenarios are for'
                     : '';
             }
+            onBddSpecChange();
+        }
+
+        /** Module Type / Bitwidth 变化时，把需求文本更新成对应的模板。
+         *
+         *  这让自然语言从「必填」变成「可选的补充」：结构化的两项已经确定了
+         *  待验证对象，文本只是在其上追加细节。impl-first 本来就是这么做的
+         *  （文本由 DUT 自动填），spec-first 此前却要求用户从零手写，而位宽等
+         *  信息只能靠后端从正文猜——猜不到就默认 16，与硬件那步的 32 不一致。 */
+        function onBddSpecChange() {
+            const ta = document.getElementById('bdd-input');
+            const sel = document.getElementById('bdd-module-type');
+            const bw = document.getElementById('bdd-bitwidth');
+            if (!ta || !sel) return;
+            // 用户手动改过就不覆盖
+            if (ta.value.trim() && ta.value !== bddAutoFilledText) return;
+
+            const type = sel.value;
+            const width = parseInt((bw || {}).value || '32', 10);
+            const tpl = BDD_TEMPLATES[type] || BDD_TEMPLATES.other;
+            let text;
+            if (type === 'cpu') {
+                text = tpl(currentDUT ? currentDUT.pipelineStages : 5);
+            } else if (type === 'regfile') {
+                text = tpl(width, currentDUT ? currentDUT.depth : 32);
+            } else {
+                text = tpl(width);
+            }
+            ta.value = text;
+            bddAutoFilledText = text;
         }
 
         /** 依据当前 provider 与 stream 开关，更新置灰状态与 placeholder。 */
@@ -3872,6 +3925,9 @@
                   // 以界面上的选择为准；impl-first 下它已与 DUT 同步
                   module_type: (document.getElementById('bdd-module-type') || {}).value
                                || (currentDUT ? currentDUT.moduleType : null),
+                  // 位宽同样以界面为准，不让后端从正文猜
+                  bitwidth: parseInt((document.getElementById('bdd-bitwidth') || {}).value
+                                     || (currentDUT ? currentDUT.bitwidth : 32), 10),
                   workflow_mode: currentWorkflowMode,
                   sampling: collectSampling('bdd'), ...promptPayload('bdd') }, 'bdd');
 

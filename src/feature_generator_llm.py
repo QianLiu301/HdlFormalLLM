@@ -230,7 +230,8 @@ class FeatureGeneratorLLM:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def parse_user_input(self, user_input: str,
-                         module_type: Optional[str] = None) -> Dict:
+                         module_type: Optional[str] = None,
+                         bitwidth: Optional[int] = None) -> Dict:
         """
         Parse user input to extract requirements
 
@@ -248,6 +249,14 @@ class FeatureGeneratorLLM:
         input_lower = user_input.lower()
 
         # Extract bitwidth
+        #
+        # 与 module_type 同理：调用方（界面上的 BITWIDTH）给了就用它。
+        # 光靠正文推断会静默出错——需求文本若没写位宽就默认 16，而硬件那一步
+        # 的下拉框默认 32，于是 spec-first 会产出 16 位的 BDD 配 32 位的设计。
+        if bitwidth in (8, 16, 32, 64):
+            caller_bitwidth = bitwidth
+        else:
+            caller_bitwidth = None
         bitwidth = 16  # default
         bitwidth_patterns = [
             (r'(\d+)[\s-]*bit', lambda m: int(m.group(1))),
@@ -263,6 +272,8 @@ class FeatureGeneratorLLM:
         if bitwidth not in [8, 16, 32, 64]:
             print(f"⚠️  Invalid bitwidth: {bitwidth}, using 16")
             bitwidth = 16
+        if caller_bitwidth is not None:
+            bitwidth = caller_bitwidth        # 调用方指定优先于正文推断
 
         # Extract module type
         #
@@ -355,7 +366,8 @@ class FeatureGeneratorLLM:
         }
 
     def generate_feature(self, user_input: str,
-                         module_type: Optional[str] = None) -> Optional[str]:
+                         module_type: Optional[str] = None,
+                         bitwidth: Optional[int] = None) -> Optional[str]:
         """
         Generate Feature file from user input
 
@@ -370,7 +382,8 @@ class FeatureGeneratorLLM:
         print(f"{'='*70}\n")
 
         # Parse input（module_type 由调用方指定时优先于正文推断）
-        requirements = self.parse_user_input(user_input, module_type=module_type)
+        requirements = self.parse_user_input(user_input, module_type=module_type,
+                                             bitwidth=bitwidth)
 
         print(f"✅ Parsed requirements:")
         print(f"   Bitwidth: {requirements['bitwidth']}-bit")
