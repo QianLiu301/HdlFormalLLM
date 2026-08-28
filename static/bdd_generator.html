@@ -3474,20 +3474,43 @@
         // ============================================================
         // LLM Change
         // ============================================================
-        // 只列后端真正支持 model 覆盖的 provider（main.MODEL_OVERRIDE_PROVIDERS
-        // = openai, gemini）。此前这里还有 qwen / mistral / together / grok，
-        // 下拉框照常显示、选了却不起作用；qwen 那份更是列着阿里云 DashScope 的
-        // 旧模型，而 qwen 现已指向 GWDG，选中会发出一个那边不存在的模型名。
-        // 其余 provider 的模型固定在 config/llm_config.json 里，改配置即可。
+        // 每个 provider 的可选模型。两道关都要过：
+        //   1. 在服务商的 /models 清单里（Groq 下线过 llama-3.3-70b-versatile、
+        //      DeepSeek 下线过 deepseek-chat、Together 下线过 Llama-4-Maverick）
+        //   2. 用本账号实调能返回结果 —— 列出不等于可用：Together 目录里的
+        //      Llama-3.1-405B、GWDG 目录里的 qwen3.8-27b 都在清单中，实调却
+        //      分别失败与 503。
+        // 死模型的表现是 404/503 -> provider 降级成兜底文本 -> 端点仍报 success，
+        // 看起来像「模型不会写 Verilog」，所以这份表只放实测通过的。
+        // 复核：benchmark/check_models_live.py
+        // 只剩一个可用模型的 provider 不显示下拉框（together / qwen / llama /
+        // gptoss / glm），其模型固定在 config/llm_config.json。
         const modelOptions = {
             'gemini': [
-                {value: 'gemini-3-flash-preview', text: 'Gemini 3 Flash Preview'},
-                {value: 'gemini-2.5-flash', text: 'Gemini 2.5 Flash'}
+                {value: 'gemini-2.5-flash', text: 'Gemini 2.5 Flash'},
+                {value: 'gemini-3-flash-preview', text: 'Gemini 3 Flash Preview'}
             ],
             'openai': [
-                {value: 'gpt-5-mini', text: 'GPT-5 Mini (Recommended)'},
+                {value: 'gpt-5-mini', text: 'GPT-5 Mini'},
                 {value: 'gpt-5', text: 'GPT-5'},
                 {value: 'gpt-5.1', text: 'GPT-5.1'}
+            ],
+            'groq': [
+                {value: 'openai/gpt-oss-120b', text: 'GPT-OSS 120B'},
+                {value: 'openai/gpt-oss-20b', text: 'GPT-OSS 20B'},
+                {value: 'qwen/qwen3.8-27b', text: 'Qwen3.8 27B'},
+                {value: 'qwen/qwen3.6-27b', text: 'Qwen3.6 27B'}
+            ],
+            'deepseek': [
+                {value: 'deepseek-v4-flash', text: 'DeepSeek V4 Flash'},
+                {value: 'deepseek-v4-pro', text: 'DeepSeek V4 Pro'}
+            ],
+            'mistral': [
+                {value: 'codestral-latest', text: 'Codestral'},
+                {value: 'devstral-latest', text: 'Devstral'},
+                // mistral-large-latest 已剔除：实调 60s 读超时。它不是「不可用」
+                // 而是太慢，而真实的 Verilog 生成 prompt 比探针长得多，只会更慢。
+                {value: 'magistral-medium-latest', text: 'Magistral Medium'}
             ]
         };
 

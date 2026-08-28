@@ -1,126 +1,110 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""核对配置里的模型在各服务商那边是否仍然可用
+"""核对配置与下拉框里的模型是否真的可用
 
-模型会被下线。Groq 就下线了 llama-3.3-70b-versatile —— 而它是 base01/base02
-用的那个，307 次历史调用都基于它。请求一个已下线的模型返回 404，provider 捕获
-异常后返回兜底文本，端点照样报 success=True，界面上看起来像「模型不会写
-Verilog」。等到跑完一整批才发现，代价太大。
+判据是「实调能否返回结果」，不是「有没有列在 /models 里」——两者不等价：
+Together 目录里的 Llama-3.1-405B、GWDG 目录里的 qwen3.8-27b 都在清单中，
+实调却分别失败与 503。
 
-采集数据前跑一次：
+模型也会被悄悄下线。Groq 下线了 llama-3.3-70b-versatile、DeepSeek 下线了
+deepseek-chat，二者合计 641 次历史调用，base01 与 base02 都建立在它们之上。
+请求已下线的模型返回 404，provider 捕获后返回兜底文本，端点仍报 success=True，
+界面上看起来像「模型不会写 Verilog」。跑大批量采集之前先跑这个。
 
     python benchmark/check_models_live.py
 """
 
 import json
-import os
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import requests                                    # noqa: E402
-import main as webapp                              # noqa: E402  （加载 config、设置环境变量）
+import main as webapp                              # noqa: E402  加载 config、设置环境变量
 from src.llm_providers import LLMFactory           # noqa: E402
 
-# provider -> 列出模型的 URL。没有 /models 接口的（Gemini 用自己的 API 形态）
-# 留空，改用一次极小的真实调用来判断。
-MODELS_ENDPOINT = {
-    'groq':     'https://api.groq.com/openai/v1/models',
-    'openai':   'https://api.openai.com/v1/models',
-    'deepseek': 'https://api.deepseek.com/models',
-    'mistral':  'https://api.mistral.ai/v1/models',
-    'together': 'https://api.together.xyz/v1/models',
-    'qwen':     'https://chat-ai.academiccloud.de/v1/models',
-    'llama':    'https://chat-ai.academiccloud.de/v1/models',
-    'gptoss':   'https://chat-ai.academiccloud.de/v1/models',
-    'glm':      'https://chat-ai.academiccloud.de/v1/models',
-}
+FALLBACK_MARKERS = ('Test ALU operation with various input values',
+                    'Given ALU operation, When executed')
+_END = "\n        };"
 
 
-def list_models(provider, api_key):
-    url = MODELS_ENDPOINT.get(provider)
-    if not url:
-        return None, 'no /models endpoint'
+def dropdown_models():
+    """前端 modelOptions 里列出的候选模型。"""
+    html = (ROOT / 'static' / 'bdd_generator.html').read_text(encoding='utf-8')
+    i = html.index('const modelOptions')
+    j = html.index(_END, i)
+    out = {}
+    for m in re.finditer(r"'([\w\-]+)':\s*\[(.*?)\]", html[i:j], re.S):
+        out[m.group(1)] = re.findall(r"value: '([^']+)'", m.group(2))
+    return out
+
+
+def probe(provider, model=None, attempts=3):
+    """实调最小请求，失败重试。返回 (是否可用, 说明)。
+
+    必须重试：学术云与部分厂商偶发 503 / 限流，单次失败会被误判成「模型不可用」。
+    一个会误报的检查工具比没有更糟——用它的人会开始忽略它的输出。
+    """
+    import time
+    detail = ''
+    for i in range(attempts):
+        ok, detail = _probe_once(provider, model)
+        if ok:
+            return True, detail
+        if i < attempts - 1:
+            time.sleep(3 * (i + 1))
+    return False, detail + f'（重试 {attempts} 次均失败）'
+
+
+def _probe_once(provider, model=None):
     try:
-        r = requests.get(url, headers={'Authorization': f'Bearer {api_key}'},
-                         proxies={'http': None, 'https': None}, timeout=30)
-    except Exception as e:
-        return None, f'{type(e).__name__}: {str(e)[:40]}'
-    if r.status_code != 200:
-        return None, f'HTTP {r.status_code}'
-    try:
-        body = r.json()
-        # Together 直接返回一个裸 list，其余家包在 {"data": [...]} 里
-        data = body if isinstance(body, list) else (
-            body.get('data') or body.get('models') or [])
-        return sorted(m['id'] for m in data if isinstance(m, dict) and 'id' in m), None
-    except Exception as e:
-        return None, f'parse: {str(e)[:40]}'
-
-
-def probe(provider):
-    """没有 /models 时，用一次最小调用判断模型是否可用。"""
-    try:
-        p = LLMFactory.create_provider(provider)
-        call = getattr(p, '_call_api_text', None) or getattr(p, '_call_api', None)
+        p = (LLMFactory.create_provider(provider, model=model) if model
+             else LLMFactory.create_provider(provider))
+        call = getattr(p, '_call_api', None)
         if call is None:
-            return False, 'no _call_api (fell back to local template)'
-        r = call('Reply with exactly: OK', max_tokens=200) or ''
-        if 'Test ALU operation' in r or 'Given ALU operation' in r:
-            return False, 'fallback text (API call failed)'
-        return True, r[:24].replace('\n', ' ')
+            return False, 'fell back to local template (no api key?)'
+        # 预算给足：gpt-oss 这类推理模型会先消耗一大段 reasoning
+        r = call('Reply with exactly: OK', max_tokens=2000) or ''
+        if any(m in r for m in FALLBACK_MARKERS):
+            return False, 'fallback text — API call failed (see console for status)'
+        return True, r.strip()[:20].replace("\n", ' ')
     except Exception as e:
-        return False, f'{type(e).__name__}: {str(e)[:40]}'
+        return False, f'{type(e).__name__}: {str(e)[:50]}'
 
 
 def main():
     cfg = json.loads((ROOT / 'config' / 'llm_config.json').read_text(encoding='utf-8'))
     providers = cfg.get('providers', {})
-
     sys.path.insert(0, str(ROOT / 'benchmark'))
     import check_provider_lists as cpl
     active = sorted(cpl.factory_names())
+    dd = dropdown_models()
 
-    print(f"{'provider':<12}{'配置的模型':<34}{'状态'}")
-    print('-' * 78)
     bad = []
+    print(f"{'provider':<11}{'model':<44}{'来源':<8}状态")
+    print('-' * 82)
     for name in active:
-        model = (providers.get(name) or {}).get('model') or '(类默认值)'
-        try:
-            key = LLMFactory.create_provider(name).api_key
-        except Exception as e:
-            print(f"{name:<12}{model:<34}构造失败 {type(e).__name__}")
-            bad.append(name)
-            continue
-
-        ids, err = list_models(name, key)
-        if ids is not None:
-            ok = model in ids
-            note = '可用' if ok else f'✗ 不在服务商清单里（该处共 {len(ids)} 个模型）'
+        configured = (providers.get(name) or {}).get('model')
+        seen = []
+        for model in [configured] + [m for m in dd.get(name, []) if m != configured]:
+            if not model or model in seen:
+                continue
+            seen.append(model)
+            src = '配置' if model == configured else '下拉框'
+            ok, detail = probe(name, None if model == configured else model)
             if not ok:
-                bad.append(name)
-            print(f"{name:<12}{model:<34}{note}")
-            if not ok:
-                hint = [i for i in ids if not any(
-                    k in i for k in ('whisper', 'guard', 'orpheus', 'embedding', 'tts'))]
-                print(f"{'':<12}{'':<34}  该处可用: {', '.join(hint[:6])}"
-                      + (' …' if len(hint) > 6 else ''))
-        else:
-            ok, detail = probe(name)
-            if not ok:
-                bad.append(name)
-            print(f"{name:<12}{model:<34}{'可用（实调）' if ok else '✗ ' + detail}"
-                  f"   [{err}]")
+                bad.append(f'{name}/{model}')
+            print(f"{name:<11}{model:<44}{src:<8}{'可用' if ok else '✗ ' + detail}")
 
     print()
     if bad:
-        print(f"有问题的 provider: {', '.join(bad)}")
-        print("请求一个已下线的模型会返回 404，provider 随即降级成兜底文本，")
-        print("而端点仍报 success=True —— 采集前务必先修掉。")
+        print(f"不可用：{', '.join(bad)}")
+        print("这些会静默降级成兜底文本而端点仍报成功——采集前先修掉，")
+        print("从 config/llm_config.json 或 modelOptions 里移除。")
         return 1
-    print("全部模型均可用。")
+    print("全部模型实调可用。")
     return 0
 
 
