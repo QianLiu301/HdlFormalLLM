@@ -1993,7 +1993,9 @@ def generate_bdd_stream():
                     yield make_sse_message("error", message=str(e))
                     return
 
-            requirements = generator.parse_user_input(user_input)
+            # 同非流式：模块类型以调用方为准，正文推断只作兜底
+            requirements = generator.parse_user_input(
+                user_input, module_type=(data.get('module_type') or '').strip() or None)
             bitwidth = requirements.get("bitwidth", "?")
             ops_count = len(requirements.get("operations", []))
 
@@ -2104,7 +2106,10 @@ def generate_bdd():
                   f"(override only wired for {'/'.join(MODEL_OVERRIDE_PROVIDERS)})")
 
         with call_context(**_ctx):
-            feature_path = generator.generate_feature(user_input)
+            # 模块类型交给调用方（界面上的 MODULE TYPE），别从正文猜：
+            # 猜测规则是关键词匹配，"ALU with registered output" 会被判成 regfile
+            feature_path = generator.generate_feature(
+                user_input, module_type=(data.get('module_type') or '').strip() or None)
 
         if not feature_path:
             return jsonify({'success': False, 'error': 'Generation failed'}), 500

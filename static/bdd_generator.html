@@ -686,6 +686,7 @@
                               font-size: 11px; color: #1f2937; }
         .sampling-help .samp-help-use { display: block; margin-top: 5px; padding-top: 5px;
                                         border-top: 1px dashed #e2e8f0; color: #475569; }
+        .module-type-hint { font-size: 11px; color: #6b7280; margin-top: 4px; }
         /* ---- Step 1 独立编译结果 ---- */
         .compile-status { margin-top: 8px; padding: 8px 10px; border-radius: 6px;
                           font-size: 12px; line-height: 1.6; }
@@ -1275,6 +1276,21 @@
                 <div class="card">
                     <div class="card-title">⚡ Configuration</div>
                     <div class="form-row">
+                        <!-- MODULE TYPE：spec-first 下 BDD 是第一步，此时还没有 DUT，
+                             模块类型只能由用户指定。缺了它，后端只能从需求正文用关键词
+                             猜，而 "ALU with registered output" 这类写法会被猜成 regfile，
+                             进而选中错误的 BDD 模板。impl-first 下这一项跟随 DUT 自动同步
+                             并置灰，避免与 Step 1 的选择冲突。 -->
+                        <div class="form-group" id="bdd-module-group">
+                            <label for="bdd-module-type">Module Type</label>
+                            <select id="bdd-module-type">
+                                <option value="alu">ALU - Arithmetic Logic Unit</option>
+                                <option value="counter">Counter - Up/Down Counter</option>
+                                <option value="regfile">Register File</option>
+                                <option value="cpu">CPU - RISC-V Processor</option>
+                            </select>
+                            <div class="module-type-hint" id="bdd-module-hint"></div>
+                        </div>
                         <div class="form-group">
                             <label>LLM Provider</label>
                             <select id="bdd-llm" onchange="onBddLlmChange()">
@@ -2169,6 +2185,25 @@
             if (cb.checked) num.value = '';
         }
 
+        /** BDD 卡片的 Module Type：impl-first 跟随 DUT 并置灰，spec-first 由用户选。
+
+         *  两种模式下它都会随请求发给后端，取代此前从需求正文猜模块类型的做法。 */
+        function refreshBddModuleType() {
+            const sel = document.getElementById('bdd-module-type');
+            const hint = document.getElementById('bdd-module-hint');
+            if (!sel) return;
+            if (currentWorkflowMode !== 'specification' && currentDUT) {
+                sel.value = currentDUT.moduleType || 'alu';
+                sel.disabled = true;
+                hint.textContent = `synced with the generated hardware (${sel.value})`;
+            } else {
+                sel.disabled = false;
+                hint.textContent = currentWorkflowMode === 'specification'
+                    ? 'no hardware yet — pick what the scenarios are for'
+                    : '';
+            }
+        }
+
         /** 依据当前 provider 与 stream 开关，更新置灰状态与 placeholder。 */
         function refreshSamplingPanel(step) {
             const llm = (document.getElementById(`${step}-llm`) || {}).value;
@@ -2649,6 +2684,7 @@
             // "Please enter requirements"，切到 spec-first 后这条红字仍挂在
             // 已经变成第 1 步的 BDD 卡片上，看起来就像这一步坏了。
             ['bdd', 'hw'].forEach(t => { hideError(t); hideSuccess(t); });
+            refreshBddModuleType();   // 该控件的可编辑性随模式变化
 
             // Update toggle buttons
             const implBtn = document.getElementById('wf-mode-impl-btn');
@@ -3781,6 +3817,7 @@
         }
 
         function updateBddTabState() {
+            refreshBddModuleType();   // DUT 变化时让 Module Type 跟上
             const dutStatus = document.getElementById('dut-status');
             const noDutWarning = document.getElementById('no-dut-warning');
             const syncedIndicator = document.getElementById('synced-indicator');
@@ -3831,7 +3868,10 @@
             if (currentWorkflowMode === 'specification') startNewRun();
 
             const payload = withRunIds(
-                { llm, model, input, module_type: currentDUT ? currentDUT.moduleType : null,
+                { llm, model, input,
+                  // 以界面上的选择为准；impl-first 下它已与 DUT 同步
+                  module_type: (document.getElementById('bdd-module-type') || {}).value
+                               || (currentDUT ? currentDUT.moduleType : null),
                   workflow_mode: currentWorkflowMode,
                   sampling: collectSampling('bdd'), ...promptPayload('bdd') }, 'bdd');
 

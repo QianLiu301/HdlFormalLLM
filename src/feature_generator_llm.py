@@ -229,7 +229,8 @@ class FeatureGeneratorLLM:
         self.output_dir = base_dir / self.llm_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def parse_user_input(self, user_input: str) -> Dict:
+    def parse_user_input(self, user_input: str,
+                         module_type: Optional[str] = None) -> Dict:
         """
         Parse user input to extract requirements
 
@@ -264,13 +265,23 @@ class FeatureGeneratorLLM:
             bitwidth = 16
 
         # Extract module type
-        module_type = 'alu'  # default
-        if 'counter' in input_lower:
-            module_type = 'counter'
-        elif 'regfile' in input_lower or 'register' in input_lower:
-            module_type = 'regfile'
-        elif 'cpu' in input_lower or 'risc' in input_lower or 'riscv' in input_lower:
-            module_type = 'cpu'
+        #
+        # 调用方给了就用调用方的——它来自界面上的 MODULE TYPE，比从正文猜可靠。
+        # 猜测仅作兜底，且必须按词边界匹配：此前用裸子串，"ALU with registered
+        # output" 和 "results stored in a register" 都会因为含 'register' 被判成
+        # regfile，于是给 ALU 选了寄存器堆的 BDD 模板。spec-first 下需求文本由
+        # 用户手写，中招概率远高于 impl-first 的固定模板。
+        if module_type in ('alu', 'counter', 'regfile', 'cpu'):
+            pass                                    # 采用调用方指定的
+        else:
+            module_type = 'alu'                     # 兜底默认
+            if re.search(r'\bcounters?\b', input_lower):
+                module_type = 'counter'
+            elif re.search(r'\bregfile\b|\bregister\s+(file|bank)\b'
+                           r'|\d+\s*registers\b', input_lower):
+                module_type = 'regfile'
+            elif re.search(r'\bcpu\b|\brisc-?v\b|\bprocessor\b', input_lower):
+                module_type = 'cpu'
 
         # Extract depth for regfile (e.g., "8x", "16 registers", "8x8")
         depth = 16  # default
@@ -343,7 +354,8 @@ class FeatureGeneratorLLM:
             'depth': depth
         }
 
-    def generate_feature(self, user_input: str) -> Optional[str]:
+    def generate_feature(self, user_input: str,
+                         module_type: Optional[str] = None) -> Optional[str]:
         """
         Generate Feature file from user input
 
@@ -357,8 +369,8 @@ class FeatureGeneratorLLM:
         print(f"🔍 Processing: {user_input}")
         print(f"{'='*70}\n")
 
-        # Parse input
-        requirements = self.parse_user_input(user_input)
+        # Parse input（module_type 由调用方指定时优先于正文推断）
+        requirements = self.parse_user_input(user_input, module_type=module_type)
 
         print(f"✅ Parsed requirements:")
         print(f"   Bitwidth: {requirements['bitwidth']}-bit")
