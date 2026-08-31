@@ -221,11 +221,12 @@ HAS_REGFILE_MODULE = False
 HAS_CPU_MODULE = False
 
 try:
-    from feature_generator_llm import FeatureGeneratorLLM
+    from feature_generator_llm import FeatureGeneratorLLM, BDD_MAX_TOKENS
     from llm_providers import LLMFactory
     HAS_BDD_MODULE = True
     print("✅ BDD Generator module loaded")
 except ImportError as e:
+    BDD_MAX_TOKENS = 12000      # 模块加载失败时仍需可引用（流式端点会读它）
     print(f"⚠️ BDD module not available: {e}")
 
 try:
@@ -2010,10 +2011,11 @@ def generate_bdd_stream():
             full_content = ""
 
             # Match the non-streaming branch below, which goes through
-            # FeatureGeneratorLLM._call_llm() with a hard-coded 4000.
-            # Without this, each provider fell back to its own _call_api_stream
-            # default: 4000 for eight of them, but 8192 for Gemini.
-            max_tokens = 4000
+            # FeatureGeneratorLLM._call_llm(). Without this, each provider fell
+            # back to its own _call_api_stream default: 4000 for eight of them,
+            # but 8192 for Gemini. 取值与理由见 feature_generator_llm.BDD_MAX_TOKENS
+            # ——推理型模型的思考 token 也计入这个额度。
+            max_tokens = BDD_MAX_TOKENS
 
             if hasattr(llm, '_call_api_stream'):
                 for chunk in llm._call_api_stream(prompt, max_tokens=max_tokens,

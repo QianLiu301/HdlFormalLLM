@@ -58,6 +58,11 @@ except ImportError:
 BDD_SYSTEM_PROMPT = ("You are a hardware verification expert specializing in "
                      "BDD test generation.")
 
+# Step 2 的输出上限，同样所有 provider 共用一份。见 _call_llm 里的实测数据：
+# 推理型模型（Gemini 2.5、GPT-5 等）的思考 token 也计入这个额度，原来的 4000
+# 会被思考吃光，只剩一两百 token 的正文。
+BDD_MAX_TOKENS = 12000
+
 
 # ============================================================================
 # Proxy Setup (same as spec_generator)
@@ -983,7 +988,14 @@ class FeatureGeneratorLLM:
             # For other providers, use standard _call_api
             response = self.llm._call_api(
                 prompt,
-                max_tokens=4000,  # Features can be long
+                # 4000 对推理型模型不够：思考 token 也计入 max_output_tokens。
+                # 实测 gemini-2.5-flash 生成 10 操作的 ALU feature：
+                #   4000  -> 思考 3838 / 输出 157   截断
+                #   8192  -> 思考 7862 / 输出 326   截断（思考会膨胀去填预算）
+                #   12000 -> 思考 5403 / 输出 3511  完整（10/10 操作）
+                # 完整输出本身约需 3300~3500 token，其余留给思考。用户仍可在
+                # Advanced sampling parameters 里覆盖。
+                max_tokens=BDD_MAX_TOKENS,
                 system_prompt=getattr(self, "_rendered_system", None) or BDD_SYSTEM_PROMPT,
                 sampling=getattr(self, "sampling", None)
             )

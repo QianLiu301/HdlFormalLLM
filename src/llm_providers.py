@@ -385,6 +385,25 @@ class GeminiProvider(LLMProvider):
         # 🔧 保存最近的 prompt 用于 fallback 解析
         self._last_prompt = ""
 
+    # Gemini 2.5 起是推理模型，思考 token 计入 max_output_tokens，而且思考量会
+    # 自动膨胀去填满预算 —— 实测同一个 10 操作 ALU prompt：
+    #     4000  -> 思考 3838 / 正文  157   截断
+    #     8192  -> 思考 7862 / 正文  326   截断（预算给得越多，思考用得越多）
+    #     12000 -> 思考 3800~7800 之间浮动，仍会偶发截断
+    # 所以「调大 max_tokens」不是可靠的修法，必须给思考本身设上限。2048 实测
+    # 足够它完成推理（实际用掉约 1800），同时把余下额度全留给正文。
+    #
+    # 这也让跨模型对比更公平：其他 provider 的 max_tokens 全部用于正文，
+    # 唯独 Gemini 要拿它去付思考的账。
+    THINKING_BUDGET = 2048
+
+    def _thinking_config(self) -> Dict:
+        """推理型 Gemini 才需要 thinkingConfig；老模型带上会报错。"""
+        m = (self.model or '').lower()
+        if re.search(r'gemini-(2\.5|3)', m):
+            return {"thinkingConfig": {"thinkingBudget": self.THINKING_BUDGET}}
+        return {}
+
     def _call_api_sdk(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None) -> str:
         """使用新的 google-genai SDK 调用 API,包含重试和模型降级"""
         self._last_prompt = prompt  # 🔧 保存 prompt
@@ -396,9 +415,10 @@ class GeminiProvider(LLMProvider):
                     response = self.client.models.generate_content(
                         model=model_name,
                         contents=prompt,
-                        config={                          # ← 添加这个
+                        config={
                             "max_output_tokens": max_tokens,
                             "temperature": 0.7,
+                            **self._thinking_config(),   # 见 THINKING_BUDGET
                         }
                     )
                     return response.text
@@ -435,6 +455,7 @@ class GeminiProvider(LLMProvider):
         # 采样参数进 generationConfig；默认 temperature=0.4（代码生成用低随机性）
         gen_config = {"maxOutputTokens": max_tokens}
         gen_config.update(self._merge_sampling('rest', sampling)[0])
+        gen_config.update(self._thinking_config())   # 见 THINKING_BUDGET
         gen_config["stopSequences"] = []
 
         # 正确构建 payload，加入 system_instruction
@@ -478,6 +499,7 @@ class GeminiProvider(LLMProvider):
  
         gen_config = {"maxOutputTokens": max_tokens}
         gen_config.update(self._merge_sampling('stream', sampling)[0])
+        gen_config.update(self._thinking_config())   # 见 THINKING_BUDGET
 
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -792,6 +814,20 @@ class DeepSeekProvider(LLMProvider):
                         'stream': {'temperature': 0.7}}
     SUPPORTED_SAMPLING = {'temperature', 'top_p', 'max_tokens'}
 
+    # deepseek-v4 系列是推理模型，推理 token 计入 completion 额度，而且不设限
+    # 时不会收敛。实测同一个 10 操作 ALU prompt，不带这个参数时：
+    #     max_tokens=4000  -> completion 3999 全是推理，正文 0 字符
+    #     max_tokens=8000  -> completion 8000 全是推理，正文 0 字符
+    #     max_tokens=20000 -> completion 20000 全是推理，正文 0 字符
+    # 也就是说 DeepSeek 此前在网页上是**从来没成功过**的，只是失败得很安静。
+    # 加上 reasoning_effort='low' 后：completion 5925，正文 7484 字符，10/10 操作。
+    # 与 Gemini 的 THINKING_BUDGET 同样是「保留推理但设上限」，两家口径一致。
+    REASONING_EFFORT = 'low'
+
+    def _reasoning_config(self) -> Dict:
+        m = (self.model or '').lower()
+        return {'reasoning_effort': self.REASONING_EFFORT} if 'v4' in m else {}
+
     """
     DeepSeek API Provider - FREE!
 
@@ -856,6 +892,7 @@ class DeepSeekProvider(LLMProvider):
             "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
         payload.update(self._merge_sampling('default', sampling)[0])
+        payload.update(self._reasoning_config())   # 见 REASONING_EFFORT
 
         # ============================================================
         # 调试信息：请求详情
@@ -1048,6 +1085,7 @@ Generate a concise Feature description (2-4 sentences):
             "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
         payload.update(self._merge_sampling('stream', sampling)[0])
+        payload.update(self._reasoning_config())   # 见 REASONING_EFFORT
         payload["stream"] = True
 
         try:
@@ -1990,8 +2028,12 @@ class QwenProvider(LLMProvider):
         payload.update(self._merge_sampling('default', sampling)[0])
 
         try:
+            # 60s 对 BDD 这类长输出远远不够：GWDG（共享学术集群）上的 GLM 4.7
+            # 仅 2 个操作的 prompt 就要 74s，10 个操作的完整 prompt 更久。超时后
+            # provider 返回兜底文本，表现成「模型不会写 BDD」，实际只是等得不够久。
+            # 超时只是等待上限，放宽不会有副作用。
             response = requests.post(self.api_url, headers=headers, json=payload,
-                                     proxies=self._get_proxies(), timeout=60)
+                                     proxies=self._get_proxies(), timeout=300)
             response.raise_for_status()
             result = response.json()
             self._record_response_meta(result)
