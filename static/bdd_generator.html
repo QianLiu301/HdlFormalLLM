@@ -170,6 +170,16 @@
         .preview-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
         .preview-box { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; min-height: 150px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; color: #333; }
         .preview-box .cursor { display: inline-block; width: 2px; height: 1.1em; background: var(--accent-blue); animation: blink 0.8s step-end infinite; vertical-align: text-bottom; }
+        /* 失败明细：等宽字体让 expected/got 的位数能对齐着比，差 1 这类错误一眼可见 */
+        .sim-failure-list { border: 1px solid var(--border-color); border-radius: 8px; overflow-x: auto; margin-bottom: 6px; }
+        .sim-failure-list table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+        .sim-failure-list th { text-align: left; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; padding: 8px 12px; background: var(--bg-secondary); white-space: nowrap; }
+        .sim-failure-list td { padding: 7px 12px; border-top: 1px solid var(--border-color); white-space: nowrap; color: #333; }
+        .sim-failure-list td.num { text-align: right; }
+        .sim-failure-list td.exp { color: var(--text-secondary); }
+        .sim-failure-list td.got { color: var(--error); font-weight: 600; }
+        .sim-failure-list td.delta { color: var(--text-secondary); font-size: 11px; }
+        .sim-failure-hint { font-size: 11px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         .action-buttons { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
         .action-buttons .btn { flex: 1; min-width: 120px; }
@@ -1902,6 +1912,19 @@
                     </p>
                 </div>
 
+                <!-- 失败明细。日志里本来就有这些行，但混在几十行 PASS 中间，
+                     只看到「Failed: 2」还得自己去翻。挑出来单独列，才看得出
+                     失败是设计错了还是 BDD 的期望值错了。 -->
+                <div id="sim-failures" style="display: none;">
+                    <div class="preview-label">❌ Failed Tests</div>
+                    <div class="sim-failure-list" id="sim-failure-list"></div>
+                    <p class="sim-failure-hint">
+                        Expected comes from the BDD's Examples table, Got is what the design
+                        produced — so a mismatch means one of the two is wrong, not necessarily
+                        the design.
+                    </p>
+                </div>
+
                 <!-- Log Preview -->
                 <div class="preview-label">📋 Simulation Log</div>
                 <div class="preview-box" id="sim-log-preview" style="max-height: 200px;"></div>
@@ -2083,6 +2106,12 @@
         // ============================================================
         let SAMPLING_INFO = {};
 
+        // 界面上预填的采样默认值。只有 temperature 有：其余留空仍表示「用 provider
+        // 默认」，因为它们各家的默认值相同或无关紧要，而 temperature 不是
+        // （Gemini 0.3/0.4 vs 其余 0.7），留空会让同一次对比里各模型跑在不同的
+        // 随机性上，且界面上完全看不出来。
+        const SAMPLING_UI_DEFAULTS = {temperature: 0};
+
         // help：点击参数名展开的释义。写给不熟悉 LLM 采样参数的读者（评审、同行），
         // 所以每条都说明「是什么」+「在硬件生成这个场景下该怎么用」。
         const SAMPLING_FIELDS = [
@@ -2174,8 +2203,9 @@
             host.innerHTML = `<summary>Advanced sampling parameters</summary>
                 <div class="sampling-body">${rows}
                   <div class="sampling-note" id="${step}-samp-note">
-                    Leave blank to use the provider's default. Click a parameter name for an
-                    explanation of what it does.
+                    temperature defaults to 0 so every provider runs at the same randomness;
+                    the other fields fall back to the provider's own default when left blank.
+                    Click a parameter name for an explanation of what it does.
                   </div>
                 </div>`;
             refreshSamplingPanel(step);
@@ -2486,6 +2516,18 @@
                 [num, range, label].forEach(el => el && el.closest &&
                     el.classList.toggle('sampling-row-disabled', off));
                 if (off) num.value = '';
+
+                // temperature 在界面上有明确的默认值，不再走「留空 = provider 默认」。
+                //
+                // 那条旧规则是不公平的藏身处：各家的默认值并不相同（Gemini 0.3/0.4，
+                // 其余 0.7），界面上一律显示 "API default"，用户看不出自己实际在跑
+                // 什么温度，换个 provider 结果就变了一个量级的随机性。
+                // 生成 Verilog / Gherkin 都是结构化任务，0 是合理的起点；想要多样性
+                // 自己调高即可。只在空着时填，不覆盖用户输入。
+                if (f.key === 'temperature' && !off && num.value === '') {
+                    num.value = String(SAMPLING_UI_DEFAULTS.temperature);
+                    syncSamplingSlider(step, f.key);
+                }
 
                 // 合法区间随 provider 变（Claude 的 temperature 上界是 1，多数家是 2），
                 // 所以每次刷新都要重设，并把已填的值夹回新区间内。
@@ -5305,12 +5347,77 @@
             }
         }
 
+        /** 从 testbench 源码里取出某个测试的激励。
+         *
+         *  日志只有「Test N: FAIL - Expected X, Got Y」，看不出这条测的是什么。
+         *  激励在 testbench 里（Step 3 的产物已经显示在 tb-preview 中），按
+         *  `// Test N` 到下一个 `// Test` 之间的赋值取出来即可，不需要后端配合。
+         *
+         *  这里刻意不把 opcode 翻译成操作名：那张对照表在后端，前端再抄一份
+         *  就会有走样的风险（这个项目已经在多处栽过这个跟头）。原样显示
+         *  4'b0001 是无歧义的。 */
+        function stimulusForTest(tbSource, n) {
+            if (!tbSource) return {};
+            const start = tbSource.search(new RegExp(`//\\s*Test\\s+${n}\\b`));
+            if (start < 0) return {};
+            const rest = tbSource.slice(start);
+            const nextIdx = rest.slice(1).search(/\/\/\s*Test\s+\d+\b/);
+            const block = nextIdx < 0 ? rest : rest.slice(0, nextIdx + 1);
+            const out = {};
+            for (const m of block.matchAll(/^\s*(\w+)\s*=\s*([^;]+);/gm)) {
+                const k = m[1];
+                // 只收激励信号，跳过 total/passed/failed 这些计数器
+                if (['total', 'passed', 'failed'].includes(k)) continue;
+                out[k] = m[2].trim();
+            }
+            return out;
+        }
+
+        /** 把日志里的 FAIL 行整理成表格。没有失败时整块隐藏。 */
+        function renderSimFailures(log) {
+            const box = document.getElementById('sim-failures');
+            const list = document.getElementById('sim-failure-list');
+            if (!box || !list) return;
+            const rows = [...(log || '').matchAll(
+                /Test\s+(\d+):\s*FAIL\s*-\s*Expected\s+(-?\d+),\s*Got\s+(-?\d+)/g)];
+            if (!rows.length) { box.style.display = 'none'; list.innerHTML = ''; return; }
+
+            const tb = (document.getElementById('tb-preview') || {}).textContent || '';
+            // 各模块类型的激励信号名不同（ALU 是 a/b/opcode，counter 是 mode/enable…），
+            // 所以列是从数据里推出来的，而不是写死一套。
+            const parsed = rows.map(m => ({
+                n: m[1], expected: m[2], got: m[3],
+                stim: stimulusForTest(tb, m[1])
+            }));
+            const keys = [...new Set(parsed.flatMap(r => Object.keys(r.stim)))];
+
+            const head = ['Test', ...keys, 'Expected', 'Got', 'Diff']
+                .map(h => `<th>${escapeHtml(h)}</th>`).join('');
+            const body = parsed.map(r => {
+                const d = Number(r.got) - Number(r.expected);
+                const diff = Number.isFinite(d)
+                    ? (d > 0 ? `+${d}` : String(d)) : '';
+                return '<tr>'
+                    + `<td class="num">${escapeHtml(r.n)}</td>`
+                    + keys.map(k => `<td>${escapeHtml(r.stim[k] || '')}</td>`).join('')
+                    + `<td class="num exp">${escapeHtml(r.expected)}</td>`
+                    + `<td class="num got">${escapeHtml(r.got)}</td>`
+                    + `<td class="num delta">${escapeHtml(diff)}</td>`
+                    + '</tr>';
+            }).join('');
+            list.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+            box.style.display = 'block';
+        }
+
         function displaySimulationResult(data) {
             // Update header
             const passRate = data.pass_rate || 0;
             document.getElementById('sim-result-icon').textContent = passRate >= 80 ? '✅' : passRate >= 50 ? '⚠️' : '❌';
             document.getElementById('sim-result-title').textContent = data.success ? 'Simulation Complete' : 'Simulation Failed';
-            document.getElementById('sim-result-info').textContent = `${data.testbench} • ${data.compile_time + data.sim_time}s total`;
+            // 两个浮点数直接相加会露出二进制误差（0.1 + 0.31 -> 0.41000000000000003）
+            const totalTime = ((data.compile_time || 0) + (data.sim_time || 0)).toFixed(2);
+            document.getElementById('sim-result-info').textContent =
+                `${data.testbench} • ${totalTime}s total`;
 
             // Update statistics
             document.getElementById('sim-total-tests').textContent = data.total_tests;
@@ -5326,7 +5433,9 @@
             document.getElementById('sim-sim-time').textContent = `${data.sim_time}s`;
 
             // Log preview
-            document.getElementById('sim-log-preview').textContent = data.log_preview || data.full_log || 'No log available';
+            const log = data.log_preview || data.full_log || '';
+            document.getElementById('sim-log-preview').textContent = log || 'No log available';
+            renderSimFailures(log);
 
             // VCD download button
             // VCD download button and tip
