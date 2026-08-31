@@ -207,11 +207,21 @@ class FeatureGeneratorLLM:
         print(f"   Output: {self.output_dir}")
 
     def _detect_llm_name(self) -> str:
-        """Detect LLM provider name from instance"""
+        """Detect LLM provider name from instance.
+
+        LLM_NAMES 是手抄的类名表，GWDG 学术云那几家（QwenProvider3 /
+        GptOssProvider / GlmProvider / …）加进来时没人记得同步它，于是它们
+        全被判成 'unknown'。这个名字不只出现在日志里——它还决定输出目录，
+        所以四家 provider 的 .feature 混在 output/bdd/unknown/ 里彼此分不开。
+        改为优先读 provider 自带的 CONFIG_KEY（'qwen' / 'gptoss' / 'glm' …），
+        新增 provider 时不必再记得改这张表。
+        """
         if self.llm is None:
             return 'local'
-        class_name = type(self.llm).__name__
-        return self.LLM_NAMES.get(class_name, 'unknown')
+        config_key = getattr(self.llm, 'CONFIG_KEY', None)
+        if config_key:
+            return config_key
+        return self.LLM_NAMES.get(type(self.llm).__name__, 'unknown')
 
     def _setup_paths(self, project_root: Optional[str], output_dir: Optional[str]):
         """Setup output directory paths"""

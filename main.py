@@ -222,11 +222,13 @@ HAS_CPU_MODULE = False
 
 try:
     from feature_generator_llm import FeatureGeneratorLLM, BDD_MAX_TOKENS
-    from llm_providers import LLMFactory
+    from llm_providers import LLMFactory, is_fallback_text
     HAS_BDD_MODULE = True
     print("✅ BDD Generator module loaded")
 except ImportError as e:
     BDD_MAX_TOKENS = 12000      # 模块加载失败时仍需可引用（流式端点会读它）
+    def is_fallback_text(text):  # noqa: E306 — 同上，守卫不能因导入失败而消失
+        return not (text and str(text).strip())
     print(f"⚠️ BDD module not available: {e}")
 
 try:
@@ -2034,6 +2036,20 @@ def generate_bdd_stream():
                 yield make_sse_message("error", message="LLM returned empty response")
                 return
 
+            # 与非流式路径同一道守卫。这里必须单独写：非流式走
+            # generate_feature()，检测在那个函数里；流式直接调 _call_api_stream
+            # 再存盘，把它整个绕过去了。而 Stream 默认是开的，所以此前守卫实际
+            # 只保护了没人走的那条路——provider 静默失败时假 .feature 照样落盘、
+            # 界面照样报成功，直到 Step 3 才以「No test scenarios found」爆出来。
+            if is_fallback_text(full_content):
+                yield make_sse_message("error", message=(
+                    f"{llm_name.upper()} returned its fallback placeholder text, which "
+                    f"means the API call actually failed even though no error was raised "
+                    f"— usually a missing/invalid API key or a retired model name. "
+                    f"Nothing was saved. On a deployment, check this provider's "
+                    f"*_API_KEY and *_MODEL environment variables."))
+                return
+
             full_content = generator._clean_response(full_content)
             feature_path = generator._save_feature(full_content, requirements)
             filename = Path(feature_path).name
@@ -2118,7 +2134,12 @@ def generate_bdd():
                 pipeline_stages=data.get('pipeline_stages'))
 
         if not feature_path:
-            return jsonify({'success': False, 'error': 'Generation failed'}), 500
+            # generate_feature 在识别出兜底文本时会把原因写进 last_error。
+            # 不透出来的话线上只看得到 "Generation failed"，而 Render 上看不到
+            # 服务器控制台，等于把唯一的线索藏起来了。
+            return jsonify({'success': False,
+                            'error': getattr(generator, 'last_error', None)
+                                     or 'Generation failed'}), 500
 
         feature_path_obj = Path(feature_path)
         with open(feature_path, 'r', encoding='utf-8') as f:

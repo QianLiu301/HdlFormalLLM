@@ -64,3 +64,6 @@ Thumbs.db
 *.log
 logs/
 
+
+# 仿真波形输出（iverilog/vvp 在仓库根目录留下的）
+*.vcd
