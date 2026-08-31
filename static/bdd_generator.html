@@ -2393,22 +2393,22 @@
             // 需求文本用户手动改过就不覆盖
             if (ta.value.trim() && ta.value !== bddAutoFilledText) return;
 
-            const type = sel.value;
-            const width = parseInt((bw || {}).value || '32', 10);
+            ta.value = bddTemplateText();
+            bddAutoFilledText = ta.value;
+            setBddDraftIndicator(true);
+        }
+
+        /** 按当前下拉框拼出需求文本。onBddSpecChange 与「空框直接生成」共用，
+         *  免得两处各写一份、日后改一处忘另一处。 */
+        function bddTemplateText() {
+            const type = (document.getElementById('bdd-module-type') || {}).value || 'alu';
+            const width = parseInt((document.getElementById('bdd-bitwidth') || {}).value || '32', 10);
             const depth = parseInt((document.getElementById('bdd-depth') || {}).value || '32', 10);
             const stages = parseInt((document.getElementById('bdd-pipeline') || {}).value || '5', 10);
             const tpl = BDD_TEMPLATES[type] || BDD_TEMPLATES.other;
-            let text;
-            if (type === 'cpu') {
-                text = tpl(stages);
-            } else if (type === 'regfile') {
-                text = tpl(width, depth);
-            } else {
-                text = tpl(width);
-            }
-            ta.value = text;
-            bddAutoFilledText = text;
-            setBddDraftIndicator(true);
+            if (type === 'cpu') return tpl(stages);
+            if (type === 'regfile') return tpl(width, depth);
+            return tpl(width);
         }
 
         /** spec-first：把下拉框同步成正文里明确写出的配置。
@@ -4180,8 +4180,21 @@
         async function generateBDD() {
             const llm = document.getElementById('bdd-llm').value;
             const model = (llm === 'openai' || llm === 'gemini') ? document.getElementById('bdd-model').value : null;
-            const input = document.getElementById('bdd-input').value.trim();
+            let input = document.getElementById('bdd-input').value.trim();
             const useStreaming = document.getElementById('bdd-stream').checked;
+
+            // spec-first 下空着文本框是合法的：Module Type + Bitwidth 本身就是一份
+            // 完整的规格。此前这里直接拦下来报「Please enter requirements」——那是
+            // 文本框还会被自动填充时留下的检查，改成默认留空后就成了死路。
+            //
+            // 不是静默替用户拼一段话，而是把拼出来的文本填回框里再发送：用户看得
+            // 到实际提交的是什么，不满意可以改完重来。
+            if (!input && currentWorkflowMode === 'specification') {
+                input = bddTemplateText();
+                document.getElementById('bdd-input').value = input;
+                bddAutoFilledText = input;
+                setBddDraftIndicator(true);
+            }
 
             if (!input) {
                 showError('bdd', 'Please enter requirements');
