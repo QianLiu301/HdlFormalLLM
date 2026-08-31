@@ -899,13 +899,18 @@
                         <div class="card-title">⚡ Configuration</div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Module Type</label>
+                                <label for="hw-module">Module Type</label>
                                 <select id="hw-module" onchange="onModuleChange()">
                                     <option value="alu">ALU - Arithmetic Logic Unit</option>
                                     <option value="counter">Counter - Up/Down Counter</option>
                                     <option value="regfile">Register File</option>
                                     <option value="cpu">CPU - RISC-V Processor</option>
                                 </select>
+                                <!-- spec-first 下这一组跟随已生成的 BDD 自动同步并置灰：
+                                     链的起点是 BDD，硬件必须实现同一份规格。此前两张卡片
+                                     各存各的配置且互不相连，默认路径会静默产出
+                                     「8 位计数器的规格 + 32 位 ALU 的实现」。 -->
+                                <div class="module-type-hint" id="hw-module-hint"></div>
                             </div>
                             <div class="form-group" id="hw-bitwidth-group">
                                 <label>Bitwidth</label>
@@ -957,8 +962,12 @@
                         </div>
                         <details class="sampling-panel" id="hw-sampling"></details>
                         <details class="prompt-panel" id="hw-prompt"></details>
-                        <div class="divider"><span>or use natural language</span></div>
-                        <div class="form-group">
+                        <!-- spec-first 下整块隐藏：那时 DUV 的配置同步自 BDD 并已置灰，
+                             而这个框在后端是 *之后* 生效的（parse_hardware_natural_language
+                             会覆盖 module_type / bitwidth，甚至 provider），等于给锁好的
+                             配置留了个后门。impl-first 下保持原样。 -->
+                        <div class="divider" id="hw-nl-divider"><span>or use natural language</span></div>
+                        <div class="form-group" id="hw-nl-group">
                             <label>Natural Language Input</label>
                             <input type="text" id="hw-input" placeholder="e.g., 32-bit counter or 16-bit ALU">
                             <div class="examples">
@@ -1273,9 +1282,12 @@
                         </div>
                     </div>
 
-                <div class="card">
-                    <div class="card-title">⚡ Configuration</div>
-                    <div class="form-row">
+                <div class="card" id="bdd-card">
+                    <div class="card-title" id="bdd-card-title">⚡ Configuration</div>
+                    <!-- spec-first 下这一行会被移到需求文本 *下面*：那时散文是规格本体，
+                         下拉框只负责钉住散文没说清的部分（位宽、寄存器数……）。
+                         impl-first 下顺序相反，散文是可选补充。 -->
+                    <div class="form-row" id="bdd-config-row">
                         <!-- MODULE TYPE：spec-first 下 BDD 是第一步，此时还没有 DUT，
                              模块类型只能由用户指定。缺了它，后端只能从需求正文用关键词
                              猜，而 "ALU with registered output" 这类写法会被猜成 regfile，
@@ -1283,7 +1295,7 @@
                              并置灰，避免与 Step 1 的选择冲突。 -->
                         <div class="form-group" id="bdd-module-group">
                             <label for="bdd-module-type">Module Type</label>
-                            <select id="bdd-module-type" onchange="onBddSpecChange()">
+                            <select id="bdd-module-type" onchange="onBddSpecChange(true)">
                                 <option value="alu">ALU - Arithmetic Logic Unit</option>
                                 <option value="counter">Counter - Up/Down Counter</option>
                                 <option value="regfile">Register File</option>
@@ -1297,7 +1309,7 @@
                              产出 16 位的 BDD 配 32 位的设计。 -->
                         <div class="form-group" id="bdd-bitwidth-group">
                             <label for="bdd-bitwidth">Bitwidth</label>
-                            <select id="bdd-bitwidth" onchange="onBddSpecChange()">
+                            <select id="bdd-bitwidth" onchange="onBddSpecChange(true)">
                                 <option value="8">8-bit</option>
                                 <option value="16">16-bit</option>
                                 <option value="32" selected>32-bit</option>
@@ -1310,7 +1322,7 @@
                              无关，同一条链的两端会各说各的。 -->
                         <div class="form-group" id="bdd-depth-group" style="display: none;">
                             <label for="bdd-depth">Registers</label>
-                            <select id="bdd-depth" onchange="onBddSpecChange()">
+                            <select id="bdd-depth" onchange="onBddSpecChange(true)">
                                 <option value="8">8 registers</option>
                                 <option value="16">16 registers</option>
                                 <option value="32" selected>32 registers</option>
@@ -1318,7 +1330,7 @@
                         </div>
                         <div class="form-group" id="bdd-pipeline-group" style="display: none;">
                             <label for="bdd-pipeline">Pipeline</label>
-                            <select id="bdd-pipeline" onchange="onBddSpecChange()">
+                            <select id="bdd-pipeline" onchange="onBddSpecChange(true)">
                                 <option value="5" selected>5-stage</option>
                                 <option value="3">3-stage</option>
                             </select>
@@ -1349,20 +1361,21 @@
                     </div>
                     <details class="sampling-panel" id="bdd-sampling"></details>
                     <details class="prompt-panel" id="bdd-prompt"></details>
-                    <div class="form-group">
+                    <div class="form-group" id="bdd-spec-block">
                         <label id="bdd-input-label" for="bdd-input">Requirements (auto-filled based on DUT)</label>
                         <textarea id="bdd-input"
                                   placeholder="Requirements will be auto-filled when you generate or upload hardware..."></textarea>
                         <div class="synced-indicator" id="synced-indicator" style="display: none;">Synced with DUT</div>
+                        <!-- 自动填充的文本要标出来，否则用户看不出框里的字是模板写的
+                             还是自己写的 —— spec-first 的整个演示就是「我写的话变成了场景」。 -->
+                        <div class="module-type-hint" id="bdd-draft-indicator" style="display: none;">
+                            starting draft — replace with your own words
+                        </div>
                         <div class="examples">
                             <div class="examples-title">Examples:</div>
-                            <div class="example-chips" id="bdd-examples">
-                                <span class="example-chip" onclick="setBddExample('Basic functionality verification')">Basic test</span>
-                                <span class="example-chip"
-                                      onclick="setBddExample('Test boundary values and edge cases')">Boundary</span>
-                                <span class="example-chip"
-                                      onclick="setBddExample('Reset behavior and initialization tests')">Reset</span>
-                            </div>
+                            <!-- chips 两套，由 applyBddExampleChips() 按模式替换：
+                                 impl-first 是「测什么」，spec-first 是「这是什么硬件」。 -->
+                            <div class="example-chips" id="bdd-examples"></div>
                         </div>
                     </div>
                     <div class="toggle-row">
@@ -2250,13 +2263,105 @@
             onBddSpecChange();   // 显隐与文本由它统一处理
         }
 
+        /** BDD 卡片的排版随模式翻转。
+         *
+         *  spec-first 下自然语言是规格本体（slide 5-6：在任何代码之前，把行为写下来
+         *  一次），所以它必须是第一眼看到的输入；下拉框降为补充，负责钉住散文没说清
+         *  的部分——也就是 slide 3 那几个「沉默的决策」。
+         *  impl-first 下关系相反：DUV 已经存在，配置是主、文本是可选补充。 */
+        function applyBddSpecLayout(specFirst) {
+            const card = document.getElementById('bdd-card');
+            const title = document.getElementById('bdd-card-title');
+            const row = document.getElementById('bdd-config-row');
+            const spec = document.getElementById('bdd-spec-block');
+            if (!card || !row || !spec) return;
+
+            if (specFirst) {
+                // 规格文本提到配置行之前
+                if (spec.nextElementSibling !== row) card.insertBefore(spec, row);
+                if (title) title.textContent = '📝 Specification';
+            } else {
+                // 还原：文本回到 stream 开关之前（原始位置）
+                const toggle = card.querySelector('.toggle-row');
+                if (toggle && spec.nextElementSibling !== toggle) card.insertBefore(spec, toggle);
+                if (title) title.textContent = '⚡ Configuration';
+            }
+            applyBddExampleChips();
+            setBddDraftIndicator(document.getElementById('bdd-input').value.trim()
+                                 && document.getElementById('bdd-input').value === bddAutoFilledText);
+        }
+
+        /** spec-first 下把硬件卡片同步成 BDD 的配置（refreshBddModuleType 的反方向）。
+         *
+         *  spec-first 的依赖链起点是 BDD，硬件是「实现这份规格」，所以模块类型与
+         *  位宽只能有一个来源。此前两张卡片各自独立：Step 1 选 counter/8-bit 生成
+         *  规格后，硬件卡片仍停在自己的默认值 alu/32-bit，于是一条链的两端在描述
+         *  不同的设计，且全程没有任何提示。
+         *
+         *  同步后置灰，要改就回 Step 1 改——与 impl-first 下 BDD 卡片跟随 DUT 的
+         *  处理一致。 */
+        function syncHardwareFromBdd() {
+            const sel = document.getElementById('hw-module');
+            const hint = document.getElementById('hw-module-hint');
+            if (!sel || !hint) return;
+            const bw = document.getElementById('hw-bitwidth');
+            const depth = document.getElementById('hw-depth');
+            const pipe = document.getElementById('hw-pipeline');
+
+            // 只在 spec-first 且 BDD 已带出配置时锁定。上传的 BDD 若文件名解析不出
+            // 模块类型，parseBddFilename 会给 undefined —— 那种情况不锁，让用户自己选。
+            const synced = currentWorkflowMode === 'specification'
+                           && currentBDD && currentBDD.moduleType;
+            if (synced) {
+                sel.value = currentBDD.moduleType;
+                if (bw && currentBDD.bitwidth) bw.value = String(currentBDD.bitwidth);
+                if (depth && currentBDD.depth) depth.value = String(currentBDD.depth);
+                if (pipe && currentBDD.pipelineStages) pipe.value = String(currentBDD.pipelineStages);
+                const shape = sel.value === 'cpu'
+                    ? `${pipe ? pipe.value : '?'}-stage`
+                    : sel.value === 'regfile'
+                        ? `${depth ? depth.value : '?'}x${bw ? bw.value : '?'}-bit`
+                        : `${bw ? bw.value : '?'}-bit`;
+                hint.textContent = `synced with the BDD spec (${sel.value}, ${shape})`;
+            } else {
+                hint.textContent = '';
+            }
+            [sel, bw, depth, pipe].forEach(el => { if (el) el.disabled = synced; });
+            onModuleChange();        // 字段显隐随类型切换
+            loadPromptTemplate('hw');  // duv_alu / duv_counter / ... 跟着换
+            applyHwNaturalLanguageVisibility();
+        }
+
+        /** spec-first 下隐藏 Step 2 的自然语言框（连同 "or use natural language" 分隔条）。
+         *  仅隐藏还不够：里面可能残留 impl-first 时输入的文字，generateHardware
+         *  必须一并不发送，否则被隐藏的字段照样在后端覆盖配置。 */
+        function applyHwNaturalLanguageVisibility() {
+            const hide = currentWorkflowMode === 'specification';
+            ['hw-nl-divider', 'hw-nl-group'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = hide ? 'none' : '';
+            });
+        }
+
+        /** BDD 生成时界面上的结构化配置——两处 currentBDD 赋值共用，避免只改一处。
+         *  Step 3 的 `currentBDD.moduleType || 'other'` 兜底依赖它：不带这些字段时
+         *  上传-only 流程会拿到 'other' + 8-bit，而不是用户实际选的类型。 */
+        function bddConfigFrom(payload) {
+            return {
+                moduleType: payload.module_type,
+                bitwidth: payload.bitwidth,
+                depth: payload.depth,
+                pipelineStages: payload.pipeline_stages
+            };
+        }
+
         /** Module Type / Bitwidth 变化时，把需求文本更新成对应的模板。
          *
          *  这让自然语言从「必填」变成「可选的补充」：结构化的两项已经确定了
          *  待验证对象，文本只是在其上追加细节。impl-first 本来就是这么做的
          *  （文本由 DUT 自动填），spec-first 此前却要求用户从零手写，而位宽等
          *  信息只能靠后端从正文猜——猜不到就默认 16，与硬件那步的 32 不一致。 */
-        function onBddSpecChange() {
+        function onBddSpecChange(fromUser) {
             const ta = document.getElementById('bdd-input');
             const sel = document.getElementById('bdd-module-type');
             const bw = document.getElementById('bdd-bitwidth');
@@ -2280,6 +2385,11 @@
             // 再换模块类型时面板与实际发出的都还停在上一个模板。
             loadPromptTemplate('bdd');
 
+            // 只有用户真的动了配置（或点了 chip）才写模板文本。程序内部的调用
+            // ——切换模式、跟随 DUT 同步——不填，好让 spec-first 的默认状态是空框：
+            // 演示的重点是「我写的话变成了场景」，一进来就被模板填满就看不到这件事。
+            if (!fromUser) return;
+
             // 需求文本用户手动改过就不覆盖
             if (ta.value.trim() && ta.value !== bddAutoFilledText) return;
 
@@ -2298,6 +2408,58 @@
             }
             ta.value = text;
             bddAutoFilledText = text;
+            setBddDraftIndicator(true);
+        }
+
+        /** spec-first：把下拉框同步成正文里明确写出的配置。
+         *
+         *  后端的规则是「调用方传的值压过正文推断」——当初这么定，是因为那时
+         *  需求文本由模板自动填充，配置才是真正的来源。现在用户自己写规格，
+         *  关系反过来了：写了 "8-bit ALU" 却因为下拉框停在 16-bit 而得到 16 位的
+         *  .feature，正文被静默忽略。
+         *
+         *  修法不是翻转后端优先级（那会让下拉框失去作用），而是让下拉框实时
+         *  反映正文：正文明确说了就跟着改，没说的才保留用户的选择。这样界面上
+         *  看到的就是实际生效的，不存在藏起来的分歧。 */
+        function syncBddConfigFromProse() {
+            if (currentWorkflowMode !== 'specification') return;
+            const text = (document.getElementById('bdd-input') || {}).value || '';
+            const sel = document.getElementById('bdd-module-type');
+            if (!sel || sel.disabled) return;
+            let touched = false;
+
+            // 模块类型：与后端 parse_user_input 同一套词边界规则
+            let type = null;
+            if (/\bcounters?\b/i.test(text)) type = 'counter';
+            else if (/\bregfile\b|\bregister\s+(file|bank)\b|\d+\s*registers\b/i.test(text))
+                type = 'regfile';
+            else if (/\bcpu\b|\brisc-?v\b|\bprocessor\b/i.test(text)) type = 'cpu';
+            else if (/\balu\b/i.test(text)) type = 'alu';
+            if (type && sel.value !== type) { sel.value = type; touched = true; }
+
+            const setIf = (id, val, allowed) => {
+                const el = document.getElementById(id);
+                if (!el || el.disabled || !allowed.includes(String(val))) return;
+                if (el.value !== String(val)) { el.value = String(val); touched = true; }
+            };
+            // 位宽：regfile 的 "32x32" 里后一个数才是位宽
+            const rf = text.match(/\b(\d+)\s*x\s*(\d+)\b/i);
+            const bw = rf ? rf[2] : (text.match(/\b(\d+)\s*-?\s*bit\b/i) || [])[1];
+            if (bw) setIf('bdd-bitwidth', bw, ['8', '16', '32', '64']);
+            if (rf) setIf('bdd-depth', rf[1], ['8', '16', '32']);
+            const regs = text.match(/\b(\d+)\s*registers?\b/i);
+            if (regs) setIf('bdd-depth', regs[1], ['8', '16', '32']);
+            const st = text.match(/\b(\d+)\s*-?\s*stage\b/i);
+            if (st) setIf('bdd-pipeline', st[1], ['3', '5']);
+
+            // 显隐与 prompt 模板要跟上；传 false 以免覆盖用户正在写的文本
+            if (touched) onBddSpecChange(false);
+        }
+
+        /** 「这段字是模板填的」提示条。用户一旦手改就撤掉。 */
+        function setBddDraftIndicator(on) {
+            const el = document.getElementById('bdd-draft-indicator');
+            if (el) el.style.display = (on && currentWorkflowMode === 'specification') ? 'block' : 'none';
         }
 
         /** 依据当前 provider 与 stream 开关，更新置灰状态与 placeholder。 */
@@ -2785,6 +2947,7 @@
             // 已经变成第 1 步的 BDD 卡片上，看起来就像这一步坏了。
             ['bdd', 'hw'].forEach(t => { hideError(t); hideSuccess(t); });
             refreshBddModuleType();   // 该控件的可编辑性随模式变化
+            syncHardwareFromBdd();    // 硬件卡片同理：切回 impl-first 要解锁
 
             // Update toggle buttons
             const implBtn = document.getElementById('wf-mode-impl-btn');
@@ -2850,11 +3013,13 @@
 
                 // Update BDD requirements label
                 const reqLabel = document.getElementById('bdd-input-label');
-                if (reqLabel) reqLabel.textContent = 'Requirements (describe what your hardware should do)';
+                if (reqLabel) reqLabel.textContent = 'Specification (natural language)';
 
                 // If BDD input is empty, provide a helpful placeholder
                 const bddInput = document.getElementById('bdd-input');
                 bddInput.placeholder = 'Describe the hardware behavior you want to verify...\ne.g., "16-bit ALU with ADD, SUB, AND, OR operations, overflow detection"';
+
+                applyBddSpecLayout(true);
 
                 // Expand BDD (now first step) if it was collapsed
                 step2.classList.remove('collapsed');
@@ -2888,6 +3053,8 @@
                 // Restore placeholder
                 const bddInput = document.getElementById('bdd-input');
                 bddInput.placeholder = 'Requirements will be auto-filled when you generate or upload hardware...';
+
+                applyBddSpecLayout(false);
 
                 // Expand Hardware (now first step) if it was collapsed
                 step1.classList.remove('collapsed');
@@ -3301,6 +3468,7 @@
                 depth: parsedInfo.depth,
                 pipelineStages: parsedInfo.pipelineStages
             };
+            syncHardwareFromBdd();
 
             // Update Step 2 status
             updateStepStatus(2, 'completed');
@@ -3696,6 +3864,64 @@
         function setBddExample(text) {
             document.getElementById('bdd-input').value = text;
             document.getElementById('synced-indicator').style.display = 'none';
+            setBddDraftIndicator(false);
+        }
+
+        /** spec-first 的示例：一句自然语言 + 它对应的结构化配置。
+         *
+         *  点一下同时填文本框和设置下拉框，是想让「这段话」和「这组配置」看起来
+         *  是同一个陈述的两种写法 —— 而不是两处互不相干的输入。下拉框补的正是
+         *  散文没说清的部分（"16-bit ALU" 没说寄存器数、没说流水级数）。 */
+        function setBddSpecExample(text, moduleType, bitwidth) {
+            const sel = document.getElementById('bdd-module-type');
+            const bw = document.getElementById('bdd-bitwidth');
+            if (sel && !sel.disabled) sel.value = moduleType;
+            if (bw && !bw.disabled && bitwidth) bw.value = String(bitwidth);
+            // 先同步显隐与 prompt 模板，再写文本 —— 顺序反了会被 onBddSpecChange
+            // 的模板文本覆盖掉这里设的句子。
+            onBddSpecChange(false);
+            document.getElementById('bdd-input').value = text;
+            bddAutoFilledText = text;
+            const si = document.getElementById('synced-indicator');
+            if (si) si.style.display = 'none';
+            setBddDraftIndicator(true);
+        }
+
+        const BDD_EXAMPLE_CHIPS = {
+            // impl-first：DUV 已存在，这里补充的是「还想测什么」
+            implementation: [
+                ['Basic test', "setBddExample('Basic functionality verification')"],
+                ['Boundary', "setBddExample('Test boundary values and edge cases')"],
+                ['Reset', "setBddExample('Reset behavior and initialization tests')"]
+            ],
+            // spec-first：还没有任何代码，这里说的是「要造什么」
+            specification: [
+                ['16-bit ALU',
+                 "setBddSpecExample('16-bit ALU with ADD, SUB, AND, OR operations, "
+                 + "including overflow and zero flags', 'alu', 16)"],
+                ['32-bit Counter',
+                 "setBddSpecExample('32-bit up/down counter with synchronous reset, "
+                 + "enable, and overflow detection', 'counter', 32)"],
+                ['32x32 RegFile',
+                 "setBddSpecExample('32x32 register file with two read ports and one "
+                 + "write port, register 0 always reads as zero', 'regfile', 32)"],
+                ['RISC-V CPU',
+                 "setBddSpecExample('5-stage pipelined RISC-V processor supporting the "
+                 + "RV32I base integer instruction set', 'cpu', 32)"]
+            ]
+        };
+
+        function applyBddExampleChips() {
+            const box = document.getElementById('bdd-examples');
+            if (!box) return;
+            box.innerHTML = '';
+            (BDD_EXAMPLE_CHIPS[currentWorkflowMode] || []).forEach(([label, call]) => {
+                const s = document.createElement('span');
+                s.className = 'example-chip';
+                s.textContent = label;
+                s.setAttribute('onclick', call);
+                box.appendChild(s);
+            });
         }
 
         // ============================================================
@@ -3708,7 +3934,10 @@
             const pipelineStages = document.getElementById('hw-pipeline').value;
             const llm = document.getElementById('hw-llm').value;
             const model = (llm === 'openai' || llm === 'gemini') ? document.getElementById('hw-model').value : null;
-            const naturalInput = document.getElementById('hw-input').value.trim();
+            // spec-first：不发送自然语言。该字段在后端会覆盖 module_type/bitwidth/
+            // provider，而这一步的配置必须来自 BDD——留着它等于绕过同步。
+            const naturalInput = currentWorkflowMode === 'specification'
+                ? '' : document.getElementById('hw-input').value.trim();
             const useStreaming = document.getElementById('hw-stream').checked;
 
             hideError('hw');
@@ -4039,7 +4268,9 @@
                                 } else if (data.type === 'complete') {
                                     renderCallMeta('bdd', data.call_meta);
                                     currentBddFilename = data.filename;
-                                    currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
+                                    currentBDD = { filename: data.filename, filepath: data.filepath,
+                                                   llm: payload.llm, ...bddConfigFrom(payload) };
+                                    syncHardwareFromBdd();
                                     updateTbTabState();
                                     document.getElementById('bdd-filename').textContent = data.filename;
                                     document.getElementById('bdd-info').textContent = `Generated with ${payload.llm.toUpperCase()}`;
@@ -4090,7 +4321,9 @@
                 showModelIgnoredHint('bdd', data);
                 renderCallMeta('bdd', data.call_meta);
                 currentBddFilename = data.filename;
-                currentBDD = { filename: data.filename, filepath: data.filepath, llm: payload.llm };
+                currentBDD = { filename: data.filename, filepath: data.filepath,
+                               llm: payload.llm, ...bddConfigFrom(payload) };
+                syncHardwareFromBdd();
                 updateTbTabState();
                 document.getElementById('bdd-filename').textContent = data.filename;
                 document.getElementById('bdd-info').textContent = `Generated with ${data.llm.toUpperCase()}`;
@@ -4365,6 +4598,7 @@
             document.getElementById('bdd-preview').textContent = '';
             currentBddFilename = null;
             currentBDD = null;
+            syncHardwareFromBdd();   // 解锁硬件卡片，否则清掉 BDD 后它一直是灰的
             updateTbTabState();
             updateStepStatus(2, 'pending');
             document.getElementById('step-2-num').classList.remove('completed');
@@ -4876,6 +5110,15 @@
             // Prompt 面板：stage 由 Step 与模块类型共同决定
             loadPromptTemplate('hw');
             loadPromptTemplate('bdd');
+            // 示例 chips 由 JS 按模式生成，初始渲染一次（switchWorkflowMode 同模式会提前返回）
+            applyBddExampleChips();
+            // 用户一旦自己动手，就撤掉「模板草稿」的标注
+            document.getElementById('bdd-input')?.addEventListener('input', () => {
+                if (document.getElementById('bdd-input').value !== bddAutoFilledText) {
+                    setBddDraftIndicator(false);
+                }
+                syncBddConfigFromProse();   // 正文里写明的配置实时反映到下拉框
+            });
             document.getElementById('hw-module')
                 ?.addEventListener('change', () => loadPromptTemplate('hw'));
             ['hw-bitwidth', 'hw-depth', 'hw-pipeline'].forEach(id => {

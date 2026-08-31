@@ -432,6 +432,9 @@ class FeatureParser:
             'rows_dropped_malformed': 0,   # Examples 行的列数与表头不符
             'scenarios_unmapped': 0,       # tag 无法对应到任何已知操作
             'scenarios_plain': 0,          # 普通 Scenario（非 Outline），解析器读不了
+            'outlines_total': 0,           # 文件里 Scenario Outline 的总数
+            'examples_tables': 0,          # Examples: 表的总数
+            'looks_like_fallback': 0,      # 内容是 provider 的兜底文本
         }
 
     def parse(self) -> Dict:
@@ -472,6 +475,17 @@ class FeatureParser:
         # 否则一个偏好这种写法的 LLM 会得到 0 个场景，看上去像它不会写测试。
         self.stats['scenarios_plain'] = len(
             re.findall(r'^\s*Scenario:', content, re.MULTILINE))
+        self.stats['outlines_total'] = len(re.findall(r'Scenario Outline:', content))
+        self.stats['examples_tables'] = len(re.findall(r'Examples:', content))
+        # 表格行数要单独数：生成被 max_tokens 截断时，文件常常正好停在
+        # "Examples:" 这一行上，只看关键字会误判成「表格存在」。
+        self.stats['examples_rows'] = len(
+            re.findall(r'^[ \t]*\|.*\|', content, re.MULTILINE))
+        # 兜底文本混进来时要能说出口，否则只报「没有场景」，用户会以为是模型
+        # 不会写测试，实际是那次 API 根本没调通
+        self.stats['looks_like_fallback'] = int(any(
+            m in content for m in ('Test ALU operation with various input values',
+                                   'Given ALU operation, When executed')))
 
         if not bitwidth_match and self.scenarios:
             self.bitwidth = self._infer_bitwidth_from_scenarios()
@@ -550,15 +564,20 @@ class FeatureParser:
 
         # 捕获整行 tag 而不只是第一个：@arithmetic @add 与 @add @arithmetic
         # 都应该解析成 ADD，此前只看第一个 tag，前者会落到"未知"分支。
-        scenario_pattern = r'((?:@\w+[ \t]*)+)\n\s*Scenario Outline:'
-        scenario_blocks = re.split(scenario_pattern, content)
+        #
+        # tag 行是可选的：不带 tag 的 Scenario Outline 是合法 Gherkin，而此前的
+        # 正则要求它前面必须有 tag，否则整段被无声忽略——一份全部不带 tag 的
+        # .feature 会解析出 0 个场景。没有 tag 时改由场景正文推断操作
+        # （_get_alu_operation 本来就同时看 tag 和正文）。
+        pattern = re.compile(
+            r'(?:^[ \t]*((?:@\w+[ \t]*)+)\r?\n)?[ \t]*Scenario Outline:',
+            re.MULTILINE)
+        matches = list(pattern.finditer(content))
 
-        for i in range(1, len(scenario_blocks), 2):
-            if i + 1 >= len(scenario_blocks):
-                break
-
-            tag = scenario_blocks[i].lower()
-            block_content = scenario_blocks[i + 1]
+        for idx, m in enumerate(matches):
+            tag = (m.group(1) or '').lower()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
+            block_content = content[m.end():end]
 
             # 根据模块类型和 tag 确定操作
             if self.module_type == 'alu':
@@ -612,7 +631,21 @@ class FeatureParser:
                             scenario[col_name] = col_value
 
                     # 添加操作信息（放在最后，确保不被覆盖）
-                    if self.module_type == 'alu' and operation:
+                    #
+                    # 行内若自带 Operation 列，以它为准。prompt 模板要求生成
+                    # 「SLT vs SLTU 在同一组操作数上对比」这类场景，它的
+                    # Examples 表每行的 Operation/Opcode 都不同；套用块级操作
+                    # 会把一半的行贴错标签，用错的 opcode 驱动 DUT，仿真结果
+                    # 无意义却仍然计入覆盖率。
+                    row_op = None
+                    if self.module_type == 'alu':
+                        raw = scenario.get('operation')
+                        if isinstance(raw, str) and raw.strip():
+                            row_op, row_opcode = self._get_alu_operation(raw, '')
+                    if row_op:
+                        scenario['operation'] = row_op
+                        scenario['opcode'] = row_opcode
+                    elif self.module_type == 'alu' and operation:
                         scenario['operation'] = operation
                         scenario['opcode'] = opcode
                     elif self.module_type == 'counter':
@@ -673,6 +706,19 @@ class FeatureParser:
             if len(opcode) == 4 and all(c in '01' for c in opcode):
                 return (tag.upper(), opcode)
 
+        # tag 认不出来时退回场景正文。block_content 此前是收了不用的参数，
+        # 于是不带 tag 的 Scenario Outline（合法 Gherkin）必然解析失败。
+        # 先看标题行再看整段，都按名字从长到短匹配 —— 与上面同一套纪律，
+        # 否则 'or' 会先于 'xor' 命中、'slt' 先于 'sltu' 命中。
+        if block_content:
+            title = block_content.splitlines()[0].lower() if block_content.strip() else ''
+            for scope in (title, block_content.lower()):
+                if not scope:
+                    continue
+                for op_name in sorted(operation_map, key=len, reverse=True):
+                    if re.search(rf'(?<![a-z0-9]){op_name}(?![a-z0-9])', scope):
+                        return operation_map[op_name]
+
         # 认不出来就说认不出来。此前这里默默返回 ADD/0000，等于凭空造出
         # 一批测试，调用方无从知晓。
         return (None, None)
@@ -705,6 +751,62 @@ class FeatureParser:
 # ============================================================================
 class TestbenchGenerator:
     """Generate Verilog testbench with quality analysis"""
+
+    @staticmethod
+    def _explain_no_scenarios(spec: Dict, bdd_path) -> str:
+        """解析出 0 个场景时，说明是哪一种原因。
+
+        此前这里只报「No test scenarios found in BDD file」，而这句话对应至少
+        四种完全不同的成因，用户无从下手。本地语料里 32 份解析出 0 场景的
+        文件中：21 份是 provider 兜底文本（API 静默失败）、6 份是 tag 认不出
+        操作、5 份是只写了普通 Scenario。
+        """
+        st = spec.get('parse_stats') or {}
+        name = getattr(bdd_path, 'name', str(bdd_path))
+        head = f"No test scenarios could be read from {name}. "
+
+        if st.get('looks_like_fallback'):
+            return (head + "The file contains the provider's fallback placeholder "
+                    "text, which means that BDD generation actually failed "
+                    "(missing/invalid API key, or a retired model) even though it "
+                    "reported success. Re-generate the BDD — and on a deployment, "
+                    "check the provider's API key and *_MODEL environment variables.")
+
+        if st.get('outlines_total', 0) == 0 and st.get('scenarios_plain', 0) > 0:
+            return (head + f"It has {st['scenarios_plain']} plain 'Scenario:' blocks "
+                    "but no 'Scenario Outline:' with an Examples table. This "
+                    "generator builds stimulus from Examples tables, so plain "
+                    "scenarios carry no test data it can use. Re-generate the BDD "
+                    "(the prompt asks for Scenario Outline).")
+
+        if st.get('outlines_total', 0) == 0:
+            return (head + "It contains no 'Scenario Outline:' blocks at all — the "
+                    "file does not look like a BDD feature file. Re-generate it.")
+
+        if st.get('examples_tables', 0) == 0:
+            return (head + f"It has {st['outlines_total']} Scenario Outline blocks but "
+                    "no Examples tables, so there are no concrete test values to "
+                    "drive. Re-generate the BDD.")
+
+        # "Examples:" 出现了但一行表格都没有 —— 生成被截断的典型形态
+        if st.get('examples_rows', 0) < 2:
+            return (head + f"It has {st['outlines_total']} Scenario Outline blocks and "
+                    f"the word 'Examples:', but only {st.get('examples_rows', 0)} table "
+                    "rows — the BDD generation was cut off part-way (usually the "
+                    "max_tokens limit). Re-generate it, raising max_tokens if the "
+                    "design needs many operations.")
+
+        if st.get('scenarios_unmapped', 0):
+            return (head + f"All {st['scenarios_unmapped']} scenarios were skipped "
+                    f"because their tags/titles name no operation known for module "
+                    f"type '{spec.get('module_type')}'. Check that Step 3's module "
+                    "type matches what the BDD actually describes.")
+
+        if st.get('rows_dropped_malformed', 0):
+            return (head + f"Every Examples row was dropped: {st['rows_dropped_malformed']} "
+                    "rows had a column count that does not match their table header.")
+
+        return head + f"parse stats: {st}"
 
     def __init__(
             self,
@@ -809,7 +911,9 @@ class TestbenchGenerator:
             spec = parser.parse()
 
             if not spec['scenarios']:
-                return {'success': False, 'error': 'No test scenarios found in BDD file'}
+                return {'success': False,
+                        'error': self._explain_no_scenarios(spec, bdd_path),
+                        'parse_stats': spec.get('parse_stats')}
 
             # Get DUT info
             module_type = dut_info.get('module_type', spec.get('module_type', 'alu'))

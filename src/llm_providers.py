@@ -312,6 +312,29 @@ class LLMProvider(ABC):
         return json.dumps(intent, ensure_ascii=False, indent=2)
 
 
+# 各 provider 在 API 调用失败时返回下面这些固定文本，而不是抛异常——调用方
+# 因此拿到 success=True 和一段假内容。benchmark 的三个脚本各自抄了一份检测
+# 逻辑，网页端点却完全没有，于是兜底文本被当成 .feature 存盘，直到 Step 3
+# 才以「No test scenarios found」爆出来，且看不出真正原因。
+# 检测集中放在产生它们的这个文件里，避免再出现第四份副本。
+FALLBACK_MARKERS = (
+    "Test ALU operation with various input values",
+    "Given ALU operation, When executed",
+    "API call failed, using local parsing",
+)
+
+
+def is_fallback_text(text) -> bool:
+    """内容是否为 provider 的兜底文本（即这次 API 其实失败了）。"""
+    if not text or not str(text).strip():
+        return True
+    t = str(text)
+    if any(m in t for m in FALLBACK_MARKERS):
+        return True
+    # _fallback_intent_json：一小段 {"scenario": ..., "operation": ...}
+    return '"operation"' in t and '"scenario"' in t and len(t) < 800
+
+
 # ========== FREE PROVIDERS ==========
 
 

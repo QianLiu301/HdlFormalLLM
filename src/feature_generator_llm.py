@@ -112,13 +112,17 @@ try:
         GrokProvider,
         QwenProvider,
         MistralProvider,
-        TogetherProvider
+        TogetherProvider,
+        is_fallback_text,
     )
     HAS_LLM = True
 except ImportError:
     HAS_LLM = False
     print("⚠️  Warning: llm_providers module not found")
     print("   Feature generation will be limited")
+
+    def is_fallback_text(text) -> bool:      # 无 provider 模块时的降级实现
+        return not (text and str(text).strip())
 
 
 class FeatureGeneratorLLM:
@@ -331,9 +335,14 @@ class FeatureGeneratorLLM:
         # 用词边界匹配而不是子串匹配：'or' 作为子串出现在 "operand"/"operation"
         # 里，需求文本几乎必然包含这两个词，于是 OR 永远会被认出来，无论用户
         # 是否要它。同理 SLT 是 SLTU 的前缀，靠子串无法区分。
+        # AND / OR 同时是英文连词：「16-bit ALU with SLL and SRA shifts」里的
+        # "and"、「ADD or SUB」里的 "or" 会被当成操作名，用户没要的操作就混了
+        # 进来。这两个只认全大写写法——用户列举操作时写的就是 ADD, SUB, AND, OR。
+        AMBIGUOUS = {'AND', 'OR'}
         operations = []
         for op in self.RECOGNIZED_OPERATIONS:
-            if re.search(rf'\b{op}\b', user_input, re.IGNORECASE):
+            flags = 0 if op in AMBIGUOUS else re.IGNORECASE
+            if re.search(rf'\b{op}\b', user_input, flags):
                 operations.append(op)
 
         # If no operations specified, use default
@@ -413,6 +422,21 @@ class FeatureGeneratorLLM:
             print("❌ Failed to generate feature")
             return None
 
+        # provider 在 API 失败时返回固定兜底文本而不是抛异常。存下来的话，
+        # 它会一路伪装成正常 .feature，直到 Step 3 才以「No test scenarios
+        # found」爆出来，而那条消息看不出真正原因。本地语料里 32 份解析出 0
+        # 场景的文件中有 21 份就是这么来的。与硬件那步「非 Verilog 不存成
+        # .v」的守卫同理，这里也不存。
+        if is_fallback_text(feature_content):
+            self.last_error = (
+                f"{self.llm_name.upper()} returned its fallback placeholder text, "
+                f"which means the API call actually failed even though no error was "
+                f"raised — usually a missing/invalid API key or a retired model name. "
+                f"Nothing was saved. On a deployment, check this provider's "
+                f"*_API_KEY and *_MODEL environment variables.")
+            print(f"❌ {self.last_error}")
+            return None
+
         # Save feature file
         feature_path = self._save_feature(feature_content, requirements)
 
@@ -438,6 +462,118 @@ class FeatureGeneratorLLM:
         else:
             return self._create_alu_prompt(req)
 
+    # few-shot 示例块与语义说明，按操作族切分。
+    #
+    # 这两组内容此前是写死在 prompt 里的：无论用户要什么，SLL/SRL/SRA/SLT/SLTU
+    # 的示例都会出现，模型照抄，于是「8-bit ALU with ADD, SUB operations」会得到
+    # 一份包含全部移位与比较操作的 .feature —— 模板压过了自然语言。改成按
+    # req['operations'] 挑选，用户没要的族不进 prompt。
+    _ALU_EXAMPLE_BLOCKS = [
+        (('ADD', 'SUB'), """      @add @arithmetic
+      Scenario Outline: Verify ADD operation
+        Given I have operand A = <A>
+        And I have operand B = <B>
+        When I perform the ADD operation with opcode 0000
+        Then the result should be <Expected_Result>
+        And the zero flag should be <Zero_Flag>
+        And the overflow flag should be <Overflow>
+        And the negative flag should be <Negative_Flag>
+
+        Examples:
+          | A   | B   | Opcode | Expected_Result | Zero_Flag | Overflow | Negative_Flag |
+          | 0   | 0   | 0000   | 0               | True      | False    | False         |
+          | 0   | 1   | 0000   | 1               | False     | False    | False         |
+          | 255 | 0   | 0000   | 255             | False     | False    | True          |
+          | 255 | 255 | 0000   | 254             | False     | True     | True          |
+          | 100 | 50  | 0000   | 150             | False     | False    | True          |"""),
+        (('AND', 'OR', 'XOR'), """      @and @logic
+      Scenario Outline: Verify AND operation
+        Given I have operand A = <A>
+        And I have operand B = <B>
+        When I perform the AND operation with opcode 0010
+        Then the result should be <Expected_Result>
+        And the zero flag should be <Zero_Flag>
+
+        Examples:
+          | A   | B   | Opcode | Expected_Result | Zero_Flag |
+          | 0   | 255 | 0010   | 0               | True      |
+          | 255 | 255 | 0010   | 255             | False     |
+          | 170 | 85  | 0010   | 0               | True      |"""),
+        (('SLL', 'SRL', 'SRA'), """      @sll @shift
+      Scenario Outline: Verify SLL operation
+        Given I have operand A = <A>
+        And I have shift amount B = <B>
+        When I perform the SLL operation with opcode 0101
+        Then the result should be <Expected_Result>
+        And the zero flag should be <Zero_Flag>
+
+        Examples:
+          | A   | B   | Opcode | Expected_Result | Zero_Flag |
+          | 1   | 0   | 0101   | 1               | False     |
+          | 1   | 1   | 0101   | 2               | False     |
+          | 1   | 8   | 0101   | 0               | True      |
+          | 1   | 9   | 0101   | 2               | False     |"""),
+        (('SLT', 'SLTU'), """      @slt @compare
+      Scenario Outline: Verify SLT against SLTU on the same operands
+        Given I have operand A = <A>
+        And I have operand B = <B>
+        When I perform the <Operation> operation with opcode <Opcode>
+        Then the result should be <Expected_Result>
+
+        Examples:
+          | Operation | A   | B   | Opcode | Expected_Result |
+          | SLT       | 255 | 1   | 1000   | 1               |
+          | SLTU      | 255 | 1   | 1001   | 0               |
+          | SLT       | 1   | 2   | 1000   | 1               |
+          | SLTU      | 1   | 2   | 1001   | 1               |"""),
+    ]
+
+    @classmethod
+    def _alu_examples_for(cls, operations) -> str:
+        """只保留用户要求的操作族对应的示例块。"""
+        want = {op.upper() for op in operations}
+        blocks = [text for ops, text in cls._ALU_EXAMPLE_BLOCKS
+                  if want & set(ops)]
+        # 一个都没匹配上（出现未知操作名）时仍给一个格式样例，否则模型没有
+        # 表格格式可参照。取第一个族，它是最通用的形状。
+        if not blocks:
+            blocks = [cls._ALU_EXAMPLE_BLOCKS[0][1]]
+        return '\n\n'.join(blocks)
+
+    @staticmethod
+    def _alu_notes_for(operations, bitwidth: int) -> str:
+        """只保留与用户要求的操作相关的语义说明。"""
+        want = {op.upper() for op in operations}
+        notes = []
+        shifts = [op for op in ('SLL', 'SRL', 'SRA') if op in want]
+        if shifts:
+            # 只列用户要的那几个：写死 "SLL/SRL/SRA" 会让只要 SLL+SRA 的用户
+            # 在 prompt 里看到 SRL，模型顺手把它也生成出来。
+            notes.append(
+                f"- For {'/'.join(shifts)} the operand B is the shift amount, and only its low\n"
+                f"  log2({bitwidth}) bits are used: a shift of {bitwidth} behaves as a shift of 0")
+        # 只在两者都要时才做对比说明。此前无条件写「SRL fills with zeros while
+        # SRA ...」，用户只要 SRA 时也会在 prompt 里读到 SRL，模型顺手就生成了。
+        if want >= {'SRL', 'SRA'}:
+            notes.append(
+                "- SRL fills with zeros while SRA replicates the sign bit: cover both on a\n"
+                "  negative operand so the two are distinguished")
+        elif 'SRA' in want:
+            notes.append(
+                "- SRA replicates the sign bit: cover a negative operand so the sign\n"
+                "  extension is exercised")
+        elif 'SRL' in want:
+            notes.append("- SRL fills the vacated high bits with zeros")
+        if want & {'SLT', 'SLTU'}:
+            notes.append(
+                "- SLT compares as signed and SLTU as unsigned: cover an operand pair where\n"
+                "  the two disagree, and note the result is 1 or 0 rather than an arithmetic value")
+        if want & {'ADD', 'SUB'} and want - {'ADD', 'SUB'}:
+            notes.append(
+                "- The overflow flag is only meaningful for ADD and SUB; omit that column for\n"
+                "  the other operations")
+        return '\n'.join(notes)
+
     def _create_alu_prompt(self, req: Dict) -> str:
         """Create prompt for ALU Feature file"""
         max_value = (1 << req['bitwidth']) - 1
@@ -448,6 +584,8 @@ class FeatureGeneratorLLM:
             opcode = req['opcodes'].get(op, '0000')
             ops_list.append(f"{op} (opcode: {opcode})")
         ops_str = '\n- '.join(ops_list)
+        example_block = self._alu_examples_for(req['operations'])
+        op_notes = self._alu_notes_for(req['operations'], req['bitwidth'])
 
         # prompt 已外置到 prompts/bdd_alu/；模板不可用时回退到下方内置 f-string
         _vars = {
@@ -455,6 +593,8 @@ class FeatureGeneratorLLM:
             "req['bitwidth']": req['bitwidth'],
             'max_value': max_value,
             'ops_str': ops_str,
+            'example_block': example_block,
+            'op_notes': op_notes,
         }
         if _prompt_store is not None:
             _sys, _rendered = _prompt_store.render_stage(
@@ -480,7 +620,9 @@ class FeatureGeneratorLLM:
        - Test cases that trigger overflow
     5. Follow the EXACT format shown below
 
-    EXAMPLE FORMAT (8-bit):
+    EXAMPLE FORMAT (8-bit) — this shows the required LAYOUT only. Do not copy the
+    operations shown here; generate scenarios for the operations listed under
+    "NOW GENERATE" below, and only those.
 
     Feature: 8-bit ALU Verification
       As a hardware verification engineer
@@ -490,68 +632,16 @@ class FeatureGeneratorLLM:
       Background:
         Given the ALU is initialized with 8-bit operands
 
-      @add @arithmetic
-      Scenario Outline: Verify ADD operation
-        Given I have operand A = <A>
-        And I have operand B = <B>
-        When I perform the ADD operation with opcode 0000
-        Then the result should be <Expected_Result>
-        And the zero flag should be <Zero_Flag>
-        And the overflow flag should be <Overflow>
-        And the negative flag should be <Negative_Flag>
-
-        Examples:
-          | A   | B   | Opcode | Expected_Result | Zero_Flag | Overflow | Negative_Flag |
-          | 0   | 0   | 0000   | 0               | True      | False    | False         |
-          | 0   | 1   | 0000   | 1               | False     | False    | False         |
-          | 255 | 0   | 0000   | 255             | False     | False    | True          |
-          | 255 | 255 | 0000   | 254             | False     | True     | True          |
-          | 100 | 50  | 0000   | 150             | False     | False    | True          |
-
-      @sll @shift
-      Scenario Outline: Verify SLL operation
-        Given I have operand A = <A>
-        And I have shift amount B = <B>
-        When I perform the SLL operation with opcode 0101
-        Then the result should be <Expected_Result>
-        And the zero flag should be <Zero_Flag>
-
-        Examples:
-          | A   | B   | Opcode | Expected_Result | Zero_Flag |
-          | 1   | 0   | 0101   | 1               | False     |
-          | 1   | 1   | 0101   | 2               | False     |
-          | 1   | 8   | 0101   | 0               | True      |
-          | 1   | 9   | 0101   | 2               | False     |
-
-      @slt @compare
-      Scenario Outline: Verify SLT against SLTU on the same operands
-        Given I have operand A = <A>
-        And I have operand B = <B>
-        When I perform the <Operation> operation with opcode <Opcode>
-        Then the result should be <Expected_Result>
-
-        Examples:
-          | Operation | A   | B   | Opcode | Expected_Result |
-          | SLT       | 255 | 1   | 1000   | 1               |
-          | SLTU      | 255 | 1   | 1001   | 0               |
-          | SLT       | 1   | 2   | 1000   | 1               |
-          | SLTU      | 1   | 2   | 1001   | 1               |
+{example_block}
 
     NOW GENERATE:
     - Bitwidth: {req['bitwidth']}-bit
-    - Operations to include:
+    - Operations to include (generate scenarios for these and NO others):
     - {ops_str}
     - Each operation needs {req['num_tests']} test cases minimum
     - Maximum value for {req['bitwidth']}-bit: {max_value}
     - MUST include edge cases: (0,0), ({max_value},{max_value}), and overflow tests
-    - For SLL/SRL/SRA the operand B is the shift amount, and only its low
-      log2({req['bitwidth']}) bits are used: a shift of {req['bitwidth']} behaves as a shift of 0
-    - SRL fills with zeros while SRA replicates the sign bit: cover both on a
-      negative operand so the two are distinguished
-    - SLT compares as signed and SLTU as unsigned: cover an operand pair where
-      the two disagree, and note the result is 1 or 0 rather than an arithmetic value
-    - The overflow flag is only meaningful for ADD and SUB; omit that column for
-      the other operations
+{op_notes}
 
     Generate the complete Feature file following the exact format above.
     Output ONLY the Feature file content, no explanations.
