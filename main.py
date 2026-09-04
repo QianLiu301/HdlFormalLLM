@@ -1487,7 +1487,14 @@ def generate_hardware():
                 return jsonify({'success': False, 'error': f'Unknown module type: {module_type}'}), 400
 
         if not hw_path:
-            return jsonify({'success': False, 'error': 'Generation failed'}), 500
+            # 'Generation failed' 说不出任何东西。真正的原因（429、key 失效、
+            # 模型下线）此前只在服务器控制台，数据库里查不到——main01 的 14 格
+            # gemini 失败就是这样，只能回头翻日志才知道是限流。
+            meta = _last_call_meta(run_id) or {}
+            reason = (getattr(generator, 'last_error', None)
+                      or meta.get('api_error'))
+            return jsonify({'success': False,
+                            'error': reason or 'Generation failed'}), 500
 
         hw_path_obj = Path(hw_path)
         if not hw_path_obj.exists():
@@ -1987,7 +1994,10 @@ def generate_bdd_stream():
             generator.prompt_override = prompt_override
             generator.system_override = system_override
 
-            if model and llm_name in ('openai', 'gemini'):
+            # 与 Step 1 用同一张表。此处曾硬编码 ('openai','gemini')，
+            # 于是 deepseek/mistral 等家的 model 覆盖在 Step 2 被静默忽略，
+            # 跑 within-provider 对比时两个模型其实用的是同一个。
+            if model and llm_name in MODEL_OVERRIDE_PROVIDERS:
                 try:
                     llm = LLMFactory.create_provider(llm_name, model=model)
                     generator.llm = llm
@@ -2114,7 +2124,8 @@ def generate_bdd():
         generator.prompt_override = prompt_override
         generator.system_override = system_override
 
-        if model and llm_name in ('openai', 'gemini'):
+        # 同上：非流式 BDD 端点也要用同一张表
+        if model and llm_name in MODEL_OVERRIDE_PROVIDERS:
             try:
                 llm = LLMFactory.create_provider(llm_name, model=model)
                 generator.llm = llm
