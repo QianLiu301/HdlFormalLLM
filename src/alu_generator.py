@@ -272,7 +272,13 @@ class ALUGenerator:
         try:
             # 🔧 根据位宽和操作数动态计算 max_tokens
             base_tokens = 5000 + (bitwidth // 16) * 1000 + len(operations) * 200
-            max_tokens = min(base_tokens, 12000)
+            # 预算还要随 prompt 长度增长。spec-first 把整份 BDD 追加进来，
+            # prompt 从 3256 涨到 12484 字符（3.8 倍），而推理型模型的思考量
+            # 随输入复杂度增长——固定额度会被思考挤空。实测见
+            # counter_generator（deepseek-v4-flash 在 spec-first 下返回
+            # 0 或 99 字符、正文停在端口声明中间）。约 4 字符 / token。
+            base_tokens += len(prompt) // 4
+            max_tokens = min(base_tokens, 16000)
 
             if hasattr(self.llm, '_call_api'):
                 response = self.llm._call_api(
@@ -291,6 +297,20 @@ class ALUGenerator:
             verilog_code = self._extract_verilog(response)
 
             # 🔧 新增：截断检测和自动重试
+            #
+            # 响应过短也要重试：推理模型把额度用光时返回的是空内容或一句
+            # 兜底文本，里面连 'module' 都没有，原来的条件永远不成立。
+            if not verilog_code and len(response or '') < 200:
+                print(f"⚠️ Response too short ({len(response or '')} chars) — "
+                      f"likely exhausted by reasoning. Retrying with more tokens...")
+                response = self.llm._call_api(
+                    prompt,
+                    max_tokens=min(max_tokens * 2, 24000),
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    sampling=getattr(self, "sampling", None)
+                )
+                verilog_code = self._extract_verilog(response)
+
             if not verilog_code and 'module' in response and 'endmodule' not in response:
                 print(f"⚠️ Code appears truncated! Retrying with more tokens...")
                 retry_tokens = min(max_tokens * 2, 16000)

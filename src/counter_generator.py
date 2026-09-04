@@ -155,7 +155,13 @@ class CounterGenerator:
         try:
             # 🔧 根据位宽动态计算 max_tokens（修复截断问题）
             base_tokens = 4000 + (bitwidth // 16) * 1000  # 64位约6000
-            max_tokens = min(base_tokens, 12000)
+            # 预算还要随 prompt 长度增长。spec-first 把整份 BDD 追加进
+            # prompt，32 位 counter 的固定 6000 额度会被推理挤空：
+            # main01 批次里 deepseek-v4-flash 的 counter/spec 有 3 格
+            # 返回 0 字符、1 次返回 99 字符（正文停在端口声明中间）。
+            # 约 4 字符 / token。
+            base_tokens += len(prompt) // 4
+            max_tokens = min(base_tokens, 16000)
 
             if hasattr(self.llm, '_call_api'):
                 response = self.llm._call_api(
@@ -168,17 +174,29 @@ class CounterGenerator:
                 print(f"❌ LLM does not have _call_api method")
                 return None
 
-            if not response:
-                print(f"❌ LLM returned empty response")
-                return None
-
-            print(f"✅ Received response ({len(response)} chars)")
+            # 空响应不再直接放弃——它正是「思考把额度吃光」的典型症状，
+            # 交给下面的过短重试分支再试一次。
+            print(f"✅ Received response ({len(response or '')} chars)")
 
             # Extract Verilog code
-            verilog_code = self._extract_verilog(response)
+            verilog_code = self._extract_verilog(response or '')
 
             # 🔧 新增：截断检测和自动重试
-            if not verilog_code and 'module' in response and 'endmodule' not in response:
+            #
+            # 响应过短也要重试：推理模型把额度用光时返回的是空内容或一句
+            # 兜底文本，里面连 'module' 都没有，原来的条件永远不成立。
+            if not verilog_code and len(response or '') < 200:
+                print(f"⚠️ Response too short ({len(response or '')} chars) — "
+                      f"likely exhausted by reasoning. Retrying with more tokens...")
+                response = self.llm._call_api(
+                    prompt,
+                    max_tokens=min(max_tokens * 2, 24000),
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    sampling=getattr(self, "sampling", None)
+                )
+                verilog_code = self._extract_verilog(response or '')
+
+            if not verilog_code and 'module' in (response or '') and 'endmodule' not in (response or ''):
                 print(f"⚠️ Code appears truncated! Retrying with more tokens...")
                 retry_tokens = min(max_tokens * 2, 16000)
                 response = self.llm._call_api(
@@ -192,7 +210,12 @@ class CounterGenerator:
 
             if not verilog_code:
                 print(f"❌ Could not extract valid Verilog code")
-                print(f"   Raw response preview: {response[:200]}...")
+                print(f"   Raw response preview: {(response or '')[:200]}...")
+                self.last_error = (
+                    'LLM returned empty response (likely exhausted by reasoning)'
+                    if not response else
+                    f'Could not extract Verilog from {len(response)}-char response'
+                )
                 return None
 
             # Fix common syntax errors (missing begin/end in case branches)
