@@ -2325,6 +2325,9 @@ def generate_testbench():
                 print(f"⚠️  module_name '{given}' from request overridden by "
                       f"'{derived}' read from the DUV file")
             dut_info['module_name'] = derived
+        # DUV 路径也交给生成器：testbench 要不要产生时钟，取决于设计有没有
+        # clk 端口，而这只能从文件里看出来（TestbenchGenerator._dut_has_clock）
+        dut_info.setdefault('dut_filepath', data.get('dut_filepath'))
 
         # Initialize generator
         generator = TestbenchGenerator(

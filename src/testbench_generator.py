@@ -410,6 +410,11 @@ class TestQualityAnalyzer:
 # ============================================================================
 # Feature Parser
 # ============================================================================
+# alu 与 alu_comb 的差别只在被测设计是时序还是组合，BDD 侧完全一样，
+# 所以解析与模板生成都按同一类处理。
+ALU_LIKE_TYPES = ('alu', 'alu_comb')
+
+
 class FeatureParser:
     """Parse .feature files and extract test scenarios"""
 
@@ -580,7 +585,7 @@ class FeatureParser:
             block_content = content[m.end():end]
 
             # 根据模块类型和 tag 确定操作
-            if self.module_type == 'alu':
+            if self.module_type in ALU_LIKE_TYPES:
                 operation, opcode = self._get_alu_operation(tag, block_content)
                 if operation is None:
                     # 认不出来就跳过，不再伪造成 ADD。伪造出的测试因为期望值
@@ -638,14 +643,14 @@ class FeatureParser:
                     # 会把一半的行贴错标签，用错的 opcode 驱动 DUT，仿真结果
                     # 无意义却仍然计入覆盖率。
                     row_op = None
-                    if self.module_type == 'alu':
+                    if self.module_type in ALU_LIKE_TYPES:
                         raw = scenario.get('operation')
                         if isinstance(raw, str) and raw.strip():
                             row_op, row_opcode = self._get_alu_operation(raw, '')
                     if row_op:
                         scenario['operation'] = row_op
                         scenario['opcode'] = row_opcode
-                    elif self.module_type == 'alu' and operation:
+                    elif self.module_type in ALU_LIKE_TYPES and operation:
                         scenario['operation'] = operation
                         scenario['opcode'] = opcode
                     elif self.module_type == 'counter':
@@ -751,6 +756,34 @@ class FeatureParser:
 # ============================================================================
 class TestbenchGenerator:
     """Generate Verilog testbench with quality analysis"""
+
+    # 有专属模板的模块类型。不在这个集合里的一律明确失败，不做降级——
+    # 见 generate_single 里的检查。
+    #
+    # alu_comb 与 alu 共用 ALU 模板：它们的差别只在被测设计是组合还是时序，
+    # 而那一点由 DUV 的端口自动判断（_dut_has_clock），不需要各写一份模板。
+    SUPPORTED_MODULE_TYPES = ('alu', 'alu_comb', 'counter', 'regfile', 'cpu')
+
+    # 共用 ALU 模板的模块类型
+    ALU_LIKE = ALU_LIKE_TYPES
+
+    @staticmethod
+    def _dut_has_clock(dut_filepath) -> Optional[bool]:
+        """DUV 是否有时钟端口。读不到文件时返回 None（调用方保持原有默认）。
+
+        testbench 要不要产生时钟、要不要在实例化时接 .clk/.rst，取决于被测
+        设计本身。写死成"总是有时钟"的话，纯组合 DUV 会因为多接两个不存在的
+        端口而 elaboration 失败。这里以 DUV 文件为准，而不是新增一个需要调用方
+        记得设置的参数——参数会漏传，端口不会。
+        """
+        if not dut_filepath:
+            return None
+        try:
+            text = Path(dut_filepath).read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            return None
+        head = text[:text.find(');')] if ');' in text else text
+        return bool(re.search(r'\binput\b[^;]*\bclk\b', head))
 
     @staticmethod
     def _explain_no_scenarios(spec: Dict, bdd_path) -> str:
@@ -920,9 +953,31 @@ class TestbenchGenerator:
             module_name = dut_info.get('module_name', f"{module_type}_{spec['bitwidth']}bit")
             bitwidth = dut_info.get('bitwidth', spec['bitwidth'])
 
+            # 只有四种模块类型有模板。此前 _generate_testbench_content 的 else
+            # 分支同时兜住了 'alu' 和一切未知类型，于是传 'fifo'/'seq_detector'/
+            # 'other' 都会拿到一份 ALU 形态的 testbench，还返回 success=True。
+            # 实验矩阵一旦引入新模块类型，整批数据会以这种方式静默作废。
+            if module_type not in self.SUPPORTED_MODULE_TYPES:
+                stats = dict(spec.get('parse_stats') or {})
+                stats['unsupported_module_type'] = 1
+                return {
+                    'success': False,
+                    'error': (f"Unsupported module_type {module_type!r}. This generator "
+                              f"has templates for "
+                              f"{', '.join(sorted(self.SUPPORTED_MODULE_TYPES))} only; "
+                              f"it will not fall back to another module's template, "
+                              f"because that silently produces a testbench for the "
+                              f"wrong design."),
+                    'parse_stats': stats,
+                    'unsupported_module_type': module_type,
+                }
+
             # Override spec with DUT info
             spec['bitwidth'] = bitwidth
             spec['module_type'] = module_type
+            # 时钟的有无由 DUV 端口决定；读不到文件时沿用旧行为（有时钟）
+            has_clk = self._dut_has_clock(dut_info.get('dut_filepath'))
+            spec['dut_has_clock'] = True if has_clk is None else has_clk
 
             # Determine output path
             # Try to get LLM name from path
@@ -1065,16 +1120,21 @@ class TestbenchGenerator:
     ) -> Tuple[str, Dict]:
         """Generate testbench content based on module type"""
 
+        # 显式分发，不留 else 兜底：未知类型在 generate_single 里已经拦下，
+        # 走到这里还不认识就是编程错误，应当立刻暴露而不是产出错误的 testbench。
         if module_type == 'counter':
             return self._generate_counter_testbench(spec, module_name, llm_name)
         elif module_type == 'regfile':
             return self._generate_regfile_testbench(spec, module_name, llm_name)
         elif module_type == 'cpu':
             return self._generate_cpu_testbench(spec, module_name, llm_name)
-        else:
-            # Default to ALU（目前只有 ALU 支持 oracle_source）
+        elif module_type in self.ALU_LIKE:
+            # 目前只有 ALU 支持 oracle_source
             return self._generate_alu_testbench(spec, module_name, llm_name,
                                                 oracle_source=oracle_source)
+        raise ValueError(
+            f"_generate_testbench_content: no template for module_type "
+            f"{module_type!r} (generate_single should have rejected it)")
 
     def _generate_alu_testbench(
             self,
@@ -1109,9 +1169,14 @@ class TestbenchGenerator:
         lines.append(f"    // Parameters")
         lines.append(f"    parameter WIDTH = {bitwidth};")
         lines.append("")
+        # 被测设计是纯组合时，testbench 不能声明/驱动 clk、rst，也不能在实例化
+        # 时连这两个端口——DUV 上没有它们，elaboration 会直接失败。
+        has_clk = spec.get('dut_has_clock', True)
+
         lines.append(f"    // Signals")
-        lines.append(f"    reg clk;")
-        lines.append(f"    reg rst;")
+        if has_clk:
+            lines.append(f"    reg clk;")
+            lines.append(f"    reg rst;")
         lines.append(f"    reg [WIDTH-1:0] a;")
         lines.append(f"    reg [WIDTH-1:0] b;")
         lines.append(f"    reg [3:0] opcode;")
@@ -1125,8 +1190,9 @@ class TestbenchGenerator:
         lines.append("")
         lines.append(f"    // DUT instantiation")
         lines.append(f"    {module_name} dut (")
-        lines.append(f"        .clk(clk),")
-        lines.append(f"        .rst(rst),")
+        if has_clk:
+            lines.append(f"        .clk(clk),")
+            lines.append(f"        .rst(rst),")
         lines.append(f"        .a(a),")
         lines.append(f"        .b(b),")
         lines.append(f"        .opcode(opcode),")
@@ -1136,10 +1202,11 @@ class TestbenchGenerator:
         lines.append(f"        .negative(negative)")
         lines.append(f"    );")
         lines.append("")
-        lines.append(f"    // Clock generation")
-        lines.append(f"    initial clk = 0;")
-        lines.append(f"    always #5 clk = ~clk;")
-        lines.append("")
+        if has_clk:
+            lines.append(f"    // Clock generation")
+            lines.append(f"    initial clk = 0;")
+            lines.append(f"    always #5 clk = ~clk;")
+            lines.append("")
         lines.append("")
         lines.append(f"    // Waveform dump for GTKWave")
         lines.append(f"    initial begin")
@@ -1152,11 +1219,16 @@ class TestbenchGenerator:
         lines.append(f"        total = 0;")
         lines.append(f"        passed = 0;")
         lines.append(f"        failed = 0;")
-        lines.append(f"        rst = 1;")
+        if has_clk:
+            lines.append(f"        rst = 1;")
         lines.append(f"        a = 0;")
         lines.append(f"        b = 0;")
         lines.append(f"        opcode = 0;")
-        lines.append(f"        #20 rst = 0;")
+        if has_clk:
+            lines.append(f"        #20 rst = 0;")
+        else:
+            # 组合设计没有复位，但仍要等一个 delta 让初值传播开
+            lines.append(f"        #10;")
         lines.append("")
         lines.append(f"        $display(\"\\n{'=' * 70}\");")
         lines.append(f"        $display(\"ALU Testbench - {llm_name}\");")
