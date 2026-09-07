@@ -359,6 +359,25 @@ def allowed_file(filename):
 MODEL_OVERRIDE_PROVIDERS = ('openai', 'gemini', 'deepseek', 'groq', 'mistral',
                             'together', 'qwen', 'llama', 'gptoss', 'glm')
 
+# 网页端 Step 1 在调用方没有指定版本时用的模板版本。
+#
+# 只对这里列出的 module_type 生效，其余仍是 v1——没有 v3 模板的类型若被指到
+# v3，render_stage 会返回 None 并静默回退到代码里的内置 f-string，行为变了却
+# 不报错。
+#
+# 实验（benchmark/run_baseline.py）在请求里显式传 prompt_version（MODULE_SPEC
+# 把 alu 钉在 v1、alu_comb 钉在 v2），不经过这张表，所以已采集的数据不受影响。
+# 每次调用都会把实际用的版本记进 llm_calls.extra.prompt_template_version。
+WEB_DEFAULT_PROMPT_VERSION = {
+    # v3 = v1 + 「复制次数/部分选择必须是常量」。codestral 与 Llama 在寄存器版
+    # ALU 上把桶形移位器写成依赖循环变量的复制，iverilog 与综合都不接受。
+    'alu': 'v3',
+}
+
+
+def _web_default_prompt_version(module_type: str) -> str:
+    return WEB_DEFAULT_PROMPT_VERSION.get(module_type, 'v1')
+
 
 def _new_run_id() -> str:
     import uuid
@@ -1387,7 +1406,8 @@ def generate_hardware():
         return jsonify({'success': False, 'error': bdd_error}), 400
 
     sampling = _parse_sampling(data)
-    prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+    prompt_version = ((data.get('prompt_version') or '').strip()
+                      or _web_default_prompt_version(module_type))
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
     # impl-first 下 DUV 是依赖链起点，新建 run_id；spec-first 下起点是 BDD，
@@ -1565,7 +1585,10 @@ def generate_hardware_stream():
             module_type = parsed['module_type']
 
     sampling = _parse_sampling(data)
-    prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+    # 与非流式端点取同一个缺省值：此前两处各写一份 'v1'，缺省一旦分叉，
+    # 同一个操作会因为 Stream 开关而用不同版本的模板。
+    prompt_version = ((data.get('prompt_version') or '').strip()
+                      or _web_default_prompt_version(module_type))
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
     # impl-first 下 DUV 是依赖链起点；spec-first 下起点是 BDD，此处继承其 run_id。
