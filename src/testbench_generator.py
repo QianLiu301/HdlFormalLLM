@@ -599,6 +599,19 @@ class FeatureParser:
             elif self.module_type == 'counter':
                 operation = None
                 opcode = self._get_counter_mode(tag)
+            elif self.module_type == 'regfile':
+                operation = None
+                opcode = None
+                regfile_op = self._get_regfile_op(tag)
+                if regfile_op is None:
+                    # 与 ALU 同样的处理：认不出来就跳过，不伪造成 write。
+                    # regfile 的行是有序有状态的，一次伪造的写会污染它之后
+                    # 所有读的期望值。
+                    self.stats['scenarios_unmapped'] += 1
+                    if self.debug:
+                        print(f"⚠️  scenario tag {tag.strip()!r} maps to no regfile "
+                              f"operation — scenario skipped")
+                    continue
             else:
                 operation = None
                 opcode = None
@@ -655,6 +668,14 @@ class FeatureParser:
                         scenario['opcode'] = opcode
                     elif self.module_type == 'counter':
                         scenario['mode'] = opcode
+                    elif self.module_type == 'regfile':
+                        # 行内的 Operation 列优先，其次用块级 tag——与 ALU 同一
+                        # 规则。regfile 的行是有序且有状态的，贴错标签会把一次
+                        # 写当成读（或反过来），后续所有行的期望值跟着错。
+                        raw = scenario.get('operation') or scenario.get('op')
+                        row_op = (self._get_regfile_op(str(raw))
+                                  if isinstance(raw, str) and raw.strip() else None)
+                        scenario['op'] = row_op or regfile_op
 
                     if scenario:
                         self.scenarios.append(scenario)
@@ -738,6 +759,30 @@ class FeatureParser:
             return '01'
         else:  # up 或默认
             return '00'
+
+    # regfile 的 tag -> 操作。顺序有意义：write_read 必须在 write/read 之前
+    # 试，否则 @write_read 会先被 'write' 命中，读那一半就丢了。同理
+    # 'read' 是 'write_read' 的子串。
+    REGFILE_OPS = (
+        ('write_read', ('write_read', 'writeread', 'write_then_read')),
+        ('reset',      ('reset', 'rst')),
+        ('write',      ('write', 'wr', 'store')),
+        ('read',       ('read', 'rd', 'load')),
+    )
+
+    def _get_regfile_op(self, tag: str) -> Optional[str]:
+        """从 tag 认出 regfile 操作；认不出返回 None。
+
+        与 _get_alu_operation 一样要求完整词边界匹配。用子串包含的话
+        @write_read 会被 'write' 抢先命中——ALU 那边 'or' 抢 'xor' 就是
+        这么出的问题，两个操作因此从统计里消失。
+        """
+        t = (tag or '').lower()
+        for op, aliases in self.REGFILE_OPS:
+            for a in aliases:
+                if re.search(rf'(?<![a-z0-9]){a}(?![a-z0-9])', t):
+                    return op
+        return None
 
     def _parse_value(self, value_str: str) -> Optional[int]:
         """Parse value string to integer"""
@@ -1161,11 +1206,12 @@ class TestbenchGenerator:
         if module_type == 'counter':
             return self._generate_counter_testbench(spec, module_name, llm_name)
         elif module_type == 'regfile':
-            return self._generate_regfile_testbench(spec, module_name, llm_name)
+            return self._generate_regfile_testbench(spec, module_name, llm_name,
+                                                    oracle_source=oracle_source)
         elif module_type == 'cpu':
             return self._generate_cpu_testbench(spec, module_name, llm_name)
         elif module_type in self.ALU_LIKE:
-            # 目前只有 ALU 支持 oracle_source
+            # ALU 与 regfile 支持 oracle_source；counter/cpu 尚未接
             return self._generate_alu_testbench(spec, module_name, llm_name,
                                                 oracle_source=oracle_source)
         raise ValueError(
@@ -1625,9 +1671,18 @@ class TestbenchGenerator:
             self,
             spec: Dict,
             module_name: str,
-            llm_name: str
+            llm_name: str,
+            oracle_source: str = 'bdd'
     ) -> Tuple[str, Dict]:
-        """Generate Register File testbench"""
+        """Generate Register File testbench.
+
+        场景是**有序有状态**的：行按文档顺序执行，写下去的值要被后面的读
+        看见。这与 ALU 不同——ALU 的每行是独立的一次输入输出。
+
+        此前这个模板完全不读 scenario：地址取循环序号、数据取序号×100、
+        期望值就是刚写进去的那个数，于是 BDD 文件唯一的作用是决定循环跑
+        几次。任何两份内容不同的 BDD 都会生成逐字相同的 testbench。
+        """
         bitwidth = spec['bitwidth']
         depth = spec.get('depth', 16)
         scenarios = spec['scenarios']
@@ -1698,29 +1753,88 @@ class TestbenchGenerator:
         lines.append(f"        $display(\"========================================\\n\");")
         lines.append("")
 
-        # Generate test cases
-        for i, scenario in enumerate(scenarios, 1):
-            reg_addr = i % (depth - 1) + 1  # Avoid register 0 (always 0)
-            test_data = (i * 100) % (1 << bitwidth)  # Keep within bitwidth
+        # ---- 按行序发射，跨行保持状态 ----
+        #
+        # model 是 spec 臂的参考模型：按同样的顺序重放写操作，于是每次读的
+        # 正确值可以由构造算出，而不必相信 BDD 里写的 expected。x0 恒零、
+        # 写 x0 被忽略，都按 DUV prompt 里的 RISC-V 约定建模。
+        mask = (1 << bitwidth) - 1
+        model = {}
+        stats = {'write': 0, 'read': 0, 'reset': 0, 'write_read': 0,
+                 'read_hits_prior_write': 0, 'skipped': 0}
 
-            # Format values correctly
-            data_str = self._format_verilog_value(test_data, bitwidth)
+        def _addr(sc):
+            a = sc.get('addr', sc.get('address', sc.get('reg', sc.get('register'))))
+            return a % depth if isinstance(a, int) else None
 
-            lines.append(f"        // Test {i}: Write and Read back")
-            lines.append(f"        wen = 1; waddr = {addr_width}'d{reg_addr}; wdata = {data_str};")
-            lines.append(f"        #10;")
-            lines.append(f"        wen = 0; raddr1 = {addr_width}'d{reg_addr};")
-            lines.append(f"        #10;")
+        def _data(sc):
+            d = sc.get('data', sc.get('wdata', sc.get('value')))
+            return d & mask if isinstance(d, int) else None
+
+        def emit_write(n, addr, data):
+            lines.append(f"        // row {n}: write R{addr} = {data}")
+            lines.append(f"        wen = 1; waddr = {addr_width}'d{addr}; "
+                         f"wdata = {self._format_verilog_value(data, bitwidth)};")
+            lines.append(f"        @(posedge clk); #1; wen = 0;")
+
+        def emit_read(n, addr, expect):
+            exp = self._format_verilog_value(expect, bitwidth)
+            lines.append(f"        // row {n}: read R{addr}, expect {expect}")
+            lines.append(f"        raddr1 = {addr_width}'d{addr}; #1;")
             lines.append(f"        total = total + 1;")
-            lines.append(f"        if (rdata1 == {data_str}) begin")
+            lines.append(f"        if (rdata1 == {exp}) begin")
             lines.append(f"            passed = passed + 1;")
-            lines.append(f"            $display(\"✓ Test {i}: PASS - R%0d = %0d\", {addr_width}'d{reg_addr}, rdata1);")
+            lines.append(f"            $display(\"✓ row {n}: PASS - R%0d = %0d\", "
+                         f"{addr_width}'d{addr}, rdata1);")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
-            lines.append(
-                f"            $display(\"✗ Test {i}: FAIL - R%0d expected %0d, got %0d\", {addr_width}'d{reg_addr}, {data_str}, rdata1);")
+            lines.append(f"            $display(\"✗ row {n}: FAIL - R%0d expected %0d, "
+                         f"got %0d\", {addr_width}'d{addr}, {exp}, rdata1);")
             lines.append(f"        end")
+
+        for i, scenario in enumerate(scenarios, 1):
+            op = scenario.get('op')
+            addr = _addr(scenario)
+
+            if op == 'reset':
+                stats['reset'] += 1
+                model.clear()
+                lines.append(f"        // row {i}: reset")
+                lines.append(f"        rst_n = 0; @(posedge clk); #1; rst_n = 1; #1;")
+                lines.append("")
+                continue
+
+            if addr is None:
+                stats['skipped'] += 1
+                continue
+
+            if op in ('write', 'write_read'):
+                data = _data(scenario)
+                if data is None:
+                    stats['skipped'] += 1
+                    continue
+                emit_write(i, addr, data)
+                if addr != 0:               # 写 x0 被硬件忽略
+                    model[addr] = data
+                stats['write'] += 1
+
+            if op in ('read', 'write_read'):
+                if op == 'read' and addr in model:
+                    stats['read_hits_prior_write'] += 1
+                # bdd 臂用 BDD 写的期望值；spec 臂由参考模型算出。
+                # 参考模型只依赖行序与规格，因此它的失败只可能来自 DUV。
+                ref = 0 if addr == 0 else model.get(addr, 0)
+                expect = ref
+                if oracle_source != 'spec':
+                    e = scenario.get('expected', scenario.get('expected_result'))
+                    if isinstance(e, int):
+                        expect = e & mask
+                emit_read(i, addr, expect)
+                stats['read'] += 1 if op == 'read' else 0
+                stats['write_read'] += 1 if op == 'write_read' else 0
             lines.append("")
+
+        quality_analysis['regfile_sequence'] = stats
 
         # Test register 0 (should always be 0)
         lines.append(f"        // Test: Register 0 should always be 0")

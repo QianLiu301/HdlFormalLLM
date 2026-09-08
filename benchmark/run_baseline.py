@@ -91,6 +91,31 @@ BDD_INPUT = {
 - Enable control
 - Overflow flag
 - Zero flag""",
+    # regfile 与 alu/counter 不同：行是**有序有状态**的，写下去的值要被后面
+    # 的读看见。所以需求文本必须说清 tag 词表和列名，否则解析器无从把一行
+    # 认成读还是写——这和 ALU 必须说清有哪些 opcode 是同一个道理。
+    'regfile': lambda bw: f"""32-entry x {bw}-bit Register File with:
+- Two combinational read ports (raddr1/rdata1, raddr2/rdata2)
+- One synchronous write port (wen, waddr, wdata), writes on the clock edge
+- Register 0 is hardwired to zero: it always reads 0 and writes to it are ignored
+- Active-low reset rst_n clears every register
+
+Write the scenarios so that they form an ordered sequence: rows execute in
+the order they appear and the register contents persist from one row to the
+next. Tag each Scenario Outline with exactly one of:
+- @write       the row writes data to addr
+- @read        the row reads addr and checks the value
+- @write_read  the row writes and then reads back the same addr
+- @reset       the row asserts reset
+
+Use these Examples columns: addr, data (for writes), expected (for reads).
+Cover at least:
+- A register written early and read back much later, after other writes
+- Two different registers written in turn, then both read, to show one write
+  does not disturb the other
+- Overwriting a register and reading the new value
+- Reading register 0, and attempting to write register 0 then reading it
+- A reset followed by a read""",
 }
 
 MAX_RETRIES = 3
