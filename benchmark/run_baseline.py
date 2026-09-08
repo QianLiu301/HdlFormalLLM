@@ -91,9 +91,10 @@ BDD_INPUT = {
 - Enable control
 - Overflow flag
 - Zero flag""",
-    # regfile 与 alu/counter 不同：行是**有序有状态**的，写下去的值要被后面
-    # 的读看见。所以需求文本必须说清 tag 词表和列名，否则解析器无从把一行
-    # 认成读还是写——这和 ALU 必须说清有哪些 opcode 是同一个道理。
+    # 注意：这段文字只被后端解析出位宽/深度等参数，**不会逐字进入 BDD 的
+    # prompt**——regfile 的 prompt 完全来自 prompts/bdd_regfile/v1.yaml，
+    # tag 词表和列名的约定写在那个模板里。改这里的措辞对模型没有影响（实测
+    # 改完重跑，生成的 BDD 一字未变）。要改场景形态，去改模板。
     'regfile': lambda bw: f"""32-entry x {bw}-bit Register File with:
 - Two combinational read ports (raddr1/rdata1, raddr2/rdata2)
 - One synchronous write port (wen, waddr, wdata), writes on the clock edge
@@ -108,7 +109,17 @@ next. Tag each Scenario Outline with exactly one of:
 - @write_read  the row writes and then reads back the same addr
 - @reset       the row asserts reset
 
-Use these Examples columns: addr, data (for writes), expected (for reads).
+Each Examples row must describe EXACTLY ONE operation on EXACTLY ONE
+register. Use only these column names, and no others:
+- addr      the register index (every row)
+- data      the value to write (@write and @write_read rows only)
+- expected  the value the read must return (@read and @write_read rows only)
+
+Do NOT put several registers in one row (no reg1/data1/reg2/data2), and do
+NOT put several steps in one row (no first_data/second_data). Express a
+sequence as consecutive rows instead: to overwrite a register, write one
+row, then another row with the new value, then a @read row.
+
 Cover at least:
 - A register written early and read back much later, after other writes
 - Two different registers written in turn, then both read, to show one write

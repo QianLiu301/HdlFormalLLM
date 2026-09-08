@@ -763,11 +763,17 @@ class FeatureParser:
     # regfile 的 tag -> 操作。顺序有意义：write_read 必须在 write/read 之前
     # 试，否则 @write_read 会先被 'write' 命中，读那一半就丢了。同理
     # 'read' 是 'write_read' 的子串。
+    # 别名要覆盖模型实际会写的形式，不只是需求文本里给的那四个。实测 qwen
+    # 写出过 @consecutive_reads（复数）、@reg_zero（读 x0 的检查）、
+    # @dual_read、@sequential_write——只认单数就会把它们当成未知 tag 丢掉。
     REGFILE_OPS = (
-        ('write_read', ('write_read', 'writeread', 'write_then_read')),
-        ('reset',      ('reset', 'rst')),
-        ('write',      ('write', 'wr', 'store')),
-        ('read',       ('read', 'rd', 'load')),
+        ('write_read', ('write_read', 'writeread', 'write_then_read',
+                        'write_and_read', 'readback', 'read_back')),
+        ('reset',      ('reset', 'resets', 'rst')),
+        ('write',      ('write', 'writes', 'wr', 'store', 'stores')),
+        # x0 相关的场景本质上是读检查
+        ('read',       ('read', 'reads', 'rd', 'load', 'loads',
+                        'reg_zero', 'zero_register', 'x0')),
     )
 
     def _get_regfile_op(self, tag: str) -> Optional[str]:
@@ -1763,12 +1769,36 @@ class TestbenchGenerator:
         stats = {'write': 0, 'read': 0, 'reset': 0, 'write_read': 0,
                  'read_hits_prior_write': 0, 'skipped': 0}
 
+        # 列名按形态匹配，不按字面。模型不会照抄需求里给的列名——实测 qwen
+        # 写的是 Reg_Addr / Write_Data / Expected_Data，硬匹配 'addr'/'data'
+        # 一行都取不到，于是整份 BDD 被跳过、testbench 只剩固定的 R0 检查，
+        # 通过率显示 100% 而实际什么都没测。
+        def _pick(sc, kind):
+            """返回该行里符合 kind 的唯一整数列；没有或有歧义时返回 None。"""
+            hits = []
+            for k, v in sc.items():
+                if not isinstance(v, int):
+                    continue
+                n = str(k).strip().lower()
+                if 'expect' in n:
+                    if kind == 'expected':
+                        hits.append(v)
+                    continue                     # expected_data 不算 data
+                if kind == 'addr' and ('addr' in n or n in ('reg', 'register')):
+                    hits.append(v)
+                elif kind == 'data' and ('data' in n or 'value' in n):
+                    hits.append(v)
+            # 一行里出现多个同类列（reg1|data1|reg2|data2 这种多寄存器表格）
+            # 无法对应到单次读写，宁可跳过并计数，也不要只取第一个而悄悄
+            # 丢掉其余的——那会让测试数看起来正常，实际覆盖不到。
+            return hits[0] if len(hits) == 1 else None
+
         def _addr(sc):
-            a = sc.get('addr', sc.get('address', sc.get('reg', sc.get('register'))))
+            a = _pick(sc, 'addr')
             return a % depth if isinstance(a, int) else None
 
         def _data(sc):
-            d = sc.get('data', sc.get('wdata', sc.get('value')))
+            d = _pick(sc, 'data')
             return d & mask if isinstance(d, int) else None
 
         def emit_write(n, addr, data):
@@ -1826,7 +1856,7 @@ class TestbenchGenerator:
                 ref = 0 if addr == 0 else model.get(addr, 0)
                 expect = ref
                 if oracle_source != 'spec':
-                    e = scenario.get('expected', scenario.get('expected_result'))
+                    e = _pick(scenario, 'expected')
                     if isinstance(e, int):
                         expect = e & mask
                 emit_read(i, addr, expect)
