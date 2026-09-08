@@ -786,6 +786,33 @@ class TestbenchGenerator:
         return bool(re.search(r'\binput\b[^;]*\bclk\b', head))
 
     @staticmethod
+    def _dut_depth(dut_filepath) -> Optional[int]:
+        """DUV 声明的寄存器堆深度。读不到或没写就返回 None。
+
+        与 _dut_has_clock 同理：以 DUV 文件为准。深度决定 ADDR_WIDTH，
+        testbench 与 DUV 各算各的就会在实例化时位宽不匹配——DEPTH=32 的
+        设计配 depth=16 的 testbench，raddr/waddr 一个 5 位一个 4 位，
+        elaboration 直接失败。
+
+        既认参数声明 `parameter DEPTH = 32`，也认数组声明
+        `reg [31:0] registers [0:31]`（模型常把 DEPTH 直接展开成字面量）。
+        """
+        if not dut_filepath:
+            return None
+        try:
+            text = Path(dut_filepath).read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            return None
+        m = re.search(r'\bparameter\b[^;)]*?\bDEPTH\s*=\s*(\d+)', text, re.I)
+        if m:
+            return int(m.group(1))
+        # 数组上界 + 1：reg [W-1:0] regs [0:31] -> 32
+        m = re.search(r'\breg\b[^;]*\[[^\]]+\]\s*\w+\s*\[\s*0\s*:\s*(\d+)\s*\]', text)
+        if m:
+            return int(m.group(1)) + 1
+        return None
+
+    @staticmethod
     def _explain_no_scenarios(spec: Dict, bdd_path) -> str:
         """解析出 0 个场景时，说明是哪一种原因。
 
@@ -978,6 +1005,15 @@ class TestbenchGenerator:
             # 时钟的有无由 DUV 端口决定；读不到文件时沿用旧行为（有时钟）
             has_clk = self._dut_has_clock(dut_info.get('dut_filepath'))
             spec['dut_has_clock'] = True if has_clk is None else has_clk
+            # 寄存器堆深度：DUV 里写了什么就用什么，其次用调用方给的，
+            # 最后才是模板默认的 16。此前这三者都没接上——dut_info 里的
+            # depth 从来没被写进 spec，_generate_regfile_testbench 于是恒取
+            # 默认 16，而 DUV 是按 DEPTH=32 生成的，ADDR_WIDTH 差一位，
+            # 实例化必然位宽不匹配。
+            depth = (self._dut_depth(dut_info.get('dut_filepath'))
+                     or dut_info.get('depth'))
+            if depth:
+                spec['depth'] = int(depth)
 
             # Determine output path
             # Try to get LLM name from path
