@@ -444,6 +444,9 @@ Start with `module` and end with `endmodule`.
         in_always = False
         always_depth = 0
         module_end_idx = -1
+        in_header = False
+        paren_depth = 0
+        seen_paren = False
 
         # First pass: find integers inside always blocks and mark them for removal
         i = 0
@@ -452,12 +455,26 @@ Start with `module` and end with `endmodule`.
             stripped = line.strip()
 
             # Track module header end (after ports, before logic)
-            if module_end_idx == -1 and (stripped.startswith('reg ') or
-                                          stripped.startswith('wire ') or
-                                          stripped.startswith('assign ') or
-                                          stripped.startswith('always') or
-                                          stripped.startswith('localparam') or
-                                          stripped.startswith('parameter')):
+            # 模块头（module name #(...) (...);）之内不能作为插入点。
+            # ANSI 风格的第一个 parameter 就在 #( 里，此前它被当成声明区
+            # 起点，integer 于是被插进参数列表——main01 里 devstral 的两格
+            # counter 就是这么被改坏的，报的是语法错误，看上去像模型的锅。
+            code = re.sub(r'//.*', '', line)
+            if not in_header and re.match(r'\s*module\b', stripped):
+                in_header = True
+                paren_depth = 0
+                seen_paren = False
+            if in_header:
+                paren_depth += code.count('(') - code.count(')')
+                seen_paren = seen_paren or '(' in code
+                if seen_paren and paren_depth <= 0:
+                    in_header = False
+            elif module_end_idx == -1 and (stripped.startswith('reg ') or
+                                           stripped.startswith('wire ') or
+                                           stripped.startswith('assign ') or
+                                           stripped.startswith('always') or
+                                           stripped.startswith('localparam') or
+                                           stripped.startswith('parameter')):
                 module_end_idx = len(fixed_lines)
 
             # Track always blocks
