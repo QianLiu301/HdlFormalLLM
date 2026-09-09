@@ -217,6 +217,7 @@ def _conn():
         duv_sha256 TEXT, bdd_sha256 TEXT, tb_sha256 TEXT,
         -- 分阶段的失败原文。notes 只留最后一次，跨阶段会互相覆盖。
         duv_error TEXT, bdd_error TEXT, tb_error TEXT, sim_error TEXT,
+        model_served TEXT, model_alias_shifted INTEGER,
         -- impl-first 是 DUV -> BDD，spec-first 是 BDD -> DUV。两者的 run_id
         -- 起点、以及 DUV 是否看得到 BDD，都不同，所以必须随行记录。
         workflow_mode TEXT)""")
@@ -234,6 +235,7 @@ def _conn():
                      ('duv_latency_ms', 'INTEGER'), ('bdd_chars_in', 'INTEGER'),
                      ('bdd_chars_out', 'INTEGER'), ('bdd_latency_ms', 'INTEGER'),
                      ('duv_sha256', 'TEXT'), ('bdd_sha256', 'TEXT'),
+                     ('model_served', 'TEXT'), ('model_alias_shifted', 'INTEGER'),
                      ('tb_sha256', 'TEXT'), ('duv_error', 'TEXT'),
                      ('bdd_error', 'TEXT'), ('tb_error', 'TEXT'),
                      ('sim_error', 'TEXT'), ('sim_all_pass', 'INTEGER'),
@@ -473,6 +475,7 @@ def run_one(client, batch, provider, module_type, seed, session_id,
         'created_at': time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         'batch': batch, 'cell_key': cell_key, 'run_id': None, 'provider': provider,
         'model_effective': None, 'model_requested': model,
+        'model_served': None, 'model_alias_shifted': None,
         'module_type': module_type, 'seed': seed,
         'step1_temp': STEP1_TEMP, 'step2_temp': STEP2_TEMP,
         'duv_success': 0, 'duv_compile': None, 'duv_attempts': 0,
@@ -686,13 +689,25 @@ def _attach_metrics(row, run_id):
             row['model_effective'] = json.loads(all_calls[0]['extra'] or '{}').get('model_effective')
         except Exception:
             pass
+    # 服务端自报的模型名。与请求的名字不同意味着别名被重指——那才是这一格
+    # 真正测的模型，model_effective 记的只是我们要的名字。
+    for call in all_calls:
+        try:
+            ex = json.loads(call['extra'] or '{}')
+        except Exception:
+            continue
+        if ex.get('model_served'):
+            row['model_served'] = ex['model_served']
+            row['model_alias_shifted'] = int(bool(ex.get('model_alias_shifted')))
+            break
 
 
 # ---------------------------------------------------------------------------
 # 导出
 # ---------------------------------------------------------------------------
 CSV_COLUMNS = ['run_id', 'workflow_mode', 'prompt_version',
-               'duv_prompt_has_bdd', 'provider', 'model_requested', 'model_effective', 'module_type', 'seed',
+               'duv_prompt_has_bdd', 'provider', 'model_requested', 'model_effective',
+               'model_served', 'model_alias_shifted', 'module_type', 'seed',
                'step1_temp', 'step2_temp',
                'duv_success', 'duv_compile', 'duv_attempts',
                'bdd_success', 'bdd_parse_ok', 'bdd_attempts',
