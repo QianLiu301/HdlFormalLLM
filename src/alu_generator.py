@@ -272,7 +272,13 @@ class ALUGenerator:
         try:
             # 🔧 根据位宽和操作数动态计算 max_tokens
             base_tokens = 5000 + (bitwidth // 16) * 1000 + len(operations) * 200
-            max_tokens = min(base_tokens, 12000)
+            # 预算还要随 prompt 长度增长。spec-first 把整份 BDD 追加进来，
+            # prompt 从 3256 涨到 12484 字符（3.8 倍），而推理型模型的思考量
+            # 随输入复杂度增长——固定额度会被思考挤空。实测见
+            # counter_generator（deepseek-v4-flash 在 spec-first 下返回
+            # 0 或 99 字符、正文停在端口声明中间）。约 4 字符 / token。
+            base_tokens += len(prompt) // 4
+            max_tokens = min(base_tokens, 16000)
 
             if hasattr(self.llm, '_call_api'):
                 response = self.llm._call_api(
@@ -291,6 +297,20 @@ class ALUGenerator:
             verilog_code = self._extract_verilog(response)
 
             # 🔧 新增：截断检测和自动重试
+            #
+            # 响应过短也要重试：推理模型把额度用光时返回的是空内容或一句
+            # 兜底文本，里面连 'module' 都没有，原来的条件永远不成立。
+            if not verilog_code and len(response or '') < 200:
+                print(f"⚠️ Response too short ({len(response or '')} chars) — "
+                      f"likely exhausted by reasoning. Retrying with more tokens...")
+                response = self.llm._call_api(
+                    prompt,
+                    max_tokens=min(max_tokens * 2, 24000),
+                    system_prompt=getattr(self, "_rendered_system", None) or "You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.",
+                    sampling=getattr(self, "sampling", None)
+                )
+                verilog_code = self._extract_verilog(response)
+
             if not verilog_code and 'module' in response and 'endmodule' not in response:
                 print(f"⚠️ Code appears truncated! Retrying with more tokens...")
                 retry_tokens = min(max_tokens * 2, 16000)
@@ -585,18 +605,35 @@ Start with `module` and end with `endmodule`.
         in_always = False
         always_depth = 0
         module_end_idx = -1
+        in_header = False
+        paren_depth = 0
+        seen_paren = False
 
         i = 0
         while i < len(lines):
             line = lines[i]
             stripped = line.strip()
 
-            if module_end_idx == -1 and (stripped.startswith('reg ') or
-                                          stripped.startswith('wire ') or
-                                          stripped.startswith('assign ') or
-                                          stripped.startswith('always') or
-                                          stripped.startswith('localparam') or
-                                          stripped.startswith('parameter')):
+            # 模块头（module name #(...) (...);）之内不能作为插入点。
+            # ANSI 风格的第一个 parameter 就在 #( 里，此前它被当成声明区
+            # 起点，integer 于是被插进参数列表——main01 里 devstral 的两格
+            # counter 就是这么被改坏的，报的是语法错误，看上去像模型的锅。
+            code = re.sub(r'//.*', '', line)
+            if not in_header and re.match(r'\s*module\b', stripped):
+                in_header = True
+                paren_depth = 0
+                seen_paren = False
+            if in_header:
+                paren_depth += code.count('(') - code.count(')')
+                seen_paren = seen_paren or '(' in code
+                if seen_paren and paren_depth <= 0:
+                    in_header = False
+            elif module_end_idx == -1 and (stripped.startswith('reg ') or
+                                           stripped.startswith('wire ') or
+                                           stripped.startswith('assign ') or
+                                           stripped.startswith('always') or
+                                           stripped.startswith('localparam') or
+                                           stripped.startswith('parameter')):
                 module_end_idx = len(fixed_lines)
 
             if re.match(r'\s*always\s*@', stripped):

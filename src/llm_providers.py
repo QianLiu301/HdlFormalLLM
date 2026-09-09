@@ -189,13 +189,33 @@ class LLMProvider(ABC):
         _record_meta(max_tokens=value, max_tokens_source=src)
         return value, src
 
+    def _record_served_model(self, served) -> None:
+        """登记 API 自报的模型名，并在它与我们请求的不一致时告警。
+
+        model_effective 记的是 self.model——**我们请求的名字**，不是服务端
+        实际用的模型。两者可以不同：厂商随时可以把 `-latest` / `-next` 这类
+        别名重指到别的权重，请求不会报错。实测 devstral-latest 现在返回的是
+        mistral-medium-3-5，而 Devstral 已从 Mistral 的模型列表里下架。
+
+        代价是事后无法追溯：main01 里 30 格 "devstral" 的真实身份现在查不出来，
+        因为当时没存这个字段。存下来之后，别名漂移在数据里就是可见的。
+        """
+        if not served:
+            return
+        requested = getattr(self, 'model', None)
+        _record_meta(model_served=str(served))
+        if requested and str(served) != str(requested):
+            _record_meta(model_alias_shifted=True)
+            print(f"⚠️  模型别名已被重指：请求 {requested!r}，"
+                  f"服务端实际使用 {served!r}")
+
     def _record_response_meta(self, result) -> None:
-        """从 API 响应里提取 finish_reason / system_fingerprint 并登记。
+        """从 API 响应里提取 finish_reason / system_fingerprint / 实际模型名。
 
         各家字段名不同，这里统一探测，避免在每个 provider 里写一遍：
-          OpenAI 兼容  choices[0].finish_reason + system_fingerprint
-          Gemini       candidates[0].finishReason
-          Claude       stop_reason
+          OpenAI 兼容  choices[0].finish_reason + system_fingerprint + model
+          Gemini       candidates[0].finishReason + modelVersion
+          Claude       stop_reason + model
         """
         if not isinstance(result, dict):
             # OpenAI SDK 返回的是对象而非 dict：按属性取
@@ -203,6 +223,7 @@ class LLMProvider(ABC):
             if choices:
                 _record_meta(finish_reason=getattr(choices[0], 'finish_reason', None),
                              system_fingerprint=getattr(result, 'system_fingerprint', None))
+            self._record_served_model(getattr(result, 'model', None))
             return
         finish = None
         choices = result.get('choices')
@@ -216,6 +237,9 @@ class LLMProvider(ABC):
             finish = result.get('stop_reason')
         _record_meta(finish_reason=finish,
                      system_fingerprint=result.get('system_fingerprint'))
+        # Gemini 用 modelVersion，其余各家都叫 model
+        self._record_served_model(result.get('model')
+                                  or result.get('modelVersion'))
 
 
     def _get_proxies(self) -> Optional[Dict[str, str]]:
@@ -301,6 +325,20 @@ class LLMProvider(ABC):
             "_fallback": True,
             "_fallback_reason": "API call failed, using local parsing"
         }
+
+    def _note_api_error(self, exc) -> None:
+        """把被吞掉的 API 错误登记到本次调用的元数据里。
+
+        provider 在 HTTP 出错时不抛异常而是返回兜底文本，于是 experiment_logger
+        的 except 分支永远走不到，llm_calls.success 仍是 1、error 为空。
+        main01 因此出现「日志里 45 次 429，数据库里 0 条错误」。
+        """
+        try:
+            _record_meta(api_error=f'{type(exc).__name__}: {exc}'[:300],
+                         api_error_status=getattr(
+                             getattr(exc, 'response', None), 'status_code', None))
+        except Exception:
+            pass
 
     def _fallback_intent_json(self, prompt: str) -> str:
         """
@@ -481,6 +519,7 @@ class GeminiProvider(LLMProvider):
             return "Error: No content generated."
         except Exception as e:
             print(f"⚠️  Gemini REST API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 8192, system_prompt: str = None,
@@ -686,6 +725,7 @@ class GroqProvider(LLMProvider):
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Groq API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
@@ -1001,6 +1041,7 @@ class DeepSeekProvider(LLMProvider):
                 else:
                     print(f"   ⚠️  [WARN] Unexpected error after all retries")
                     print(f"   ⚠️  DeepSeek API request failed: {e}")
+                    self._note_api_error(e)
                     return self._fallback_description(prompt)
 
         # 应该不会到达这里
@@ -1613,6 +1654,7 @@ Respond with ONLY the JSON object, no other text.
             return (content or "").strip()
         except Exception as e:
             print(f"⚠️  OpenAI text API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_text()
 
     def _call_api(self, prompt: str, max_tokens: int = 500, system_prompt: str = None,
@@ -1700,6 +1742,7 @@ class ClaudeProvider(LLMProvider):
             return result['content'][0]['text'].strip()
         except Exception as e:
             print(f"⚠️  Claude API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def generate_scenario_description(
@@ -1877,6 +1920,7 @@ class GrokProvider(LLMProvider):
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Grok API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
@@ -2053,6 +2097,7 @@ class QwenProvider(LLMProvider):
             return content.strip()
         except Exception as e:
             print(f"⚠️  {type(self).__name__} API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
@@ -2206,6 +2251,7 @@ class MistralProvider(LLMProvider):
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Mistral API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
@@ -2359,6 +2405,7 @@ class TogetherProvider(LLMProvider):
             return result['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"⚠️  Together AI API request failed: {e}")
+            self._note_api_error(e)
             return self._fallback_description(prompt)
 
     def _call_api_stream(self, prompt: str, max_tokens: int = 4000, system_prompt: str = None,
