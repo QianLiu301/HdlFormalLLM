@@ -1,0 +1,57 @@
+% Fig. 2 — workflow comparison (single-column width, two-column paper)
+% Requires: \usepackage{tikz}  \usetikzlibrary{arrows.meta}
+%
+% Both rows are emitted by the same macro (\wfrow), so the two BDD branches
+% are guaranteed identical; the specification-first row only adds the dashed
+% feedback edge on top of that shared drawing.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  box/.style      = {draw, rounded corners=2pt, align=center,
+                     minimum height=5mm, minimum width=14mm,
+                     inner sep=2pt, font=\footnotesize},
+  flow/.style     = {-{Stealth[length=4pt,width=3pt]},
+                     line width=0.5pt, rounded corners=2pt},
+  fb/.style       = {flow, dashed, dash pattern=on 2pt off 1.5pt},
+  note/.style     = {font=\scriptsize, align=center, inner sep=1pt},
+  rowtitle/.style = {font=\scriptsize\bfseries, anchor=west, inner sep=0pt},
+]
+
+% ---- one row of the pipeline; #1 = node-name prefix, #2 = row title -------
+\newcommand{\wfrow}[2]{%
+  \node[rowtitle]              at (-0.68,0.72) {#2};
+  \node[box, minimum width=13.5mm] (#1int) at (0,0)     {Design\\intent};
+  \node[box]                       (#1duv) at (2.45,0.72)  {1.~DUV Gen};
+  \node[box]                       (#1bdd) at (2.45,-0.72) {2.~BDD Gen};
+  \node[box]                       (#1tb)  at (5.30,0)     {3.~TB Gen};
+  \node[box, minimum width=10mm]   (#1sim) at (7.00,0)     {4.~Sim};
+  \node[note]                      at (5.30,-0.74) {deterministic,\\no LLM};
+  % fan-out
+  \draw[flow] (#1int.east) -- ++(0.35,0) |- (#1duv.west);
+  \draw[flow] (#1int.east) -- ++(0.35,0) |- (#1bdd.west);
+  % fan-in
+  \draw[flow] (#1duv.east) -- ++(1.20,0) |- (#1tb.west);
+  \draw[flow] (#1bdd.east) -- ++(1.20,0) |- (#1tb.west);
+  \draw[flow] (#1tb.east)  -- (#1sim.west);
+}
+
+% ---- upper row -----------------------------------------------------------
+\begin{scope}
+  \wfrow{a}{Implementation-First}
+\end{scope}
+
+% ---- lower row: identical, plus the dashed feedback edge -----------------
+\begin{scope}[yshift=-2.45cm]
+  \wfrow{b}{Specification-First}
+  \draw[fb] ([xshift=-3mm]bbdd.north) -- ([xshift=-3mm]bduv.south);
+  \node[note, anchor=west, text width=17mm] at (2.35,0)
+       {scenarios appended to design prompt};
+\end{scope}
+
+\end{tikzpicture}
+\caption{The two generation orderings. The scenario prompt is
+byte-identical in both; the orderings differ only in whether the
+generated scenarios are appended to the design prompt.}
+\label{fig:workflow}
+\end{figure}
