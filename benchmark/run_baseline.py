@@ -27,6 +27,7 @@ import argparse
 import csv
 import hashlib
 import json
+import shutil
 import sqlite3
 import sys
 import time
@@ -127,6 +128,17 @@ Cover at least:
 - Overwriting a register and reading the new value
 - Reading register 0, and attempting to write register 0 then reading it
 - A reset followed by a read""",
+    # 同 regfile：这段只被解析出参数，BDD 的 prompt 全部来自
+    # prompts/bdd_cpu/v1.yaml。加它是为了让 cpu 能进 run_baseline——
+    # 没有这一项 _bdd_payload 会直接 KeyError。
+    'cpu': lambda bw: f"""{bw}-bit RV32I CPU with a 5-stage pipeline:
+- R-type: ADD SUB AND OR XOR SLT
+- I-type: ADDI ANDI ORI XORI SLTI LW
+- S-type: SW
+- B-type: BEQ BNE BLT BGE
+- J-type: JAL JALR
+- Separate instruction and data memory interfaces
+- Pipeline forwarding, load-use stall, branch flush""",
 }
 
 MAX_RETRIES = 3
@@ -577,6 +589,25 @@ def run_one(client, batch, provider, module_type, seed, session_id,
     row['tb_path'] = tb.get('filepath')
     row['tb_sha256'] = _sha256(tb.get('filepath'))
 
+    def _keep(path, arm):
+        """把一臂的 testbench 另存成带后缀的副本，返回副本路径。
+
+        两次 /api/generate-testbench 用同一个 bdd_filepath，后端据它命名，
+        于是 spec 臂会覆盖 bdd 臂那份。指标不受影响（都是当场算的），但事后
+        再打开 tb_path 拿到的是 spec 臂的文件，与记录的 tb_sha256 对不上，
+        「bdd 臂的 testbench 长什么样」就永远查不回来了。
+        """
+        try:
+            src = Path(path)
+            dst = src.with_name(f'{src.stem}_{arm}{src.suffix}')
+            shutil.copy2(src, dst)
+            return str(dst)
+        except Exception:
+            return path
+
+    # tb_path 指向 bdd 臂的副本，使它与上面记的 tb_sha256 永远一致
+    row['tb_path'] = _keep(tb.get('filepath'), 'bdd')
+
     # ---- Step 4: 仿真 ----
     def rel(p):
         try:
@@ -614,6 +645,7 @@ def run_one(client, batch, provider, module_type, seed, session_id,
                           json={**tb_req, 'oracle_source': 'spec'}).get_json() or {}
     if tb_spec.get('success'):
         sim_spec = simulate(tb_spec.get('filepath'))
+        _keep(tb_spec.get('filepath'), 'spec')   # 同样留一份，便于事后对照两臂
         row['sim_success_spec'] = 1 if sim_spec.get('success') else 0
         row['sim_pass_rate_spec'] = sim_spec.get('pass_rate')
         if sim_spec.get('pass_rate') is not None:

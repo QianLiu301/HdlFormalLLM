@@ -864,6 +864,24 @@ class TestbenchGenerator:
         return None
 
     @staticmethod
+    def _dut_module_name(dut_filepath) -> Optional[str]:
+        """DUV 里第一个 module 的名字。读不到返回 None。
+
+        与 _dut_has_clock / _dut_depth 同一个原则：以 DUV 文件为准。此前只有
+        HTTP 端点做这件事，直接调 generate_single 的调用方拿到的是
+        f"{module_type}_{bitwidth}bit" 这种猜测值，实例化时找不到模块。
+        """
+        if not dut_filepath:
+            return None
+        try:
+            text = Path(dut_filepath).read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            return None
+        text = re.sub(r'//.*', '', text)
+        m = re.search(r'^\s*module\s+(\w+)', text, re.M)
+        return m.group(1) if m else None
+
+    @staticmethod
     def _explain_no_scenarios(spec: Dict, bdd_path) -> str:
         """解析出 0 个场景时，说明是哪一种原因。
 
@@ -1028,7 +1046,12 @@ class TestbenchGenerator:
 
             # Get DUT info
             module_type = dut_info.get('module_type', spec.get('module_type', 'alu'))
-            module_name = dut_info.get('module_name', f"{module_type}_{spec['bitwidth']}bit")
+            # 模块名优先取调用方给的，其次从 DUV 文件读，最后才是猜。猜出来的
+            # 名字（module_type_bitwidthbit）与 DUV 实际叫什么无关，实例化时
+            # 会报 "Unknown module type"。
+            module_name = (dut_info.get('module_name')
+                           or self._dut_module_name(dut_info.get('dut_filepath'))
+                           or f"{module_type}_{spec['bitwidth']}bit")
             bitwidth = dut_info.get('bitwidth', spec['bitwidth'])
 
             # 只有四种模块类型有模板。此前 _generate_testbench_content 的 else
@@ -1215,9 +1238,10 @@ class TestbenchGenerator:
             return self._generate_regfile_testbench(spec, module_name, llm_name,
                                                     oracle_source=oracle_source)
         elif module_type == 'cpu':
-            return self._generate_cpu_testbench(spec, module_name, llm_name)
+            return self._generate_cpu_testbench(spec, module_name, llm_name,
+                                                oracle_source=oracle_source)
         elif module_type in self.ALU_LIKE:
-            # ALU 与 regfile 支持 oracle_source；counter/cpu 尚未接
+            # ALU / regfile / cpu 支持 oracle_source；counter 尚未接
             return self._generate_alu_testbench(spec, module_name, llm_name,
                                                 oracle_source=oracle_source)
         raise ValueError(
@@ -1902,155 +1926,311 @@ class TestbenchGenerator:
 
         return '\n'.join(lines), quality_analysis
 
+    # RV32I 参考语义。只在 oracle_source='spec' 时用来重算期望值，与 ALU 的
+    # _reference_result 同一个角色：这一臂的 oracle 由构造保证正确，它的失败
+    # 只可能来自 DUV。
+    @staticmethod
+    def _rv32i_reference(mnem: str, a: int, b: int, imm: Optional[int]):
+        m32 = 0xFFFFFFFF
+
+        def s(x):
+            return x - (1 << 32) if x >> 31 else x
+
+        rhs = b if imm is None else (imm & m32)
+        table = {
+            'add': (a + rhs) & m32, 'addi': (a + rhs) & m32,
+            'sub': (a - b) & m32,
+            'and': a & rhs, 'andi': a & rhs,
+            'or': a | rhs, 'ori': a | rhs,
+            'xor': a ^ rhs, 'xori': a ^ rhs,
+            'slt': int(s(a) < s(b)), 'slti': int(s(a) < s(rhs)),
+        }
+        return table.get(mnem)
+
+    @staticmethod
+    def _branch_taken(mnem: str, a: int, b: int) -> Optional[bool]:
+        def s(x):
+            return x - (1 << 32) if x >> 31 else x
+
+        return {'beq': a == b, 'bne': a != b,
+                'blt': s(a) < s(b), 'bge': s(a) >= s(b)}.get(mnem)
+
     def _generate_cpu_testbench(
             self,
             spec: Dict,
             module_name: str,
-            llm_name: str
+            llm_name: str,
+            oracle_source: str = 'bdd'
     ) -> Tuple[str, Dict]:
-        """Generate CPU testbench"""
+        """Generate RISC-V CPU testbench from BDD scenarios.
+
+        场景里的 instruction 列是汇编文本，必须先编码成机器码才能驱动 CPU；
+        编码见 src/riscv_asm.py，那里有 23 条对照测试。
+
+        寄存器无法从端口观测——DUV 只暴露 debug_pc/debug_inst——所以每个测试
+        构造一段程序：用 li 预置 rs1/rs2，执行被测指令，再用 SW 把结果写到
+        一个已知的 dmem 地址，testbench 直接读 dmem[] 检查。全程只走
+        imem/dmem 两个已定义接口，不引用 DUV 内部命名。
+
+        分支不比对 Expected_PC：那要按周期采样 debug_pc，而采样时刻取决于
+        具体设计的停顿策略，不同但都正确的设计会给出不同结果。改为让分支
+        跳过后面那条 store——跳了槽位保持初值，没跳则被写入，用同一个 dmem
+        接口判定，不含任何时序假设。
+
+        此前这个模板完全不读 scenario：硬编码 4 条指令跑 50 个周期，
+        total/passed/failed 声明后再没被加过，最后无条件打印
+        "CPU executed successfully"。
+        """
         bitwidth = spec.get('bitwidth', 32)
         scenarios = spec['scenarios']
-
         analyzer = TestQualityAnalyzer(bitwidth=bitwidth, module_type='cpu')
         quality_analysis = analyzer.analyze(scenarios)
 
-        # CPU module name is always riscv_cpu
-        dut_module_name = "riscv_cpu"
+        try:
+            from src.riscv_asm import assemble, li_addi_only, NOP, AsmError
+        except ImportError:
+            from riscv_asm import assemble, li_addi_only, NOP, AsmError
 
-        lines = []
-        lines.append(f"// ==========================================================================")
-        lines.append(f"// RISC-V CPU Testbench - Generated from BDD")
-        lines.append(f"// ==========================================================================")
-        lines.append(f"// LLM Provider: {llm_name}")
-        lines.append(f"// Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"// Architecture: RV32I")
-        lines.append(f"// ==========================================================================")
-        lines.append("")
-        lines.append("`timescale 1ns/1ps")
-        lines.append("")
-        lines.append(f"module {module_name}_tb;")
-        lines.append("")
-        lines.append(f"    // Clock and Reset")
-        lines.append(f"    reg clk;")
-        lines.append(f"    reg rst_n;")
-        lines.append("")
-        lines.append(f"    // Instruction Memory Interface")
-        lines.append(f"    wire [31:0] imem_addr;")
-        lines.append(f"    reg  [31:0] imem_data;")
-        lines.append("")
-        lines.append(f"    // Data Memory Interface")
-        lines.append(f"    wire [31:0] dmem_addr;")
-        lines.append(f"    wire [31:0] dmem_wdata;")
-        lines.append(f"    wire        dmem_wen;")
-        lines.append(f"    wire [3:0]  dmem_be;")
-        lines.append(f"    reg  [31:0] dmem_rdata;")
-        lines.append("")
-        lines.append(f"    // Debug Interface")
-        lines.append(f"    wire [31:0] debug_pc;")
-        lines.append(f"    wire [31:0] debug_inst;")
-        lines.append("")
-        lines.append(f"    // Test counters")
-        lines.append(f"    integer total, passed, failed;")
-        lines.append(f"    integer cycle_count;")
-        lines.append("")
-        lines.append(f"    // Instruction Memory (simple model)")
-        lines.append(f"    reg [31:0] imem [0:255];")
-        lines.append("")
-        lines.append(f"    // Data Memory (simple model)")
-        lines.append(f"    reg [31:0] dmem [0:255];")
-        lines.append("")
-        lines.append(f"    // DUT instantiation")
-        lines.append(f"    {dut_module_name} dut (")
-        lines.append(f"        .clk(clk),")
-        lines.append(f"        .rst_n(rst_n),")
-        lines.append(f"        // Instruction Memory")
-        lines.append(f"        .imem_addr(imem_addr),")
-        lines.append(f"        .imem_data(imem_data),")
-        lines.append(f"        // Data Memory")
-        lines.append(f"        .dmem_addr(dmem_addr),")
-        lines.append(f"        .dmem_wdata(dmem_wdata),")
-        lines.append(f"        .dmem_wen(dmem_wen),")
-        lines.append(f"        .dmem_be(dmem_be),")
-        lines.append(f"        .dmem_rdata(dmem_rdata),")
-        lines.append(f"        // Debug")
-        lines.append(f"        .debug_pc(debug_pc),")
-        lines.append(f"        .debug_inst(debug_inst)")
-        lines.append(f"    );")
-        lines.append("")
-        lines.append(f"    // Clock generation")
-        lines.append(f"    initial clk = 0;")
-        lines.append(f"    always #5 clk = ~clk;")
-        lines.append("")
-        lines.append(f"    // Instruction memory read")
-        lines.append(f"    always @(*) begin")
-        lines.append(f"        imem_data = imem[imem_addr[9:2]];")
-        lines.append(f"    end")
-        lines.append("")
-        lines.append(f"    // Data memory read/write")
-        lines.append(f"    always @(posedge clk) begin")
-        lines.append(f"        if (dmem_wen) begin")
-        lines.append(f"            dmem[dmem_addr[9:2]] <= dmem_wdata;")
-        lines.append(f"        end")
-        lines.append(f"        dmem_rdata <= dmem[dmem_addr[9:2]];")
-        lines.append(f"    end")
-        lines.append("")
-        lines.append(f"    // Test stimulus")
-        lines.append(f"    initial begin")
-        lines.append(f"        // Initialize")
-        lines.append(f"        total = 0; passed = 0; failed = 0;")
-        lines.append(f"        cycle_count = 0;")
-        lines.append(f"        rst_n = 0;")
-        lines.append("")
-        lines.append(f"        // Initialize instruction memory with NOPs")
-        lines.append(f"        for (int i = 0; i < 256; i++) begin")
-        lines.append(f"            imem[i] = 32'h00000013;  // NOP (addi x0, x0, 0)")
-        lines.append(f"        end")
-        lines.append("")
-        lines.append(f"        // Initialize data memory")
-        lines.append(f"        for (int i = 0; i < 256; i++) begin")
-        lines.append(f"            dmem[i] = 32'h0;")
-        lines.append(f"        end")
-        lines.append("")
-        lines.append(f"        // Load test program")
-        lines.append(f"        // Simple test: ADDI x1, x0, 10")
-        lines.append(f"        imem[0] = 32'h00A00093;  // addi x1, x0, 10")
-        lines.append(f"        imem[1] = 32'h01400113;  // addi x2, x0, 20")
-        lines.append(f"        imem[2] = 32'h002081B3;  // add x3, x1, x2")
-        lines.append(f"        imem[3] = 32'h00000013;  // nop")
-        lines.append("")
-        lines.append(f"        $display(\"\\n========================================\");")
-        lines.append(f"        $display(\"RISC-V CPU Testbench - {llm_name}\");")
-        lines.append(f"        $display(\"========================================\\n\");")
-        lines.append("")
-        lines.append(f"        // Release reset")
-        lines.append(f"        #20 rst_n = 1;")
-        lines.append("")
-        lines.append(f"        $display(\"CPU started, running test program...\");")
-        lines.append("")
-        lines.append(f"        // Run for some cycles and monitor")
-        lines.append(f"        repeat(50) begin")
-        lines.append(f"            @(posedge clk);")
-        lines.append(f"            cycle_count = cycle_count + 1;")
-        lines.append(f"            if (debug_pc !== 32'hx) begin")
-        lines.append(
-            f"                $display(\"Cycle %0d: PC=0x%08h, Inst=0x%08h\", cycle_count, debug_pc, debug_inst);")
-        lines.append(f"            end")
-        lines.append(f"        end")
-        lines.append("")
-        lines.append(f"        // Summary")
-        lines.append(f"        $display(\"\\n========================================\");")
-        lines.append(f"        $display(\"Test Summary\");")
-        lines.append(f"        $display(\"========================================\");")
-        lines.append(f"        $display(\"Total cycles: %0d\", cycle_count);")
-        lines.append(f"        $display(\"CPU executed successfully\");")
-        lines.append(f"        $display(\"========================================\\n\");")
-        lines.append(f"        $finish;")
-        lines.append(f"    end")
-        lines.append("")
-        lines.append(f"endmodule")
+        M32 = 0xFFFFFFFF
+        RESULT_BASE = 0x400          # 结果槽位；与被测程序用的地址分开
+        MEM_BASE = 0x100             # @memory 场景的数据区
+        TMP_ADDR_REG = 30            # 存放结果地址，避开 BDD 用的低编号寄存器
+        # marker 必须装得进一条 ADDI（12 位有符号）——见 li_addi_only 的说明，
+        # DUV 的指令表里没有 LUI。0x5A5A5A5A 曾经在这里，CPU 把 LUI 当未知
+        # 指令处理，marker 变成垃圾值，两条分支断言因此假失败。
+        MARKER = 0x2A5               # 分支未跳时写入的标记
 
-        return '\n'.join(lines), quality_analysis
+        def _int(v):
+            if isinstance(v, int):
+                return v & M32
+            if isinstance(v, str):
+                t = v.strip().lower()
+                try:
+                    return int(t, 16) if t.startswith('0x') else int(t, 0)
+                except ValueError:
+                    return None
+            return None
+
+        def _yes(v):
+            return str(v).strip().lower() in ('yes', 'true', '1', 'taken', 'y')
+
+        words: List[int] = []        # 整段程序
+        checks: List[Dict] = []      # (slot, expected, label)
+        stats = {'arith': 0, 'memory': 0, 'branch': 0,
+                 'skipped_unparsable': 0, 'skipped_unsupported': 0,
+                 'skipped_imm_too_large': 0}
+        dmem_init: List[Tuple[int, int]] = []
+
+        for idx, sc in enumerate(scenarios):
+            text = sc.get('instruction') or sc.get('inst') or sc.get('asm')
+            if not isinstance(text, str) or not text.strip():
+                stats['skipped_unparsable'] += 1
+                continue
+            mnem = re.split(r'[\s,]+', text.strip().lower())[0]
+            try:
+                encoded = assemble(text)
+            except AsmError:
+                stats['skipped_unparsable'] += 1
+                continue
+
+            rs1 = _int(sc.get('rs1'))
+            rs2 = _int(sc.get('rs2'))
+            v1 = _int(sc.get('rs1_value'))
+            v2 = _int(sc.get('rs2_value'))
+            rd = _int(sc.get('rd'))
+            slot = (RESULT_BASE + len(checks) * 4)
+
+            # 预置寄存器只能用 ADDI（无 LUI），装不下的值整行跳过并计数，
+            # 不硬凑——凑出来的激励与 BDD 写的不是同一个测试。
+            pre: List[int] = []
+            too_big = False
+            for reg, val in ((rs1, v1), (rs2, v2)):
+                if reg in (None, 0) or val is None:
+                    continue
+                seq = li_addi_only(reg, val)
+                if seq is None:
+                    too_big = True
+                    break
+                pre += seq
+            if too_big:
+                stats['skipped_imm_too_large'] += 1
+                continue
+
+            # ---- 分支：让它跳过后面那条 store ----
+            if mnem in ('beq', 'bne', 'blt', 'bge'):
+                taken = sc.get('taken')
+                want_taken = (self._branch_taken(mnem, v1 or 0, v2 or 0)
+                              if (oracle_source == 'spec' or taken is None)
+                              else _yes(taken))
+                if want_taken is None:
+                    stats['skipped_unsupported'] += 1
+                    continue
+                # 重建分支：偏移固定为 8，正好跳过下一条 store
+                rebuilt = re.sub(r',\s*-?\w+\s*$', ', 8', text.strip())
+                try:
+                    br = assemble(rebuilt)
+                except AsmError:
+                    stats['skipped_unparsable'] += 1
+                    continue
+                addr_seq = li_addi_only(TMP_ADDR_REG, slot)
+                if addr_seq is None:      # 槽位地址超出 ADDI 范围，不再加测试
+                    stats['skipped_imm_too_large'] += 1
+                    continue
+                words += pre + addr_seq + li_addi_only(29, MARKER)
+                words += [NOP, NOP, NOP]
+                words.append(br)
+                words.append(assemble(f'sw x29, 0(x{TMP_ADDR_REG})'))
+                words += [NOP, NOP, NOP, NOP]
+                checks.append({'slot': slot // 4,
+                               'expected': 0 if want_taken else MARKER,
+                               'label': f'{text.strip()} '
+                                        f'({"taken" if want_taken else "not taken"})'})
+                stats['branch'] += 1
+                continue
+
+            # ---- 写寄存器的指令：SW 出去再读 ----
+            if rd is None:
+                # sw：结果直接落在 rs1_value 指向的地址
+                if mnem == 'sw' and v1 is not None and v2 is not None:
+                    words += pre + [NOP, NOP, NOP]
+                    words.append(encoded)
+                    words += [NOP, NOP, NOP]
+                    exp = _int(sc.get('expected'))
+                    if oracle_source == 'spec' or exp is None:
+                        exp = v2
+                    checks.append({'slot': (v1 & 0x3FF) // 4, 'expected': exp,
+                                   'label': text.strip()})
+                    stats['memory'] += 1
+                    continue
+                stats['skipped_unsupported'] += 1
+                continue
+
+            imm = None
+            mm = re.search(r',\s*(-?(?:0x)?[0-9a-fA-F]+)\s*$', text.strip())
+            if mm and mnem.endswith('i'):
+                imm = _int(mm.group(1))
+
+            exp = _int(sc.get('expected'))
+            if mnem == 'lw':
+                mv = _int(sc.get('mem_value'))
+                if v1 is None or mv is None:
+                    stats['skipped_unsupported'] += 1
+                    continue
+                dmem_init.append(((v1 & 0x3FF) // 4, mv))
+                if oracle_source == 'spec' or exp is None:
+                    exp = mv
+                stats['memory'] += 1
+            else:
+                ref = self._rv32i_reference(mnem, v1 or 0, v2 or 0, imm)
+                if oracle_source == 'spec':
+                    if ref is None:
+                        stats['skipped_unsupported'] += 1
+                        continue
+                    exp = ref
+                elif exp is None:
+                    if ref is None:
+                        stats['skipped_unsupported'] += 1
+                        continue
+                    exp = ref
+                stats['arith'] += 1
+
+            addr_seq = li_addi_only(TMP_ADDR_REG, slot)
+            if addr_seq is None:
+                stats['skipped_imm_too_large'] += 1
+                continue
+            words += pre + addr_seq + [NOP, NOP, NOP]
+            words.append(encoded)
+            words += [NOP, NOP, NOP]
+            words.append(assemble(f'sw x{rd}, 0(x{TMP_ADDR_REG})'))
+            words += [NOP, NOP, NOP]
+            checks.append({'slot': slot // 4, 'expected': exp & M32,
+                           'label': text.strip()})
+
+        words += [NOP] * 8
+        quality_analysis['cpu_program'] = dict(
+            stats, instructions=len(words), checks=len(checks))
+
+        # ---- 发射 testbench ----
+        dut = module_name
+        L: List[str] = []
+        A = L.append
+        A('// ==========================================================================')
+        A('// RISC-V CPU Testbench - Generated from BDD')
+        A('// ==========================================================================')
+        A(f'// LLM Provider: {llm_name}')
+        A(f'// Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        A(f'// Oracle: {oracle_source}')
+        A(f'// Program: {len(words)} instructions, {len(checks)} checks')
+        A('// ==========================================================================')
+        A('')
+        A('`timescale 1ns/1ps')
+        A('')
+        A(f'module {module_name}_tb;')
+        A('    reg clk; reg rst_n;')
+        A('    wire [31:0] imem_addr; reg [31:0] imem_data;')
+        A('    wire [31:0] dmem_addr, dmem_wdata; wire dmem_wen; wire [3:0] dmem_be;')
+        A('    reg  [31:0] dmem_rdata;')
+        A('    wire [31:0] debug_pc, debug_inst;')
+        A('    integer total, passed, failed, i;')
+        A('    reg [31:0] imem [0:1023];')
+        A('    reg [31:0] dmem [0:1023];')
+        A('')
+        A(f'    {dut} dut (')
+        A('        .clk(clk), .rst_n(rst_n),')
+        A('        .imem_addr(imem_addr), .imem_data(imem_data),')
+        A('        .dmem_addr(dmem_addr), .dmem_wdata(dmem_wdata),')
+        A('        .dmem_wen(dmem_wen), .dmem_be(dmem_be), .dmem_rdata(dmem_rdata),')
+        A('        .debug_pc(debug_pc), .debug_inst(debug_inst)')
+        A('    );')
+        A('')
+        A('    initial clk = 0;')
+        A('    always #5 clk = ~clk;')
+        A('    always @(*) imem_data = imem[imem_addr[11:2]];')
+        A('    always @(posedge clk) begin')
+        A('        if (dmem_wen) dmem[dmem_addr[11:2]] <= dmem_wdata;')
+        A('        dmem_rdata <= dmem[dmem_addr[11:2]];')
+        A('    end')
+        A('')
+        A('    initial begin')
+        A('        total = 0; passed = 0; failed = 0; rst_n = 0;')
+        A("        for (i = 0; i < 1024; i = i + 1) imem[i] = 32'h00000013;")
+        A("        for (i = 0; i < 1024; i = i + 1) dmem[i] = 32'h0;")
+        for slot, val in dmem_init:
+            A(f"        dmem[{slot}] = 32'h{val & M32:08X};")
+        for n, w in enumerate(words):
+            A(f"        imem[{n}] = 32'h{w:08X};")
+        A('')
+        A(f'        $display("\\n========================================");')
+        A(f'        $display("RISC-V CPU Testbench - {llm_name}");')
+        A(f'        $display("========================================\\n");')
+        A('        #20 rst_n = 1;')
+        A(f'        repeat({len(words) * 3 + 80}) @(posedge clk);')
+        A('')
+        for c in checks:
+            lbl = c['label'].replace('"', "'")[:60]
+            A('        total = total + 1;')
+            A(f"        if (dmem[{c['slot']}] === 32'h{c['expected'] & M32:08X}) begin")
+            A('            passed = passed + 1;')
+            A(f'            $display("\\u2713 PASS  {lbl}");')
+            A('        end else begin')
+            A('            failed = failed + 1;')
+            A(f'            $display("\\u2717 FAIL  {lbl} - expected %0d, got %0d",'
+              f" 32'h{c['expected'] & M32:08X}, dmem[{c['slot']}]);")
+            A('        end')
+        A('')
+        A('        $display("\\n========================================");')
+        A('        $display("Test Summary");')
+        A('        $display("========================================");')
+        A('        $display("Total:  %0d", total);')
+        A('        $display("Passed: %0d", passed);')
+        A('        $display("Failed: %0d", failed);')
+        A('        if (failed == 0) $display("\\n\\U0001F389 ALL TESTS PASSED!");')
+        A('        else $display("\\n\\u26A0  SOME TESTS FAILED");')
+        A('        $display("========================================\\n");')
+        A('        $finish;')
+        A('    end')
+        A('endmodule')
+        return '\n'.join(L), quality_analysis
 
     # ========================================================================
     # Batch Generation (for CLI)
