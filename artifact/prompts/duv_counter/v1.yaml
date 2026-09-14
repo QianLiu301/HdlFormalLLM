@@ -1,0 +1,18 @@
+"version": |-
+  v1
+"stage": |-
+  duv_counter
+"source": |-
+  counter_generator.py::_create_counter_prompt
+"system": |-
+  You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.
+"user": "Generate a synthesizable Verilog module for a {{ bitwidth }}-bit counter.\n\n## Requirements\n\n### Module Interface\n```verilog\nmodule {{ module_name }} #(\n    parameter WIDTH = {{ bitwidth }}\n)(\n    input  wire             clk,        // Clock\n    input  wire             rst_n,      // Active-low reset\n    input  wire             enable,     // Count enable\n    input  wire             load,       // Load preset value\n    input  wire [WIDTH-1:0] load_value, // Preset value to load\n    input  wire [1:0]       mode,       // Counter mode\n    output reg  [WIDTH-1:0] count,      // Current count value\n    output reg              overflow,   // Overflow flag\n    output wire             zero        // Zero flag\n);\n```\n\n### Counter Modes\n{{ chr(10).join(('- ' + m for m in modes_desc)) }}\n\n### Functional Requirements\n1. **Reset**: When rst_n is low, count resets to 0\n2. **Load**: When load is high, count loads from load_value\n3. **Enable**: Counter only counts when enable is high\n4. **Overflow**: \n   - In UP mode: overflow when count transitions from MAX to 0\n   - In DOWN mode: overflow when count transitions from 0 to MAX\n   - In UP-DOWN mode: overflow at both boundaries\n5. **Zero**: High when count equals 0\n\n### Implementation Notes\n- Use synchronous design (all updates on posedge clk)\n- Priority: rst_n > load > enable\n- For UP-DOWN mode, use internal direction register\n- Ensure clean, synthesizable code\n\n### Expected Behavior Example (8-bit UP mode)\n```\ncount: 0xFD -> 0xFE -> 0xFF -> 0x00 (overflow=1) -> 0x01\n```\n### CRITICAL Verilog Rules (MUST follow)\n1. Signals assigned inside `always` blocks MUST be declared as `reg`, not `wire`\n2. Use blocking assignment (=) in combinational always @(*) blocks\n3. Use non-blocking assignment (<=) in sequential always @(posedge clk) blocks\n4. The `direction` register should ONLY be updated in the sequential always block\n5. Ensure all cases in combinational logic have default values to avoid latches\n6. When a case branch has MORE THAN ONE statement, you MUST wrap them in begin/end blocks\n7. Do NOT mix blocking and non-blocking assignments for the same signal\n7. NEVER use `assign` for `reg` signals - `assign` is ONLY for `wire` types\n8. Output ports declared as `reg` should be assigned directly in the always block, no extra `assign` needed\n9. Use Verilog-2001 ONLY. Do NOT use SystemVerilog (no `logic`, no inline for-loop declarations)\n10. For loops: declare `integer i;` BEFORE the for, then use `for (i = 0; ...)`\n\n### Required Implementation for zero flag\nThe `zero` flag MUST be implemented using assign statement (NOT inside always block):\n```verilog\nassign zero = (count == 0);\n```\nDo NOT put zero assignment inside any always block.\n\n## Output Format\nGenerate ONLY the Verilog code. No explanations.\nStart with `module` and end with `endmodule`.\n"
+"variables":
+- |-
+  bitwidth
+- |-
+  module_name
+- |-
+  bitwidth
+- |-
+  chr(10).join(('- ' + m for m in modes_desc))

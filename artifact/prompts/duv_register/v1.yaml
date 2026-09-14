@@ -1,0 +1,34 @@
+"version": |-
+  v1
+"stage": |-
+  duv_register
+"source": |-
+  register_generator.py::_create_regfile_prompt
+"system": |-
+  You are an expert Verilog hardware designer. Generate high-quality, synthesizable RTL code.
+"user": "Generate a synthesizable Verilog module for a {{ depth }}-register {{ bitwidth }}-bit Register File.\n        \n## Design Name\nThis is a \"{{ depth }}x{{ bitwidth }}-bit Register File\" (meaning {{ depth }} registers, each {{ bitwidth }} bits wide).\n## Requirements\n\n### Module Interface\n```verilog\nmodule {{ module_name }} #(\n    parameter WIDTH = {{ bitwidth }},\n    parameter DEPTH = {{ depth }},\n    parameter ADDR_WIDTH = {{ addr_width }}\n)(\n    input  wire                  clk,        // Clock\n    input  wire                  rst_n,      // Active-low reset\n    // Read port 1\n    input  wire [ADDR_WIDTH-1:0] raddr1,     // Read address 1\n    output wire [WIDTH-1:0]      rdata1,     // Read data 1\n    // Read port 2\n    input  wire [ADDR_WIDTH-1:0] raddr2,     // Read address 2\n    output wire [WIDTH-1:0]      rdata2,     // Read data 2\n    // Write port\n    input  wire                  wen,        // Write enable\n    input  wire [ADDR_WIDTH-1:0] waddr,      // Write address\n    input  wire [WIDTH-1:0]      wdata       // Write data\n);\n```\n\n### Functional Requirements\n\n1. **Register Array**: {{ depth }} registers, each {{ bitwidth }} bits wide\n\n2. **Read Ports** (Combinational/Asynchronous):\n   - Two independent read ports\n   - Read is combinational (no clock delay)\n   - Can read any register at any time\n\n3. **Write Port** (Synchronous):\n   - Single write port\n   - Write happens on rising edge of clk when wen=1\n   - Write has priority over reset for normal registers\n\n4. **RISC-V Convention** (IMPORTANT):\n   - Register 0 (x0) MUST always read as 0\n   - Writes to register 0 are ignored\n   - This is hardwired, not just initialized\n\n5. **Reset Behavior**:\n   - When rst_n is low, all registers reset to 0\n   - Register 0 stays 0 regardless\n\n6. **Read-During-Write**:\n   - If reading and writing same address simultaneously\n   - Read should return the OLD value (before write)\n   - This is standard register file behavior\n\n### Implementation Notes\n- Use `reg [WIDTH-1:0] registers [0:DEPTH-1]` for storage\n- Read ports are combinational assigns\n- Write port uses always @(posedge clk)\n- Handle x0 specially in both read and write\n\n### Expected Behavior Example\n```\n// Write 0x1234 to register 5\nwen=1, waddr=5, wdata=0x1234\n// Next cycle: registers[5] = 0x1234\n\n// Read from register 5 and register 0\nraddr1=5, raddr2=0\n// Immediately: rdata1=0x1234, rdata2=0x0000 (x0 always 0)\n\n// Try to write to register 0\nwen=1, waddr=0, wdata=0xFFFF\n// Next cycle: registers[0] still = 0 (write ignored)\n```\n\n## IMPORTANT Verilog Syntax Rules (MUST FOLLOW)\n1. When a case branch has MORE THAN ONE statement, you MUST wrap them in begin/end blocks.\n2. Use Verilog-2001 syntax ONLY. Do NOT use SystemVerilog features.\n3. For loops MUST declare the loop variable OUTSIDE the for statement:\n   CORRECT:   integer i;  for (i = 0; i < N; i = i + 1) begin ... end\n   WRONG:     for (integer i = 0; i < N; i = i + 1) begin ... end\n4. Do NOT use `logic` type - use `reg` and `wire` only.\n5. Use `reg [W-1:0] name;` not `logic [W-1:0] name;`\n\n## Output Format\nGenerate ONLY the Verilog code. No explanations.\nStart with `module` and end with `endmodule`.\n"
+"variables":
+- |-
+  depth
+- |-
+  bitwidth
+- |-
+  depth
+- |-
+  bitwidth
+- |-
+  depth
+- |-
+  bitwidth
+- |-
+  module_name
+- |-
+  bitwidth
+- |-
+  depth
+- |-
+  addr_width
+- |-
+  depth
+- |-
+  bitwidth

@@ -1,0 +1,28 @@
+"version": |-
+  v1
+"stage": |-
+  bdd_counter
+"source": |-
+  feature_generator_llm.py::_create_counter_prompt
+"system": |-
+  You are a hardware verification expert specializing in BDD test generation.
+"user": "You are an expert in hardware verification and BDD (Behavior-Driven Development).\n    Generate a Gherkin-format Feature file for Counter testing.\n\n    CRITICAL FORMAT REQUIREMENTS:\n    1. Use strict Gherkin syntax with Scenario Outline and Examples tables\n    2. Examples table MUST use pipe (|) separators with consistent spacing\n    3. Test all counter modes: UP (00), DOWN (01), UP-DOWN (10)\n    4. Include edge cases: overflow, underflow, zero crossing\n\n    EXAMPLE FORMAT:\n\n    Feature: {{ req['bitwidth'] }}-bit Counter Verification\n      As a hardware verification engineer\n      I want to verify the Counter implementation\n      So that I can ensure correct counting behavior\n\n      Background:\n        Given the Counter is initialized with {{ req['bitwidth'] }}-bit width\n\n      @up_count\n      Scenario Outline: Verify UP counting mode\n        Given the counter is in UP mode (mode=00)\n        And the counter value is <Initial_Value>\n        When I enable counting for <Cycles> cycles\n        Then the counter value should be <Expected_Value>\n        And the overflow flag should be <Overflow>\n\n        Examples:\n          | Initial_Value | Cycles | Expected_Value | Overflow |\n          | 0             | 1      | 1              | False    |\n          | 0             | 5      | 5              | False    |\n          | {{ max_value - 1 }} | 1      | {{ max_value }}    | False    |\n          | {{ max_value }}   | 1      | 0              | True     |\n\n      @down_count\n      Scenario Outline: Verify DOWN counting mode\n        Given the counter is in DOWN mode (mode=01)\n        And the counter value is <Initial_Value>\n        When I enable counting for <Cycles> cycles\n        Then the counter value should be <Expected_Value>\n        And the underflow flag should be <Underflow>\n\n        Examples:\n          | Initial_Value | Cycles | Expected_Value | Underflow |\n          | 5             | 1      | 4              | False     |\n          | 1             | 1      | 0              | False     |\n          | 0             | 1      | {{ max_value }}    | True      |\n\n    NOW GENERATE:\n    - Bitwidth: {{ req['bitwidth'] }}-bit\n    - Maximum value: {{ max_value }}\n    - Modes: UP (00), DOWN (01), UP-DOWN (10)\n    - Include at least {{ req['num_tests'] }} test cases per mode\n\n    Generate the complete Feature file following the exact format above.\n    Output ONLY the Feature file content, no explanations.\n    "
+"variables":
+- |-
+  req['bitwidth']
+- |-
+  req['bitwidth']
+- |-
+  max_value - 1
+- |-
+  max_value
+- |-
+  max_value
+- |-
+  max_value
+- |-
+  req['bitwidth']
+- |-
+  max_value
+- |-
+  req['num_tests']
