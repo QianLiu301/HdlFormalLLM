@@ -60,6 +60,30 @@ def parse_log(log: str) -> Dict[str, Dict[str, List[Dict]]]:
     return out
 
 
+# 各类 testbench 真正读取的 Examples 列（激励与被比较的期望值）。表里其余的列，
+# 比如 ALU 的 Zero_Flag/Overflow、计数器的 Overflow，testbench 不比较——这些
+# 列写对写错都不影响 PASS。结果页把它们列出来，免得"通过"被读成"全都验证过"。
+# regfile 的列按形态匹配（含 addr / data / expect 的列），见 _generate_regfile_testbench。
+_CONSUMED = {
+    'alu': {'a', 'b', 'opcode', 'operation', 'op', 'expected_result', 'result'},
+    'counter': {'initial_value', 'initial', 'value', 'cycles', 'expected_value',
+                'expected', 'mode'},
+    'cpu': {'instruction', 'inst', 'asm', 'rs1', 'rs2', 'rd', 'rs1_value',
+            'rs2_value', 'expected', 'mem_value', 'taken'},
+}
+_CONSUMED['alu_comb'] = _CONSUMED['alu']
+
+
+def unchecked_columns(module_type: Optional[str], columns: List[str]) -> List[str]:
+    if module_type == 'regfile':
+        keep = lambda c: any(k in c for k in ('addr', 'data', 'value', 'expect', 'op', 'reg'))
+        return [c for c in columns if not keep(c)]
+    used = _CONSUMED.get(module_type or '')
+    if used is None:
+        return []
+    return [c for c in columns if c not in used]
+
+
 def summarize(index: Dict, log: str) -> Dict:
     """Join the scenario index with a simulation log."""
     hits = parse_log(log)
@@ -73,6 +97,10 @@ def summarize(index: Dict, log: str) -> Dict:
     for entry in index.get('catalog', []):
         sc = {'id': entry['id'], 'title': entry.get('title', ''),
               'tags': entry.get('tags', []), 'reason': entry.get('reason'),
+              'requirements': entry.get('requirements', []),
+              'span': entry.get('span'),
+              'unchecked_columns': unchecked_columns(index.get('module_type'),
+                                                     entry.get('columns', [])),
               'rows': [], 'checks': 0, 'passed': 0, 'failed': 0}
 
         if entry.get('status') != 'mapped':

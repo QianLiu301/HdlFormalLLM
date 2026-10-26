@@ -481,6 +481,8 @@ class FeatureGeneratorLLM:
         # 期望值和设计按同一个答案来写。流式与非流式端点都经过这里。
         if getattr(self, 'decisions', None) and _prompt_store is not None:
             prompt += _prompt_store.decisions_block(self.decisions)
+            # 只有 BDD 这一侧要求标注；DUV 的 prompt 不带这一句
+            prompt += _prompt_store.req_tag_instruction(self.decisions)
         return prompt
 
     # few-shot 示例块与语义说明，按操作族切分。

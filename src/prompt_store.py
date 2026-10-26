@@ -188,6 +188,22 @@ def decisions_block(record: Optional[dict]) -> str:
     return "\n".join(lines)
 
 
+def req_tag_instruction(record: Optional[dict]) -> str:
+    """只给 BDD 生成器：让每个场景用 @req_N 标出它验证哪几条需求。
+
+    标签必须是 @req_3 而不是 @REQ-3：解析器认的标签形式是 @\\w+，连字符会让
+    整行标签失效，场景随之变成"无法映射"。
+    """
+    reqs = [r for r in ((record or {}).get('requirements') or [])
+            if (r.get('text') or '').strip()]
+    if not reqs:
+        return ""
+    return ("\nTRACEABILITY: put the IDs of the requirements each Scenario Outline "
+            "verifies on that scenario's tag line, as extra tags of the form @req_1, "
+            "@req_2 (REQ-1 -> @req_1). Keep the scenario's other tags. A scenario may "
+            "list several requirements; use only IDs from the list above.\n")
+
+
 def sha256(text: Optional[str]) -> Optional[str]:
     if text is None:
         return None
