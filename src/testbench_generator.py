@@ -17,6 +17,7 @@ Quality Metrics:
 """
 
 import argparse
+import json
 import re
 from collections import defaultdict
 from datetime import datetime
@@ -430,6 +431,10 @@ class FeatureParser:
         self.module_type_override = module_type_override
         self.operations = {}
         self.scenarios = []
+        # 文件里每个场景一条记录，含被跳过的。testbench 只看得到映射成功的
+        # 行；没有这份目录，跳过的场景在结果页上就无从显示。
+        self.catalog: List[Dict] = []
+        self._id_seq: Dict[str, int] = {}
         self.number_format = NumberFormat.DECIMAL
         # 解析过程中被丢弃的内容。此前这些都是静默的，于是"BDD 里有多少
         # 东西工具读不懂"既看不见、也无法作为质量指标使用。
@@ -503,7 +508,33 @@ class FeatureParser:
             'scenarios': self.scenarios,
             'number_format': self.number_format.value,
             'parse_stats': dict(self.stats),
+            'scenario_catalog': self.catalog,
         }
+
+    # ---- 场景编号 -------------------------------------------------------
+    # 编号由这里按标签确定性地生成，不交给 LLM：同一份 .feature 永远得到同一组
+    # 编号，LLM 也无从写错或写重。行号按 Examples 表里的可见位置计（含格式坏的
+    # 行），用户拿着 r3 回到文件里数第 3 行就能找到。
+    _ID_PREFIX = {'counter': 'CNT', 'regfile': 'RF', 'cpu': 'CPU'}
+    _GENERIC_TAGS = {'arithmetic', 'logic', 'logical', 'shift', 'comparison',
+                     'edge', 'edge_case', 'boundary', 'corner', 'basic', 'smoke'}
+
+    def _scenario_id(self, key: Optional[str]) -> str:
+        prefix = ('ALU' if self.module_type in ALU_LIKE_TYPES
+                  else self._ID_PREFIX.get(self.module_type,
+                                           self.module_type.upper()[:6]))
+        key = re.sub(r'[^A-Z0-9]+', '_', (key or 'SCN').upper()).strip('_')[:16] or 'SCN'
+        base = f'{prefix}-{key}'
+        self._id_seq[base] = self._id_seq.get(base, 0) + 1
+        return f'{base}-{self._id_seq[base]:03d}'
+
+    def _id_key(self, tag_line: str, mapped: Optional[str]) -> Optional[str]:
+        """编号中段：映射出的操作名优先，其次是第一个非泛化标签。"""
+        if mapped:
+            return mapped
+        tags = [t.lstrip('@') for t in tag_line.split() if t.startswith('@')]
+        specific = [t for t in tags if t.lower() not in self._GENERIC_TAGS]
+        return (specific or tags or [None])[0]
 
     def _detect_module_type(self, content: str):
         """Detect module type from feature content"""
@@ -580,9 +611,19 @@ class FeatureParser:
         matches = list(pattern.finditer(content))
 
         for idx, m in enumerate(matches):
-            tag = (m.group(1) or '').lower()
+            raw_tags = m.group(1) or ''
+            tag = raw_tags.lower()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
             block_content = content[m.end():end]
+            title = block_content.split('\n', 1)[0].strip()
+
+            def _catalog(sid, status, reason=None, key=None):
+                entry = {'id': sid, 'title': title,
+                         'tags': [t.lstrip('@') for t in raw_tags.split()],
+                         'operation': key, 'status': status, 'reason': reason,
+                         'rows': [], 'rows_malformed': []}
+                self.catalog.append(entry)
+                return entry
 
             # 根据模块类型和 tag 确定操作
             if self.module_type in ALU_LIKE_TYPES:
@@ -592,6 +633,8 @@ class FeatureParser:
                     # 也会被算成 ADD，在 golden 上必然通过，既抬高 test count
                     # 又用无意义的用例稀释 mutation score。
                     self.stats['scenarios_unmapped'] += 1
+                    _catalog(self._scenario_id(self._id_key(raw_tags, None)),
+                             'unmapped', 'tag maps to no known ALU operation')
                     if self.debug:
                         print(f"⚠️  scenario tag {tag.strip()!r} maps to no known "
                               f"operation — scenario skipped")
@@ -608,6 +651,8 @@ class FeatureParser:
                     # regfile 的行是有序有状态的，一次伪造的写会污染它之后
                     # 所有读的期望值。
                     self.stats['scenarios_unmapped'] += 1
+                    _catalog(self._scenario_id(self._id_key(raw_tags, None)),
+                             'unmapped', 'tag maps to no known register-file operation')
                     if self.debug:
                         print(f"⚠️  scenario tag {tag.strip()!r} maps to no regfile "
                               f"operation — scenario skipped")
@@ -615,6 +660,12 @@ class FeatureParser:
             else:
                 operation = None
                 opcode = None
+
+            mapped_key = (operation if self.module_type in ALU_LIKE_TYPES
+                          else regfile_op if self.module_type == 'regfile' else None)
+            sid = self._scenario_id(self._id_key(raw_tags, mapped_key))
+            entry = _catalog(sid, 'mapped', key=mapped_key)
+            row_no = 0
 
             # 提取这个 block 中的 Examples 表格
             examples_pattern = r'Examples?:\s*\n((?:\s*\|.*\n)+)'
@@ -629,9 +680,11 @@ class FeatureParser:
 
                 for row in rows[1:]:
                     cols = [col.strip() for col in row.split('|') if col.strip()]
+                    row_no += 1
 
                     if len(cols) != len(header):
                         self.stats['rows_dropped_malformed'] += 1
+                        entry['rows_malformed'].append(row_no)
                         continue
 
                     scenario = {}
@@ -678,7 +731,31 @@ class FeatureParser:
                         scenario['op'] = row_op or regfile_op
 
                     if scenario:
+                        # 下划线前缀：列名来自小写化的表头，不会撞上；下游按列名
+                        # 取值（.get('a')）或只认整数列（_pick），字符串编号不会
+                        # 被误当成激励。
+                        scenario['_bdd_id'] = f'{sid}/r{row_no}'
+                        scenario['_bdd_scn'] = sid
+                        entry['rows'].append(scenario['_bdd_id'])
                         self.scenarios.append(scenario)
+
+            if not entry['rows']:
+                entry['status'] = 'no_examples'
+                entry['reason'] = ('rows malformed (column count differs from header)'
+                                   if entry['rows_malformed'] else 'no Examples rows')
+
+        # 普通 Scenario（非 Outline）没有 Examples 表，解析器读不了。也编进目录，
+        # 否则它们在结果页上像从没写过一样。
+        for m in re.finditer(r'(?:^[ \t]*((?:@\w+[ \t]*)+)\r?\n)?[ \t]*Scenario:(.*)$',
+                             content, re.MULTILINE):
+            raw_tags = m.group(1) or ''
+            self.catalog.append({
+                'id': self._scenario_id(self._id_key(raw_tags, None)),
+                'title': m.group(2).strip(),
+                'tags': [t.lstrip('@') for t in raw_tags.split()],
+                'operation': None, 'status': 'no_examples',
+                'reason': 'plain Scenario without an Examples table',
+                'rows': [], 'rows_malformed': []})
 
     def _get_alu_operation(self, tag: str, block_content: str) -> Tuple[str, str]:
         """Get ALU operation name and opcode from tag"""
@@ -1116,6 +1193,21 @@ class TestbenchGenerator:
             with open(tb_path, 'w', encoding='utf-8') as f:
                 f.write(tb_content)
 
+            # 场景目录与断言登记放在 testbench 旁边。仿真那一步只拿得到 testbench
+            # 路径，靠这个文件把日志里的 [BDD:...] 对回场景，包括那些没生成断言、
+            # 在日志里根本不出现的场景。
+            trace = quality_analysis.get('trace') or self._new_trace()
+            scenario_index = {
+                'version': 1,
+                'feature': bdd_path.name,
+                'module_type': module_type,
+                'oracle_source': oracle_source,
+                'catalog': spec.get('scenario_catalog', []),
+                'trace': trace,
+            }
+            with open(self.scenario_index_path(tb_path), 'w', encoding='utf-8') as f:
+                json.dump(scenario_index, f, ensure_ascii=False, indent=1)
+
             # Get quality summary
             analyzer = TestQualityAnalyzer(bitwidth=bitwidth, module_type=module_type)
             quality_summary = analyzer.get_summary(quality_analysis)
@@ -1148,6 +1240,7 @@ class TestbenchGenerator:
                 'oracle_source': oracle_source,
                 # 解析过程中丢掉了什么。以前是静默的，现在是可用的质量信号。
                 'parse_stats': spec.get('parse_stats', {}),
+                'scenario_catalog': spec.get('scenario_catalog', []),
             }
 
         except Exception as e:
@@ -1194,6 +1287,43 @@ class TestbenchGenerator:
             'SLT': int(signed(a) < signed(b)),
             'SLTU': int(a < b),
         }.get(op.upper())
+
+    @staticmethod
+    def scenario_index_path(tb_path) -> Path:
+        """foo_tb.v 旁边的 foo_tb.scenarios.json"""
+        return Path(tb_path).with_suffix('.scenarios.json')
+
+    # ---- 场景追踪 -------------------------------------------------------
+    # 每条断言带上它来自哪一行 BDD：[BDD:ALU-ADD-001/r3]。不是来自 BDD、
+    # 由生成器自己加的检查标成 [GEN:...]，结果页把两者分开显示——混在一起，
+    # 生成器的检查就会被当成 BDD 的覆盖率算进去。
+    # 标签追加在原有 PASS/FAIL 文本之后，Total/Passed/Failed 汇总行不变，
+    # 现有的通过率解析与实验脚本不受影响。
+    @staticmethod
+    def _new_trace() -> Dict:
+        return {'checks': {}, 'skipped': {}, 'generated': []}
+
+    @staticmethod
+    def _trace_tag(trace: Dict, scenario: Dict) -> str:
+        """登记一条来自 BDD 行的断言，返回要附在 $display 末尾的标签。"""
+        bid = scenario.get('_bdd_id')
+        if not bid:
+            return ''
+        trace['checks'][bid] = trace['checks'].get(bid, 0) + 1
+        return f' [BDD:{bid}]'
+
+    @staticmethod
+    def _trace_gen(trace: Dict, gid: str, label: str) -> str:
+        """登记一条生成器自加的检查。"""
+        trace['generated'].append({'id': gid, 'label': label})
+        return f' [GEN:{gid}]'
+
+    @staticmethod
+    def _trace_skip(trace: Dict, scenario: Dict, reason: str):
+        """登记一行没能变成断言的 BDD，及原因。"""
+        bid = scenario.get('_bdd_id')
+        if bid:
+            trace['skipped'][bid] = reason
 
     def _format_verilog_value(self, value, bitwidth: int) -> str:
         """
@@ -1348,7 +1478,9 @@ class TestbenchGenerator:
         lines.append("")
 
         # Generate test cases
+        trace = self._new_trace()
         for i, scenario in enumerate(scenarios, 1):
+            tid = self._trace_tag(trace, scenario)
             a_val = scenario.get('a', scenario.get('A', 0))
             b_val = scenario.get('b', scenario.get('B', 0))
             expected = scenario.get('expected_result', scenario.get('result', 0))
@@ -1395,7 +1527,7 @@ class TestbenchGenerator:
             b_str = self._format_verilog_value(b_val, bitwidth)
             exp_str = self._format_verilog_value(expected, bitwidth)
 
-            lines.append(f"        // Test {i}")
+            lines.append(f"        // Test {i}{tid}")
             lines.append(f"        a = {a_str};")
             lines.append(f"        b = {b_str};")
             lines.append(f"        opcode = 4'b{op_str};")
@@ -1403,13 +1535,14 @@ class TestbenchGenerator:
             lines.append(f"        total = total + 1;")
             lines.append(f"        if (result == {exp_str}) begin")
             lines.append(f"            passed = passed + 1;")
-            lines.append(f"            $display(\"✓ Test {i}: PASS\");")
+            lines.append(f"            $display(\"✓ Test {i}: PASS{tid}\");")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
             lines.append(
-                f"            $display(\"✗ Test {i}: FAIL - Expected %d, Got %d\", {exp_str}, result);")
+                f"            $display(\"✗ Test {i}: FAIL - Expected %d, Got %d{tid}\", {exp_str}, result);")
             lines.append(f"        end")
             lines.append("")
+        quality_analysis['trace'] = trace
 
         # Summary
         lines.append(f"        // Summary")
@@ -1535,6 +1668,16 @@ class TestbenchGenerator:
 
         # Generate test cases based on scenarios
         test_num = 0
+        trace = self._new_trace()
+        trace['weak'] = {}
+
+        def _tid(tc, mode, n):
+            """BDD 行用它的编号；BDD 没给这一模式、由生成器补的默认用例标 GEN。"""
+            if tc.get('_bdd_id'):
+                return self._trace_tag(trace, tc)
+            return self._trace_gen(trace, f'CNT-{mode}-DEFAULT-{n}',
+                                   f'{mode} default: initial={tc.get("initial")}, '
+                                   f'cycles={tc.get("cycles")}')
 
         # Group scenarios by mode
         up_tests = []
@@ -1550,7 +1693,8 @@ class TestbenchGenerator:
                            scenario.get('value', 0)))),
                 'cycles': scenario.get('cycles', scenario.get('Cycles', 1)),
                 'expected': scenario.get('expected_value', scenario.get('Expected_Value',
-                           scenario.get('expected', 0)))
+                           scenario.get('expected', 0))),
+                '_bdd_id': scenario.get('_bdd_id'),
             }
 
             if mode_str in ['0', '00', 'UP', 'up']:
@@ -1577,28 +1721,29 @@ class TestbenchGenerator:
                 {'initial': max_value, 'cycles': 1, 'expected': 0},
             ]
 
-            for tc in test_cases:
+            for n, tc in enumerate(test_cases, 1):
                 test_num += 1
                 initial = tc.get('initial', tc.get('Initial_Value', tc.get('value', 0)))
                 cycles = tc.get('cycles', tc.get('Cycles', 1))
                 expected = tc.get('expected', tc.get('Expected_Value', (initial + cycles) % (max_value + 1)))
+                tid = _tid(tc, 'UP', n)
 
                 # Format values correctly
                 initial_str = self._format_verilog_value(initial, bitwidth)
                 expected_str = self._format_verilog_value(expected, bitwidth)
 
-                lines.append(f"        // Test {test_num}: UP mode, initial={initial}, cycles={cycles}")
+                lines.append(f"        // Test {test_num}: UP mode, initial={initial}, cycles={cycles}{tid}")
                 lines.append(f"        load_counter({initial_str});")
                 lines.append(f"        run_cycles({cycles});")
                 lines.append(f"        total = total + 1;")
                 lines.append(f"        if (count == {expected_str}) begin")
                 lines.append(f"            passed = passed + 1;")
                 lines.append(
-                    f"            $display(\"✓ Test {test_num}: PASS - UP from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+                    f"            $display(\"✓ Test {test_num}: PASS - UP from {initial}, {cycles} cycles -> %d (expected {expected}){tid}\", count);")
                 lines.append(f"        end else begin")
                 lines.append(f"            failed = failed + 1;")
                 lines.append(
-                    f"            $display(\"✗ Test {test_num}: FAIL - UP from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+                    f"            $display(\"✗ Test {test_num}: FAIL - UP from {initial}, {cycles} cycles -> %d (expected {expected}){tid}\", count);")
                 lines.append(f"        end")
                 lines.append("")
 
@@ -1615,28 +1760,29 @@ class TestbenchGenerator:
             {'initial': 0, 'cycles': 1, 'expected': max_value},
         ]
 
-        for tc in test_cases:
+        for n, tc in enumerate(test_cases, 1):
             test_num += 1
             initial = tc.get('initial', tc.get('Initial_Value', tc.get('value', 100)))
             cycles = tc.get('cycles', tc.get('Cycles', 1))
             expected = tc.get('expected', tc.get('Expected_Value', (initial - cycles) % (max_value + 1)))
+            tid = _tid(tc, 'DOWN', n)
 
             # Format values correctly
             initial_str = self._format_verilog_value(initial, bitwidth)
             expected_str = self._format_verilog_value(expected, bitwidth)
 
-            lines.append(f"        // Test {test_num}: DOWN mode, initial={initial}, cycles={cycles}")
+            lines.append(f"        // Test {test_num}: DOWN mode, initial={initial}, cycles={cycles}{tid}")
             lines.append(f"        load_counter({initial_str});")
             lines.append(f"        run_cycles({cycles});")
             lines.append(f"        total = total + 1;")
             lines.append(f"        if (count == {expected_str}) begin")
             lines.append(f"            passed = passed + 1;")
             lines.append(
-                f"            $display(\"✓ Test {test_num}: PASS - DOWN from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+                f"            $display(\"✓ Test {test_num}: PASS - DOWN from {initial}, {cycles} cycles -> %d (expected {expected}){tid}\", count);")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
             lines.append(
-                f"            $display(\"✗ Test {test_num}: FAIL - DOWN from {initial}, {cycles} cycles -> %d (expected {expected})\", count);")
+                f"            $display(\"✗ Test {test_num}: FAIL - DOWN from {initial}, {cycles} cycles -> %d (expected {expected}){tid}\", count);")
             lines.append(f"        end")
             lines.append("")
 
@@ -1651,16 +1797,24 @@ class TestbenchGenerator:
             {'initial': 100, 'cycles': 10, 'expected': 110},
         ]
 
-        for tc in test_cases:
+        for n, tc in enumerate(test_cases, 1):
             test_num += 1
             initial = tc.get('initial', tc.get('Initial_Value', tc.get('value', 0)))
             cycles = tc.get('cycles', tc.get('Cycles', 1))
             expected = tc.get('expected', tc.get('Expected_Value', initial + cycles))
+            tid = _tid(tc, 'UPDOWN', n)
+            # 下面的判断 count <= max 对 WIDTH 位的 count 恒为真，与 DUV 行为
+            # 无关，也没用到 BDD 写的期望值。这里不改判断（会改变通过率），
+            # 只把它登记为弱检查，让结果页如实标出来。
+            if tc.get('_bdd_id'):
+                trace['weak'][tc['_bdd_id']] = (
+                    f'range check only (count <= {max_value}); always true, '
+                    f'BDD expected value {expected} not compared')
 
             # Format values correctly
             initial_str = self._format_verilog_value(initial, bitwidth)
 
-            lines.append(f"        // Test {test_num}: UPDOWN mode, initial={initial}, cycles={cycles}")
+            lines.append(f"        // Test {test_num}: UPDOWN mode, initial={initial}, cycles={cycles}{tid}")
             lines.append(f"        load_counter({bitwidth}'d{initial});")
             lines.append(f"        run_cycles({cycles});")
             lines.append(f"        total = total + 1;")
@@ -1669,13 +1823,14 @@ class TestbenchGenerator:
             lines.append(f"        if (count <= {bitwidth}'d{max_value}) begin")
             lines.append(f"            passed = passed + 1;")
             lines.append(
-                f"            $display(\"✓ Test {test_num}: PASS - UPDOWN from {initial}, {cycles} cycles -> %d\", count);")
+                f"            $display(\"✓ Test {test_num}: PASS - UPDOWN from {initial}, {cycles} cycles -> %d{tid}\", count);")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
             lines.append(
-                f"            $display(\"✗ Test {test_num}: FAIL - UPDOWN from {initial}, {cycles} cycles -> %d\", count);")
+                f"            $display(\"✗ Test {test_num}: FAIL - UPDOWN from {initial}, {cycles} cycles -> %d{tid}\", count);")
             lines.append(f"        end")
             lines.append("")
+        quality_analysis['trace'] = trace
 
         # Summary
         lines.append(f"        // ========== SUMMARY ==========")
@@ -1831,21 +1986,23 @@ class TestbenchGenerator:
                          f"wdata = {self._format_verilog_value(data, bitwidth)};")
             lines.append(f"        @(posedge clk); #1; wen = 0;")
 
-        def emit_read(n, addr, expect):
+        def emit_read(n, addr, expect, tid=''):
             exp = self._format_verilog_value(expect, bitwidth)
-            lines.append(f"        // row {n}: read R{addr}, expect {expect}")
+            lines.append(f"        // row {n}: read R{addr}, expect {expect}{tid}")
             lines.append(f"        raddr1 = {addr_width}'d{addr}; #1;")
             lines.append(f"        total = total + 1;")
             lines.append(f"        if (rdata1 == {exp}) begin")
             lines.append(f"            passed = passed + 1;")
-            lines.append(f"            $display(\"✓ row {n}: PASS - R%0d = %0d\", "
+            lines.append(f"            $display(\"✓ row {n}: PASS - R%0d = %0d{tid}\", "
                          f"{addr_width}'d{addr}, rdata1);")
             lines.append(f"        end else begin")
             lines.append(f"            failed = failed + 1;")
             lines.append(f"            $display(\"✗ row {n}: FAIL - R%0d expected %0d, "
-                         f"got %0d\", {addr_width}'d{addr}, {exp}, rdata1);")
+                         f"got %0d{tid}\", {addr_width}'d{addr}, {exp}, rdata1);")
             lines.append(f"        end")
 
+        trace = self._new_trace()
+        trace['setup'] = {}
         for i, scenario in enumerate(scenarios, 1):
             op = scenario.get('op')
             addr = _addr(scenario)
@@ -1853,6 +2010,8 @@ class TestbenchGenerator:
             if op == 'reset':
                 stats['reset'] += 1
                 model.clear()
+                if scenario.get('_bdd_id'):
+                    trace['setup'][scenario['_bdd_id']] = 'reset (no check of its own)'
                 lines.append(f"        // row {i}: reset")
                 lines.append(f"        rst_n = 0; @(posedge clk); #1; rst_n = 1; #1;")
                 lines.append("")
@@ -1860,13 +2019,19 @@ class TestbenchGenerator:
 
             if addr is None:
                 stats['skipped'] += 1
+                self._trace_skip(trace, scenario, 'no address column could be identified')
                 continue
 
             if op in ('write', 'write_read'):
                 data = _data(scenario)
                 if data is None:
                     stats['skipped'] += 1
+                    self._trace_skip(trace, scenario, 'no data column could be identified')
                     continue
+                if op == 'write' and scenario.get('_bdd_id'):
+                    # 写本身没有可检查的输出，由后续的读来验证
+                    trace['setup'][scenario['_bdd_id']] = (
+                        'write (verified by later reads, no check of its own)')
                 emit_write(i, addr, data)
                 if addr != 0:               # 写 x0 被硬件忽略
                     model[addr] = data
@@ -1883,7 +2048,7 @@ class TestbenchGenerator:
                     e = _pick(scenario, 'expected')
                     if isinstance(e, int):
                         expect = e & mask
-                emit_read(i, addr, expect)
+                emit_read(i, addr, expect, self._trace_tag(trace, scenario))
                 stats['read'] += 1 if op == 'read' else 0
                 stats['write_read'] += 1 if op == 'write_read' else 0
             lines.append("")
@@ -1891,7 +2056,10 @@ class TestbenchGenerator:
         quality_analysis['regfile_sequence'] = stats
 
         # Test register 0 (should always be 0)
-        lines.append(f"        // Test: Register 0 should always be 0")
+        # 这条检查不来自 BDD，是模板固定加的
+        r0 = self._trace_gen(trace, 'RF-R0', 'register 0 reads as 0 after a write')
+        quality_analysis['trace'] = trace
+        lines.append(f"        // Test: Register 0 should always be 0{r0}")
         lines.append(f"        wen = 1; waddr = {addr_width}'d0; wdata = {bitwidth}'d255;")
         lines.append(f"        #10;")
         lines.append(f"        wen = 0; raddr1 = {addr_width}'d0;")
@@ -1899,10 +2067,10 @@ class TestbenchGenerator:
         lines.append(f"        total = total + 1;")
         lines.append(f"        if (rdata1 == {bitwidth}'d0) begin")
         lines.append(f"            passed = passed + 1;")
-        lines.append(f"            $display(\"✓ Test R0: PASS - R0 is always 0\");")
+        lines.append(f"            $display(\"✓ Test R0: PASS - R0 is always 0{r0}\");")
         lines.append(f"        end else begin")
         lines.append(f"            failed = failed + 1;")
-        lines.append(f"            $display(\"✗ Test R0: FAIL - R0 should be 0, got %0d\", rdata1);")
+        lines.append(f"            $display(\"✗ Test R0: FAIL - R0 should be 0, got %0d{r0}\", rdata1);")
         lines.append(f"        end")
         lines.append("")
 
@@ -2021,16 +2189,29 @@ class TestbenchGenerator:
                  'skipped_imm_too_large': 0}
         dmem_init: List[Tuple[int, int]] = []
 
+        trace = self._new_trace()
+        _SKIP_REASON = {
+            'skipped_unparsable': 'instruction could not be parsed or assembled',
+            'skipped_imm_too_large': 'operand value does not fit one ADDI '
+                                     '(-2048..2047); the spec has no LUI',
+            'skipped_unsupported': 'instruction/column combination not '
+                                   'supported by the CPU template',
+        }
+
+        def skip(sc, key):
+            stats[key] += 1
+            self._trace_skip(trace, sc, _SKIP_REASON[key])
+
         for idx, sc in enumerate(scenarios):
             text = sc.get('instruction') or sc.get('inst') or sc.get('asm')
             if not isinstance(text, str) or not text.strip():
-                stats['skipped_unparsable'] += 1
+                skip(sc, 'skipped_unparsable')
                 continue
             mnem = re.split(r'[\s,]+', text.strip().lower())[0]
             try:
                 encoded = assemble(text)
             except AsmError:
-                stats['skipped_unparsable'] += 1
+                skip(sc, 'skipped_unparsable')
                 continue
 
             rs1 = _int(sc.get('rs1'))
@@ -2053,7 +2234,7 @@ class TestbenchGenerator:
                     break
                 pre += seq
             if too_big:
-                stats['skipped_imm_too_large'] += 1
+                skip(sc, 'skipped_imm_too_large')
                 continue
 
             # ---- 分支：让它跳过后面那条 store ----
@@ -2063,25 +2244,25 @@ class TestbenchGenerator:
                               if (oracle_source == 'spec' or taken is None)
                               else _yes(taken))
                 if want_taken is None:
-                    stats['skipped_unsupported'] += 1
+                    skip(sc, 'skipped_unsupported')
                     continue
                 # 重建分支：偏移固定为 8，正好跳过下一条 store
                 rebuilt = re.sub(r',\s*-?\w+\s*$', ', 8', text.strip())
                 try:
                     br = assemble(rebuilt)
                 except AsmError:
-                    stats['skipped_unparsable'] += 1
+                    skip(sc, 'skipped_unparsable')
                     continue
                 addr_seq = li_addi_only(TMP_ADDR_REG, slot)
                 if addr_seq is None:      # 槽位地址超出 ADDI 范围，不再加测试
-                    stats['skipped_imm_too_large'] += 1
+                    skip(sc, 'skipped_imm_too_large')
                     continue
                 words += pre + addr_seq + li_addi_only(29, MARKER)
                 words += [NOP, NOP, NOP]
                 words.append(br)
                 words.append(assemble(f'sw x29, 0(x{TMP_ADDR_REG})'))
                 words += [NOP, NOP, NOP, NOP]
-                checks.append({'slot': slot // 4,
+                checks.append({'tid': self._trace_tag(trace, sc), 'slot': slot // 4,
                                'expected': 0 if want_taken else MARKER,
                                'label': f'{text.strip()} '
                                         f'({"taken" if want_taken else "not taken"})'})
@@ -2098,11 +2279,11 @@ class TestbenchGenerator:
                     exp = _int(sc.get('expected'))
                     if oracle_source == 'spec' or exp is None:
                         exp = v2
-                    checks.append({'slot': (v1 & 0x3FF) // 4, 'expected': exp,
+                    checks.append({'tid': self._trace_tag(trace, sc), 'slot': (v1 & 0x3FF) // 4, 'expected': exp,
                                    'label': text.strip()})
                     stats['memory'] += 1
                     continue
-                stats['skipped_unsupported'] += 1
+                skip(sc, 'skipped_unsupported')
                 continue
 
             imm = None
@@ -2114,7 +2295,7 @@ class TestbenchGenerator:
             if mnem == 'lw':
                 mv = _int(sc.get('mem_value'))
                 if v1 is None or mv is None:
-                    stats['skipped_unsupported'] += 1
+                    skip(sc, 'skipped_unsupported')
                     continue
                 dmem_init.append(((v1 & 0x3FF) // 4, mv))
                 if oracle_source == 'spec' or exp is None:
@@ -2124,29 +2305,30 @@ class TestbenchGenerator:
                 ref = self._rv32i_reference(mnem, v1 or 0, v2 or 0, imm)
                 if oracle_source == 'spec':
                     if ref is None:
-                        stats['skipped_unsupported'] += 1
+                        skip(sc, 'skipped_unsupported')
                         continue
                     exp = ref
                 elif exp is None:
                     if ref is None:
-                        stats['skipped_unsupported'] += 1
+                        skip(sc, 'skipped_unsupported')
                         continue
                     exp = ref
                 stats['arith'] += 1
 
             addr_seq = li_addi_only(TMP_ADDR_REG, slot)
             if addr_seq is None:
-                stats['skipped_imm_too_large'] += 1
+                skip(sc, 'skipped_imm_too_large')
                 continue
             words += pre + addr_seq + [NOP, NOP, NOP]
             words.append(encoded)
             words += [NOP, NOP, NOP]
             words.append(assemble(f'sw x{rd}, 0(x{TMP_ADDR_REG})'))
             words += [NOP, NOP, NOP]
-            checks.append({'slot': slot // 4, 'expected': exp & M32,
+            checks.append({'tid': self._trace_tag(trace, sc), 'slot': slot // 4, 'expected': exp & M32,
                            'label': text.strip()})
 
         words += [NOP] * 8
+        quality_analysis['trace'] = trace
         quality_analysis['cpu_program'] = dict(
             stats, instructions=len(words), checks=len(checks))
 
@@ -2211,10 +2393,10 @@ class TestbenchGenerator:
             A('        total = total + 1;')
             A(f"        if (dmem[{c['slot']}] === 32'h{c['expected'] & M32:08X}) begin")
             A('            passed = passed + 1;')
-            A(f'            $display("\\u2713 PASS  {lbl}");')
+            A(f'            $display("\\u2713 PASS  {lbl}{c["tid"]}");')
             A('        end else begin')
             A('            failed = failed + 1;')
-            A(f'            $display("\\u2717 FAIL  {lbl} - expected %0d, got %0d",'
+            A(f'            $display("\\u2717 FAIL  {lbl} - expected %0d, got %0d{c["tid"]}",'
               f" 32'h{c['expected'] & M32:08X}, dmem[{c['slot']}]);")
             A('        end')
         A('')

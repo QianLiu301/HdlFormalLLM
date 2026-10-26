@@ -176,6 +176,18 @@ class WebSimulationRunner:
 
                 # Parse results
                 self._parse_output(result, log_content)
+                # 按场景的结果：仅当 testbench 旁有场景目录时才有（新生成的都有，
+                # 旧 testbench 没有，照旧只给总通过率）
+                try:
+                    try:
+                        from scenario_results import summarize_for_testbench
+                    except ImportError:
+                        from src.scenario_results import summarize_for_testbench
+                    per_scenario = summarize_for_testbench(tb_path, log_content)
+                    if per_scenario:
+                        result['scenario_results'] = per_scenario
+                except Exception as e:      # 附加信息，失败不影响仿真结果本身
+                    print(f"scenario results unavailable: {e}")
 
                 # Check for VCD file
                 vcd_files = list(results_dir.glob('*.vcd'))
