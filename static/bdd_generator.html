@@ -198,6 +198,16 @@
         .req-q .req-custom { width: 100%; box-sizing: border-box; margin-top: 4px; font-size: 12px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; }
         .req-block summary { font-size: 12px; color: var(--text-secondary); cursor: pointer; margin-bottom: 6px; }
         .req-block pre { white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; max-height: 260px; overflow: auto; }
+        /* 需求覆盖表 */
+        #sim-cov-list td { vertical-align: top; white-space: normal; }
+        #sim-cov-list td.num { white-space: nowrap; }
+        #sim-cov-list td.cov-text { font-family: 'Inter', -apple-system, sans-serif; font-size: 12px; line-height: 1.45; min-width: 200px; }
+        #sim-cov-list td:last-child { min-width: 110px; }
+        .cov-unc { font-size: 10px; color: #b45309; margin-top: 3px; white-space: normal; font-family: inherit; }
+        .cov-chip { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 1px 6px; margin: 1px 2px 1px 0; border-radius: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-secondary); white-space: nowrap; }
+        .cov-chip.cov-pass { color: var(--accent); border-color: rgba(0, 168, 132, 0.35); }
+        .cov-chip.cov-fail, .cov-chip.cov-incomplete { color: var(--error); border-color: rgba(220, 38, 38, 0.35); }
+        .cov-chip.cov-weak, .cov-chip.cov-partial, .cov-chip.cov-no_check, .cov-chip.cov-not_run { color: #b45309; border-color: rgba(245, 158, 11, 0.4); }
         /* 按场景的结果：一个场景一行，点开看它的每一行 Examples */
         .scn-summary { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.6; }
         .scn-summary strong { color: var(--text-primary); }
@@ -2045,6 +2055,15 @@
                     </p>
                 </div>
 
+                <!-- 需求覆盖：Step 0 确认过需求时才显示。链接来自 BDD 生成器在场景上
+                     标的 @req_N，是模型的说法，未经人工核对，界面上要明说。 -->
+                <div id="sim-coverage" style="display: none;">
+                    <div class="preview-label">📌 Requirements Coverage</div>
+                    <div class="scn-summary" id="sim-cov-summary"></div>
+                    <div class="sim-failure-list" id="sim-cov-list"></div>
+                    <p class="sim-failure-hint" id="sim-cov-hint"></p>
+                </div>
+
                 <!-- 按场景的结果。每条断言在日志里带着它来自哪一行 BDD，没能变成
                      断言的场景也列出来——否则总通过率只算了生成出测试的那部分。
                      旧 testbench 没有场景编号，这一块不显示。 -->
@@ -2082,6 +2101,10 @@
                     </button>
                     <button class="btn btn-secondary btn-sm" id="sim-download-log" onclick="downloadSimLog()">📥
                         Download Log
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="sim-download-report" onclick="downloadRunReport()"
+                            title="Requirements, decisions, scenarios with results, and every generated file">
+                        📦 Download Report
                     </button>
                     <button class="btn btn-secondary btn-sm" onclick="resetSimulation()">🔄 Reset</button>
                 </div>
@@ -5717,8 +5740,11 @@
                 }
 
                 currentSimResult = data;
+                // 报告要用到这一轮各步的产物路径，记在仿真结果上，换了文件也不会串
+                currentSimResult.paths = reportPaths(tbPath, dutPath);
                 displaySimulationResult(data);
                 updateStepStatus(4, 'completed');
+                loadRunReport();
 
             } catch (error) {
                 showError('sim', error.message);
@@ -5833,7 +5859,10 @@
             let list = sr.scenarios.map(s => {
                 const count = s.checks ? `${s.passed}/${s.checks}` : '—';
                 const open = ['fail', 'incomplete'].includes(s.status) ? ' open' : '';
-                const reason = s.reason ? `<div class="scn-reason">${escapeHtml(s.reason)}</div>` : '';
+                const reason = (s.reason ? `<div class="scn-reason">${escapeHtml(s.reason)}</div>` : '')
+                    + ((s.unchecked_columns || []).length
+                        ? `<div class="scn-reason">Columns not compared by the testbench: `
+                          + `${escapeHtml(s.unchecked_columns.join(', '))}</div>` : '');
                 const rows = (s.rows || []).map(rowHtml).join('');
                 return `<details class="scn scn-${s.status}"${open}>`
                      + `<summary><span class="scn-badge">${SCN_LABEL[s.status] || s.status}</span>`
@@ -5858,6 +5887,105 @@
             }
             document.getElementById('sim-scn-list').innerHTML = list;
             box.style.display = 'block';
+        }
+
+        // ============================================================
+        // #6 运行报告：需求 → 场景 → 断言 → 结果，可在页面查看、可下载
+        // ============================================================
+        function reportPaths(tbPath, dutPath) {
+            return {
+                requirements_filepath: currentRequirements ? currentRequirements.filepath : null,
+                bdd_filepath: currentBDD ? currentBDD.filepath : null,
+                duv_filepath: dutPath, testbench_path: tbPath,
+                log_file: currentSimResult ? currentSimResult.log_file : null
+            };
+        }
+
+        const COV_LABEL = { pass: '✓ PASS', fail: '✗ FAIL', unverified: '⚠ UNVERIFIED',
+                            not_covered: '⚠ NOT COVERED' };
+        const COV_CLASS = { pass: 'pass', fail: 'fail', unverified: 'weak', not_covered: 'not_run' };
+
+        async function loadRunReport() {
+            const box = document.getElementById('sim-coverage');
+            box.style.display = 'none';
+            if (!currentSimResult || !currentSimResult.paths) return;
+            try {
+                const r = await fetch('/api/run-report', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentSimResult.paths)
+                });
+                const rep = await r.json();
+                if (rep.success && rep.traceability) renderCoverage(rep.traceability);
+            } catch (e) {
+                console.warn('run report unavailable:', e);   // 附加信息，失败不影响仿真结果
+            }
+        }
+
+        function renderCoverage(tr) {
+            const reqs = tr.requirements || [];
+            if (!reqs.length) return;
+            const by = tr.by_status || {};
+            const parts = [`<strong>${reqs.length}</strong> requirements`];
+            if (by.pass) parts.push(`${by.pass} verified`);
+            if (by.fail) parts.push(`<span style="color:var(--error)">${by.fail} failing</span>`);
+            if (by.unverified) parts.push(`<span class="scn-warn">${by.unverified} not fully verified</span>`);
+            if (by.not_covered) parts.push(`<span class="scn-warn">${by.not_covered} not covered by any scenario</span>`);
+            document.getElementById('sim-cov-summary').innerHTML = parts.join(' · ');
+
+            const rows = reqs.map(r => {
+                const chips = r.scenarios.map(s =>
+                    `<span class="cov-chip cov-${s.status}" title="${escapeHtml(s.title)}">${escapeHtml(s.id)}</span>`
+                ).join(' ') || '<span class="scn-warn">—</span>';
+                const unc = (r.unchecked_columns || []).length
+                    ? `<div class="cov-unc">not compared: ${escapeHtml(r.unchecked_columns.join(', '))}</div>` : '';
+                return `<tr><td class="num">${escapeHtml(r.id)}</td>`
+                     + `<td class="cov-text">${escapeHtml(r.text)}</td>`
+                     + `<td>${chips}</td>`
+                     + `<td><span class="scn-${COV_CLASS[r.status] || 'not_run'}">`
+                     + `<span class="scn-badge">${COV_LABEL[r.status] || r.status}</span></span>${unc}</td></tr>`;
+            }).join('');
+            const orphans = tr.orphan_scenarios || [];
+            const orphanRow = orphans.length
+                ? `<tr><td class="num">—</td><td class="cov-text scn-warn">Scenarios not linked to any requirement</td>`
+                  + `<td>${orphans.map(s => `<span class="cov-chip">${escapeHtml(s.id)}</span>`).join(' ')}</td><td></td></tr>`
+                : '';
+            document.getElementById('sim-cov-list').innerHTML =
+                `<table><thead><tr><th>Req</th><th>Requirement</th><th>Scenarios</th><th>Status</th></tr></thead>`
+                + `<tbody>${rows}${orphanRow}</tbody></table>`;
+            document.getElementById('sim-cov-hint').textContent =
+                `Which scenario covers which requirement was ${tr.link_source}. `
+                + `A requirement counts as verified only if every scenario linked to it passed. `
+                + `The testbench compares only the main output: columns listed as "not compared" `
+                + `(such as flags) are in the scenarios but never checked, so a requirement about `
+                + `them is not verified by a pass.`;
+            document.getElementById('sim-coverage').style.display = 'block';
+        }
+
+        async function downloadRunReport() {
+            if (!currentSimResult || !currentSimResult.paths) {
+                showError('sim', 'Run the simulation first.');
+                return;
+            }
+            try {
+                const r = await fetch('/api/run-report/download', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentSimResult.paths)
+                });
+                if (!r.ok) {
+                    const j = await r.json().catch(() => ({}));
+                    throw new Error(j.error || `HTTP ${r.status}`);
+                }
+                const blob = await r.blob();
+                const name = ((r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/) || [])[1]
+                             || 'run_report.zip';
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = name;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 2000);
+            } catch (e) {
+                showError('sim', `Report download failed: ${e.message}`);
+            }
         }
 
         function displaySimulationResult(data) {
@@ -6139,6 +6267,7 @@
         document.getElementById('sim-result').classList.remove('visible');
         document.getElementById('sim-download-vcd').style.display = 'none';
         document.getElementById('vcd-tip').style.display = 'none';
+        document.getElementById('sim-coverage').style.display = 'none';
         currentSimResult = null;
         updateStepStatus(4, 'pending');
     }

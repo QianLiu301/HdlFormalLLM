@@ -37,6 +37,7 @@ sys.path.insert(0, str(SRC_DIR))
 from src.experiment_logger import call_context, log_artifact  # noqa: E402
 from src import prompt_store  # noqa: E402
 from src import requirements_store  # noqa: E402
+from src import run_report  # noqa: E402
 
 # ============================================================================
 # Configuration Loading
@@ -2402,6 +2403,34 @@ def _provider_class(name):
 # ============================================================================
 # Testbench Generator API
 # ============================================================================
+def _report_paths(data):
+    """浏览器送来的各步产物路径；run_report 会检查它们都在 output/ 下。"""
+    return {'requirements': data.get('requirements_filepath'),
+            'bdd': data.get('bdd_filepath'), 'duv': data.get('duv_filepath'),
+            'testbench': data.get('testbench_path'), 'log': data.get('log_file')}
+
+
+@app.route('/api/run-report', methods=['POST'])
+def run_report_json():
+    """一次运行的报告：需求 → 场景 → 断言 → 结果。供 Step 4 页面显示。"""
+    report, err = run_report.build(PROJECT_ROOT, _report_paths(request.json or {}))
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    return jsonify({'success': True, **report})
+
+
+@app.route('/api/run-report/download', methods=['POST'])
+def run_report_download():
+    """同一份报告打包成 zip：Markdown 给人看，traceability.json 给程序读，附原始产物。"""
+    report, err = run_report.build(PROJECT_ROOT, _report_paths(request.json or {}))
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    blob = run_report.to_zip(report, PROJECT_ROOT)
+    name = f"run_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return send_file(io.BytesIO(blob), mimetype='application/zip',
+                     as_attachment=True, download_name=name)
+
+
 def _requirements_config_line(data):
     """告诉分析模型哪些东西已由工具定死，免得它去问端口名和操作码。"""
     mt = (data.get('module_type') or 'design').strip()

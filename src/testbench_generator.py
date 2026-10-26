@@ -528,6 +528,13 @@ class FeatureParser:
         self._id_seq[base] = self._id_seq.get(base, 0) + 1
         return f'{base}-{self._id_seq[base]:03d}'
 
+    _REQ_TAG = re.compile(r'@req_(\d+)\b[ \t]*', re.IGNORECASE)
+
+    def _split_req_tags(self, tag_line: str) -> Tuple[str, List[str]]:
+        """把 @req_3 这类需求标签从标签行里拿出来：(其余标签, ['REQ-3', ...])"""
+        ids = [f'REQ-{n}' for n in self._REQ_TAG.findall(tag_line)]
+        return self._REQ_TAG.sub('', tag_line), list(dict.fromkeys(ids))
+
     def _id_key(self, tag_line: str, mapped: Optional[str]) -> Optional[str]:
         """编号中段：映射出的操作名优先，其次是第一个非泛化标签。"""
         if mapped:
@@ -611,15 +618,20 @@ class FeatureParser:
         matches = list(pattern.finditer(content))
 
         for idx, m in enumerate(matches):
-            raw_tags = m.group(1) or ''
+            # @req_N 是场景声称覆盖的需求编号（Step 0 确认过需求时 BDD 生成器会写）。
+            # 先摘出来单独记，剩下的标签照旧参与操作映射与编号——带不带这些
+            # 标签，testbench 都逐字相同。
+            raw_tags, req_ids = self._split_req_tags(m.group(1) or '')
             tag = raw_tags.lower()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
             block_content = content[m.end():end]
             title = block_content.split('\n', 1)[0].strip()
+            span = [m.start(), end]
 
             def _catalog(sid, status, reason=None, key=None):
                 entry = {'id': sid, 'title': title,
                          'tags': [t.lstrip('@') for t in raw_tags.split()],
+                         'requirements': req_ids, 'span': span,
                          'operation': key, 'status': status, 'reason': reason,
                          'rows': [], 'rows_malformed': []}
                 self.catalog.append(entry)
@@ -677,6 +689,9 @@ class FeatureParser:
                     continue
 
                 header = [col.strip().lower() for col in rows[0].split('|') if col.strip()]
+                # 记下表头：结果页要指出哪些列 testbench 根本没比较（比如标志位）
+                entry.setdefault('columns', [])
+                entry['columns'] += [h for h in header if h not in entry['columns']]
 
                 for row in rows[1:]:
                     cols = [col.strip() for col in row.split('|') if col.strip()]
@@ -746,13 +761,17 @@ class FeatureParser:
 
         # 普通 Scenario（非 Outline）没有 Examples 表，解析器读不了。也编进目录，
         # 否则它们在结果页上像从没写过一样。
-        for m in re.finditer(r'(?:^[ \t]*((?:@\w+[ \t]*)+)\r?\n)?[ \t]*Scenario:(.*)$',
-                             content, re.MULTILINE):
-            raw_tags = m.group(1) or ''
+        plain = list(re.finditer(r'(?:^[ \t]*((?:@\w+[ \t]*)+)\r?\n)?[ \t]*Scenario:(.*)$',
+                                 content, re.MULTILINE))
+        for k, m in enumerate(plain):
+            raw_tags, req_ids = self._split_req_tags(m.group(1) or '')
+            nxt = re.search(r'^[ \t]*(?:@|Scenario)', content[m.end():], re.MULTILINE)
             self.catalog.append({
                 'id': self._scenario_id(self._id_key(raw_tags, None)),
                 'title': m.group(2).strip(),
                 'tags': [t.lstrip('@') for t in raw_tags.split()],
+                'requirements': req_ids,
+                'span': [m.start(), m.end() + nxt.start() if nxt else len(content)],
                 'operation': None, 'status': 'no_examples',
                 'reason': 'plain Scenario without an Examples table',
                 'rows': [], 'rows_malformed': []})
