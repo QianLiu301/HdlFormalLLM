@@ -180,6 +180,40 @@
         .sim-failure-list td.got { color: var(--error); font-weight: 600; }
         .sim-failure-list td.delta { color: var(--text-secondary); font-size: 11px; }
         .sim-failure-hint { font-size: 11px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
+        /* 按场景的结果：一个场景一行，点开看它的每一行 Examples */
+        .scn-summary { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.6; }
+        .scn-summary strong { color: var(--text-primary); }
+        .scn-summary .scn-warn { color: #b45309; }
+        .scn-list { border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-bottom: 6px; }
+        .scn { border-top: 1px solid var(--border-color); }
+        .scn:first-child { border-top: none; }
+        .scn > summary { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; list-style: none; font-size: 12px; }
+        .scn > summary::-webkit-details-marker { display: none; }
+        .scn > summary:hover { background: var(--bg-secondary); }
+        .scn-badge { flex: 0 0 92px; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px; text-align: center; }
+        .scn-pass .scn-badge { color: var(--accent); background: rgba(0, 168, 132, 0.10); }
+        .scn-fail .scn-badge, .scn-incomplete .scn-badge { color: var(--error); background: rgba(220, 38, 38, 0.10); }
+        .scn-weak .scn-badge, .scn-partial .scn-badge, .scn-not_run .scn-badge, .scn-no_check .scn-badge { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+        .scn-setup .scn-badge { color: var(--text-secondary); background: var(--bg-secondary); }
+        .scn-id { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); flex: 0 0 auto; }
+        .scn-title { flex: 1 1 auto; min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .scn-count { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); flex: 0 0 auto; }
+        .scn-body { padding: 4px 12px 10px 114px; font-size: 11px; }
+        .scn-reason { color: #b45309; margin: 2px 0 6px; }
+        .scn-row { display: flex; gap: 8px; font-family: 'JetBrains Mono', monospace; padding: 2px 0; color: #333; }
+        .scn-row .r-id { flex: 0 0 34px; color: var(--text-secondary); }
+        .scn-row .r-st { flex: 0 0 14px; text-align: center; }
+        .scn-row.r-fail { color: var(--error); }
+        .scn-row.r-skipped, .scn-row.r-missing { color: #b45309; }
+        .scn-row.r-setup { color: var(--text-secondary); }
+        @media (max-width: 640px) {
+            .scn > summary { flex-wrap: wrap; gap: 4px 8px; }
+            .scn-badge { flex-basis: auto; }
+            .scn-title { flex-basis: 100%; white-space: normal; }
+            .scn-body { padding-left: 12px; }
+            .scn-row { flex-wrap: wrap; }
+        }
+        .scn-group-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); padding: 8px 12px 4px; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         .action-buttons { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
         .action-buttons .btn { flex: 1; min-width: 120px; }
@@ -1909,6 +1943,20 @@
                     </div>
                     <p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">
                         ℹ️ Simplified preview. Download VCD for full waveform analysis with GTKWave.
+                    </p>
+                </div>
+
+                <!-- 按场景的结果。每条断言在日志里带着它来自哪一行 BDD，没能变成
+                     断言的场景也列出来——否则总通过率只算了生成出测试的那部分。
+                     旧 testbench 没有场景编号，这一块不显示。 -->
+                <div id="sim-scenarios" style="display: none;">
+                    <div class="preview-label">📋 Results by Scenario</div>
+                    <div class="scn-summary" id="sim-scn-summary"></div>
+                    <div class="scn-list" id="sim-scn-list"></div>
+                    <p class="sim-failure-hint">
+                        Each assertion carries the ID of the BDD row it came from
+                        (<code>ALU-ADD-001/r3</code> = scenario ALU-ADD-001, Examples row 3).
+                        Click a scenario to see its rows.
                     </p>
                 </div>
 
@@ -5409,6 +5457,76 @@
             box.style.display = 'block';
         }
 
+        /** 按场景显示结果。data 来自后端 scenario_results；旧 testbench 没有就隐藏。 */
+        const SCN_LABEL = {
+            pass: '✓ PASS', fail: '✗ FAIL', incomplete: '… INCOMPLETE',
+            weak: '⚠ WEAK CHECK', partial: '◐ PARTIAL',
+            no_check: '⚠ NOT TESTED', not_run: '⚠ NOT TESTED', setup: '· SETUP'
+        };
+        const ROW_MARK = { pass: '✓', fail: '✗', skipped: '⚠', missing: '…', setup: '·' };
+
+        function renderScenarioResults(sr) {
+            const box = document.getElementById('sim-scenarios');
+            if (!box) return;
+            if (!sr || !(sr.scenarios || []).length) { box.style.display = 'none'; return; }
+
+            const by = (sr.totals && sr.totals.by_status) || {};
+            const n = sr.scenarios.length;
+            const untested = (by.not_run || 0) + (by.no_check || 0);
+            const parts = [`<strong>${n}</strong> scenarios`];
+            if (by.pass) parts.push(`${by.pass} passed`);
+            if (by.fail) parts.push(`<span style="color:var(--error)">${by.fail} failed</span>`);
+            if (by.incomplete) parts.push(`${by.incomplete} incomplete`);
+            if (by.partial) parts.push(`${by.partial} partially tested`);
+            if (by.weak) parts.push(`<span class="scn-warn">${by.weak} with a check that cannot fail</span>`);
+            if (untested) parts.push(`<span class="scn-warn">${untested} not tested</span>`);
+            if (by.setup) parts.push(`${by.setup} setup only`);
+            let html = parts.join(' · ');
+            if (untested) {
+                html += `<br><span class="scn-warn">The pass rate above covers only the scenarios that `
+                      + `produced assertions; ${untested} of ${n} are not part of it.</span>`;
+            }
+            document.getElementById('sim-scn-summary').innerHTML = html;
+
+            const rowHtml = r => {
+                const rn = escapeHtml(r.id.split('/').pop());
+                const text = r.message || r.reason || '';
+                const weak = r.weak ? ` — ⚠ ${r.weak}` : '';
+                return `<div class="scn-row r-${r.status}"><span class="r-id">${rn}</span>`
+                     + `<span class="r-st">${ROW_MARK[r.status] || ''}</span>`
+                     + `<span>${escapeHtml(text + weak)}</span></div>`;
+            };
+
+            let list = sr.scenarios.map(s => {
+                const count = s.checks ? `${s.passed}/${s.checks}` : '—';
+                const open = ['fail', 'incomplete'].includes(s.status) ? ' open' : '';
+                const reason = s.reason ? `<div class="scn-reason">${escapeHtml(s.reason)}</div>` : '';
+                const rows = (s.rows || []).map(rowHtml).join('');
+                return `<details class="scn scn-${s.status}"${open}>`
+                     + `<summary><span class="scn-badge">${SCN_LABEL[s.status] || s.status}</span>`
+                     + `<span class="scn-id">${escapeHtml(s.id)}</span>`
+                     + `<span class="scn-title">${escapeHtml(s.title || '')}</span>`
+                     + `<span class="scn-count">${count}</span></summary>`
+                     + `<div class="scn-body">${reason}${rows}</div></details>`;
+            }).join('');
+
+            // 生成器自己加的检查不来自 BDD，单独列，不和 BDD 的结果混在一起
+            const gen = sr.generated || [];
+            if (gen.length) {
+                list += `<div class="scn-group-label">Checks added by the generator (not from the BDD)</div>`;
+                list += gen.map(g =>
+                    `<details class="scn scn-${g.status === 'pass' ? 'pass' : 'fail'}">`
+                    + `<summary><span class="scn-badge">${SCN_LABEL[g.status] || g.status}</span>`
+                    + `<span class="scn-id">${escapeHtml(g.id)}</span>`
+                    + `<span class="scn-title">${escapeHtml(g.label)}</span>`
+                    + `<span class="scn-count"></span></summary>`
+                    + `<div class="scn-body"><div class="scn-row"><span>${escapeHtml(g.message)}</span></div></div>`
+                    + `</details>`).join('');
+            }
+            document.getElementById('sim-scn-list').innerHTML = list;
+            box.style.display = 'block';
+        }
+
         function displaySimulationResult(data) {
             // Update header
             const passRate = data.pass_rate || 0;
@@ -5435,6 +5553,7 @@
             // Log preview
             const log = data.log_preview || data.full_log || '';
             document.getElementById('sim-log-preview').textContent = log || 'No log available';
+            renderScenarioResults(data.scenario_results);
             renderSimFailures(log);
 
             // VCD download button
