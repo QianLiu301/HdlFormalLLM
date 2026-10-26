@@ -154,6 +154,40 @@ Make sure the module interface and behavior match the test expectations above.
 """
 
 
+def decisions_block(record: Optional[dict]) -> str:
+    """需求确认后追加到 DUV prompt 与 BDD prompt 末尾的段落。
+
+    两个生成器拿到的是逐字相同的这一段：歧义在这里被用户一次定死，而不是
+    交给两次独立的 LLM 调用各自猜——各自猜的结果在仿真时才以"期望值不符"
+    的形式暴露，且看不出是哪一边猜错了。
+
+    record 为空、或没有任何需求和决策时返回空串，prompt 与之前逐字相同。
+    """
+    if not record:
+        return ""
+    reqs = [r for r in (record.get('requirements') or []) if (r.get('text') or '').strip()]
+    decs = [d for d in (record.get('decisions') or []) if (d.get('answer') or '').strip()]
+    if not reqs and not decs:
+        return ""
+    lines = ["", "", "IMPORTANT - Confirmed Requirements and Decisions:",
+             "The user confirmed the following. They apply to the design AND to its "
+             "tests. Where they are more specific than the instructions above, "
+             "follow them exactly."]
+    if reqs:
+        lines.append("")
+        lines.append("Requirements:")
+        lines += [f"- {r.get('id', '')}: {r['text'].strip()}" for r in reqs]
+    if decs:
+        lines.append("")
+        lines.append("Decisions on points the requirements left open:")
+        for d in decs:
+            q = (d.get('question') or '').strip()
+            lines.append(f"- {d.get('id', '')}: {q} -> {d['answer'].strip()}" if q
+                         else f"- {d.get('id', '')}: {d['answer'].strip()}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def sha256(text: Optional[str]) -> Optional[str]:
     if text is None:
         return None

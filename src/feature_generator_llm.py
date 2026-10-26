@@ -469,13 +469,19 @@ class FeatureGeneratorLLM:
         module_type = req.get('module_type', 'alu')
 
         if module_type == 'counter':
-            return self._create_counter_prompt(req)
+            prompt = self._create_counter_prompt(req)
         elif module_type == 'regfile':
-            return self._create_regfile_prompt(req)
+            prompt = self._create_regfile_prompt(req)
         elif module_type == 'cpu':
-            return self._create_cpu_prompt(req)
+            prompt = self._create_cpu_prompt(req)
         else:
-            return self._create_alu_prompt(req)
+            prompt = self._create_alu_prompt(req)
+
+        # Step 0：用户确认过的需求与决策。DUV 生成器拿到的是逐字相同的这一段，
+        # 期望值和设计按同一个答案来写。流式与非流式端点都经过这里。
+        if getattr(self, 'decisions', None) and _prompt_store is not None:
+            prompt += _prompt_store.decisions_block(self.decisions)
+        return prompt
 
     # few-shot 示例块与语义说明，按操作族切分。
     #

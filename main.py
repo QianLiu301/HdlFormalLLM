@@ -36,6 +36,7 @@ sys.path.insert(0, str(SRC_DIR))
 # 会出现两个 threading.local，call_context 设的标签会静默丢失。
 from src.experiment_logger import call_context, log_artifact  # noqa: E402
 from src import prompt_store  # noqa: E402
+from src import requirements_store  # noqa: E402
 
 # ============================================================================
 # Configuration Loading
@@ -553,6 +554,45 @@ def _read_bdd_context(data):
 
     print(f"📋 BDD-First mode: loaded BDD spec ({len(text)} chars)")
     return text, None
+
+
+def _empty_response_message(run_id, max_tokens=None):
+    """空响应时告诉用户原因。最常见的是推理模型把输出预算全花在思考上
+    （finish_reason=length），这时重试或换非推理模型才有用，而"返回为空"
+    这几个字看不出来。"""
+    meta = _last_call_meta(run_id) or {}
+    if meta.get('truncated'):
+        budget = meta.get('max_tokens') or max_tokens
+        return ("The model used its whole output budget"
+                + (f" ({budget} tokens)" if budget else "")
+                + " before writing any output. Reasoning models do this on harder "
+                  "prompts. Try again, or pick a non-reasoning model for this step.")
+    if meta.get('api_error'):
+        return f"The model call failed: {meta['api_error']}"
+    return "LLM returned empty response"
+
+
+def _read_decisions(data, module_type=None):
+    """需求确认（Step 0）的结果。返回 (record, error)。
+
+    与 _read_bdd_context 同一个约定：没给文件就是没用这一步，返回 (None, None)，
+    prompt 与之前逐字相同；给了却读不到、或确认时的模块类型与这次生成的不一致，
+    必须报错中止——为计数器确认的决策拼进 ALU 的 prompt，比没有决策更糟。
+    """
+    path = (data or {}).get('requirements_filepath')
+    if not path:
+        return None, None
+    record, err = requirements_store.load(path, PROJECT_ROOT)
+    if err:
+        return None, err
+    confirmed_for = (record.get('module_type') or '').strip()
+    if module_type and confirmed_for and confirmed_for != module_type:
+        return None, (f"Requirements were confirmed for '{confirmed_for}' but this request "
+                      f"generates '{module_type}'. Re-run the requirements step or clear it.")
+    n = len(record.get('decisions') or [])
+    print(f"📌 Confirmed requirements loaded: {len(record.get('requirements') or [])} "
+          f"requirements, {n} decisions")
+    return record, None
 
 
 def _log_artifact(data, run_id, stage, path=None, meta=None):
@@ -1404,6 +1444,9 @@ def generate_hardware():
     bdd_context, bdd_error = _read_bdd_context(data)
     if bdd_error:
         return jsonify({'success': False, 'error': bdd_error}), 400
+    decisions, dec_error = _read_decisions(data, module_type)
+    if dec_error:
+        return jsonify({'success': False, 'error': dec_error}), 400
 
     sampling = _parse_sampling(data)
     prompt_version = ((data.get('prompt_version') or '').strip()
@@ -1415,6 +1458,7 @@ def generate_hardware():
     # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
                             new_run=_chain_start(data, 'duv'), model_used=True)
+    _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
     if _ctx['extra']['model_override_ignored']:
         print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored for "
               f"provider '{llm_name}' (override wired only for "
@@ -1443,6 +1487,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
@@ -1460,6 +1505,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
@@ -1478,6 +1524,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
@@ -1496,6 +1543,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
@@ -1596,6 +1644,11 @@ def generate_hardware_stream():
     # 对 gemini/openai 生效，故 model_used=True；非流式的同名端点没有这段逻辑。
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
                             new_run=_chain_start(data, 'duv'), model_used=True)
+    # 放在自然语言解析之后：要拿最终生效的 module_type 去比对确认时的类型
+    decisions, dec_error = _read_decisions(data, module_type)
+    if dec_error:
+        return jsonify({'success': False, 'error': dec_error}), 400
+    _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
 
     def _prep(gen):
         """把 Prompt 面板的选择交给生成器——_create_*_prompt 从这些属性上取。
@@ -1683,6 +1736,12 @@ def generate_hardware_stream():
             if bdd_context:
                 prompt += prompt_store.bdd_context_block(bdd_context)
                 yield make_sse_message("info", message="📋 BDD spec context injected into prompt...")
+            # 与非流式路径（各 generator 内部）同一份文本、同一个位置
+            if decisions:
+                prompt += prompt_store.decisions_block(decisions)
+                yield make_sse_message(
+                    "info", message=f"📌 {len(decisions.get('decisions') or [])} confirmed "
+                                    f"decisions injected into prompt...")
 
             # Override model if specified (for Gemini/OpenAI model selection)
             _apply_model_override(generator, llm_name, model)
@@ -1731,7 +1790,7 @@ def generate_hardware_stream():
                         yield make_sse_message("chunk", content=chunk)
 
             if not full_content:
-                yield make_sse_message("error", message="LLM returned empty response")
+                yield make_sse_message("error", message=_empty_response_message(run_id))
                 return
 
             # Extract verilog code
@@ -2000,6 +2059,11 @@ def generate_bdd_stream():
     run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
                             (data.get('module_type') or '').strip() or None,
                             new_run=_chain_start(data, 'bdd'), model_used=True)
+    decisions, dec_error = _read_decisions(
+        data, (data.get('module_type') or '').strip() or None)
+    if dec_error:
+        return jsonify({'success': False, 'error': dec_error}), 400
+    _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
 
     def _generate_inner():
         try:
@@ -2016,6 +2080,11 @@ def generate_bdd_stream():
             generator.prompt_version = prompt_version
             generator.prompt_override = prompt_override
             generator.system_override = system_override
+            generator.decisions = decisions  # Step 0：与 DUV 共用的确认结果
+            if decisions:
+                yield make_sse_message(
+                    "info", message=f"📌 {len(decisions.get('decisions') or [])} confirmed "
+                                    f"decisions will be injected into the prompt...")
 
             # 与 Step 1 用同一张表。此处曾硬编码 ('openai','gemini')，
             # 于是 deepseek/mistral 等家的 model 覆盖在 Step 2 被静默忽略，
@@ -2066,7 +2135,7 @@ def generate_bdd_stream():
                         yield make_sse_message("chunk", content=full_content[i:i+50])
 
             if not full_content:
-                yield make_sse_message("error", message="LLM returned empty response")
+                yield make_sse_message("error", message=_empty_response_message(run_id))
                 return
 
             # 与非流式路径同一道守卫。这里必须单独写：非流式走
@@ -2136,6 +2205,11 @@ def generate_bdd():
         run_id, _ctx = _web_ctx(data, 'web_bdd_generation',
                                 (data.get('module_type') or '').strip() or None,
                                 new_run=_chain_start(data, 'bdd'), model_used=True)
+        decisions, dec_error = _read_decisions(
+            data, (data.get('module_type') or '').strip() or None)
+        if dec_error:
+            return jsonify({'success': False, 'error': dec_error}), 400
+        _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
 
         generator = FeatureGeneratorLLM(
             llm_provider=llm_name,
@@ -2146,6 +2220,7 @@ def generate_bdd():
         generator.prompt_version = prompt_version
         generator.prompt_override = prompt_override
         generator.system_override = system_override
+        generator.decisions = decisions  # Step 0：与 DUV 共用的确认结果
 
         # 同上：非流式 BDD 端点也要用同一张表
         if model and llm_name in MODEL_OVERRIDE_PROVIDERS:
@@ -2327,6 +2402,100 @@ def _provider_class(name):
 # ============================================================================
 # Testbench Generator API
 # ============================================================================
+def _requirements_config_line(data):
+    """告诉分析模型哪些东西已由工具定死，免得它去问端口名和操作码。"""
+    mt = (data.get('module_type') or 'design').strip()
+    parts = [f"Module type: {mt}"]
+    if mt == 'cpu':
+        parts.append(f"RV32I, {data.get('pipeline_stages', 5)}-stage pipeline")
+    else:
+        parts.append(f"bit width: {data.get('bitwidth', 32)}")
+    if mt == 'regfile':
+        parts.append(f"{data.get('depth', 32)} registers")
+    return ', '.join(parts) + '.'
+
+
+@app.route('/api/requirements/analyze', methods=['POST'])
+def analyze_requirements():
+    """Step 0：把设计描述拆成需求条目，并找出需要用户拍板的歧义点。
+
+    只分析，不落盘：用户还没确认。确认后的结果由 /api/requirements/save 保存。
+    """
+    if not HAS_BDD_MODULE:
+        return jsonify({'success': False, 'error': 'LLM providers not available'}), 500
+    data = request.json or {}
+    llm_name = (data.get('llm') or '').strip().lower()
+    model = (data.get('model') or '').strip() or None
+    module_type = (data.get('module_type') or '').strip() or None
+    description = (data.get('description') or '').strip()
+    if not llm_name:
+        return jsonify({'success': False, 'error': 'No LLM provider selected'}), 400
+    if not description:
+        return jsonify({'success': False, 'error': 'Please describe the design first'}), 400
+
+    # 把这个模块的设计模板原文交给分析模型：模板已经定死的（比如 counter 的
+    # zero 必须是组合输出）不该再问，推荐答案也不能与它矛盾——否则用户一键
+    # "接受推荐"，就会把一条与模板相反的指令拼进 prompt。
+    # 直接 load + render，不走 render_stage：后者会把这次调用记成设计模板的阶段。
+    stage = {'alu': 'duv_alu', 'alu_comb': 'duv_alu', 'counter': 'duv_counter',
+             'regfile': 'duv_register', 'cpu': 'duv_cpu'}.get(module_type or '')
+    tool_prompt = '(no fixed design template for this module type)'
+    if stage:
+        doc = prompt_store.load(stage, _web_default_prompt_version(module_type) or 'v1') \
+              or prompt_store.load(stage, 'v1')
+        if doc and doc.get('user'):
+            tool_prompt = prompt_store.render(doc['user'], {
+                'bitwidth': data.get('bitwidth', 32), 'module_name': module_type,
+                'depth': data.get('depth', 32),
+                'pipeline_stages': data.get('pipeline_stages', 5)})
+
+    sys_prompt, user_prompt = prompt_store.render_stage(
+        'req_analysis', {'config_line': _requirements_config_line(data),
+                         'tool_prompt': tool_prompt,
+                         'description': description}, version='v1')
+    if user_prompt is None:
+        return jsonify({'success': False,
+                        'error': 'Prompt template prompts/req_analysis/v1.yaml is missing'}), 500
+
+    run_id, _ctx = _web_ctx(data, 'web_requirements_analysis', module_type, model_used=True)
+    try:
+        llm = LLMFactory.create_provider(
+            llm_name, **({'model': model} if model and llm_name in MODEL_OVERRIDE_PROVIDERS else {}))
+        with call_context(**_ctx):
+            # 推理模型会先花掉一部分预算在思考上，给少了只会拿到空串
+            text = llm._call_api(user_prompt, max_tokens=6000, system_prompt=sys_prompt)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 502
+
+    if is_fallback_text(text):
+        meta = _last_call_meta(run_id) or {}
+        return jsonify({'success': False, 'run_id': run_id,
+                        'error': meta.get('api_error') or 'The model call failed '
+                                 '(empty or fallback response).'}), 502
+    analysis, err = requirements_store.parse_analysis(text)
+    if err:
+        return jsonify({'success': False, 'run_id': run_id, 'error': err,
+                        'raw': (text or '')[:2000]}), 502
+    return jsonify({'success': True, 'run_id': run_id, 'llm': llm_name, 'model': model,
+                    **analysis})
+
+
+@app.route('/api/requirements/save', methods=['POST'])
+def save_requirements():
+    """Step 0：保存用户确认后的需求与决策，返回文件路径和将要注入 prompt 的文本。"""
+    data = request.json or {}
+    record, err = requirements_store.build_record(data)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    record['analysis_run_id'] = (data.get('run_id') or '').strip() or None
+    path = requirements_store.save(record, PROJECT_ROOT)
+    rel = path.relative_to(PROJECT_ROOT).as_posix()
+    return jsonify({'success': True, 'filepath': rel,
+                    'requirements': record['requirements'],
+                    'decisions': record['decisions'],
+                    'prompt_block': prompt_store.decisions_block(record)})
+
+
 @app.route('/api/generate-testbench', methods=['POST'])
 def generate_testbench():
     """Generate Verilog testbench from BDD file"""

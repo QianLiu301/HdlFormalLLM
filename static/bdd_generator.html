@@ -180,6 +180,24 @@
         .sim-failure-list td.got { color: var(--error); font-weight: 600; }
         .sim-failure-list td.delta { color: var(--text-secondary); font-size: 11px; }
         .sim-failure-hint { font-size: 11px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
+        /* Step 0 需求确认 */
+        .req-hint { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; line-height: 1.5; }
+        .req-count { font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-left: 4px; }
+        #req-desc { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; resize: vertical; }
+        .req-item { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+        .req-item .req-id { flex: 0 0 52px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); }
+        .req-item input { flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 6px; }
+        .req-item .req-del { flex: 0 0 auto; background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 16px; padding: 0 4px; }
+        .req-item .req-del:hover { color: var(--error); }
+        .req-q { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+        .req-q-text { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+        .req-q-why { font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; }
+        .req-q label { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.45; padding: 4px 0; margin: 0; cursor: pointer; color: #333; font-weight: 400; text-transform: none; letter-spacing: normal; }
+        .req-q label input { margin-top: 2px; flex: 0 0 auto; }
+        .req-q .req-rec { font-size: 10px; font-weight: 700; color: var(--accent); margin-left: 4px; white-space: nowrap; }
+        .req-q .req-custom { width: 100%; box-sizing: border-box; margin-top: 4px; font-size: 12px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; }
+        .req-block summary { font-size: 12px; color: var(--text-secondary); cursor: pointer; margin-bottom: 6px; }
+        .req-block pre { white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; max-height: 260px; overflow: auto; }
         /* 按场景的结果：一个场景一行，点开看它的每一行 Examples */
         .scn-summary { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.6; }
         .scn-summary strong { color: var(--text-primary); }
@@ -913,6 +931,87 @@
         <div class="workflow-mode-desc" id="workflow-mode-desc">
             Hardware → Tests: Write hardware first, then generate tests to verify it
             <span class="workflow-badge badge-impl">Current</span>
+        </div>
+
+        <!-- Step 0: 需求确认（可选）。DUV 与 BDD 是两次独立的 LLM 调用，需求
+             有歧义时两边各猜各的，到仿真才以"期望值不符"暴露，还看不出谁猜错。
+             这一步把歧义问出来，答案以同一段文本拼进 Step 1 和 Step 2 的 prompt。
+             不用这一步，两边的 prompt 与以前逐字相同。 -->
+        <div class="step-section collapsed" id="step-0">
+            <div class="step-header" onclick="toggleStep(0)">
+                <div class="step-number purple" id="step-0-num">0</div>
+                <div class="step-title-area">
+                    <div class="step-title">📌 Requirements <span style="font-weight:400;color:var(--text-secondary);font-size:12px;">(optional)</span></div>
+                    <div class="step-subtitle">Confirm what the design must do before generating — answers are shared by Step 1 and Step 2</div>
+                </div>
+                <div class="step-status pending" id="step-0-status">Optional</div>
+                <div class="step-toggle">▼</div>
+            </div>
+            <div class="step-content">
+                <div class="card" id="req-input-card">
+                    <div class="card-title">📝 Describe the design</div>
+                    <p class="req-hint">
+                        Module type and width come from the configuration below
+                        (<span id="req-config-label">—</span>). The model splits your description
+                        into requirements and asks about anything it leaves open.
+                    </p>
+                    <div class="form-group">
+                        <textarea id="req-desc" rows="5" placeholder="e.g. 32-bit counter with up, down and up-down modes, synchronous load, enable, overflow and zero flags"></textarea>
+                        <div style="margin-top:6px;"><span class="example-chip" onclick="fillReqFromConfig()">Fill from configuration</span></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="req-llm">LLM for the analysis</label>
+                            <select id="req-llm">
+                                <option value="deepseek" selected>DeepSeek</option>
+                                <option value="openai">OpenAI GPT-5</option>
+                                <option value="mistral">Mistral</option>
+                                <option value="qwen">Qwen3 Coder</option>
+                                <option value="gemini">Gemini</option>
+                                <option value="together">Llama 3.3 70B</option>
+                                <option value="glm">GLM 4.7</option>
+                                <option value="gptoss">GPT-OSS 120B</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="error-message" id="req-error"></div>
+                    <button class="btn btn-primary" id="req-btn" onclick="analyzeRequirements()">
+                        <span id="req-btn-text">🔍 Analyze requirements</span>
+                        <div class="spinner" id="req-spinner" style="display: none;"></div>
+                    </button>
+                </div>
+
+                <!-- 分析结果：可编辑的需求列表 + 需要拍板的问题 -->
+                <div class="card" id="req-review" style="display:none;">
+                    <div class="card-title">✅ Requirements <span class="req-count" id="req-count"></span></div>
+                    <div id="req-list"></div>
+                    <span class="example-chip" onclick="addRequirement()">+ Add requirement</span>
+
+                    <div class="card-title" style="margin-top:18px;">❓ Open questions <span class="req-count" id="req-q-count"></span></div>
+                    <p class="req-hint" id="req-q-hint">Each answer changes what the design does and what the tests expect. The recommended option is preselected.</p>
+                    <div id="req-questions"></div>
+
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" onclick="confirmRequirements(false)">✓ Confirm</button>
+                        <button class="btn btn-secondary" onclick="confirmRequirements(true)">Accept all recommended</button>
+                        <button class="btn btn-secondary" onclick="clearRequirements()">Discard</button>
+                    </div>
+                </div>
+
+                <!-- 已确认 -->
+                <div class="card" id="req-confirmed" style="display:none;">
+                    <div class="card-title">📌 Confirmed</div>
+                    <p class="req-hint" id="req-confirmed-summary"></p>
+                    <details class="req-block">
+                        <summary>Text added to both the design prompt and the BDD prompt</summary>
+                        <pre id="req-prompt-block"></pre>
+                    </details>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" onclick="editRequirements()">Edit</button>
+                        <button class="btn btn-secondary" onclick="clearRequirements()">Stop using these</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Step 1: Hardware Generator -->
@@ -3019,9 +3118,214 @@
         // ============================================================
         // Step Toggle
         // ============================================================
+        // ============================================================
+        // Step 0：需求确认（可选）
+        //
+        // 确认后得到一个保存在服务器上的文件；Step 1 与 Step 2 只发它的路径，
+        // 后端读同一个文件、生成同一段文字拼进两边的 prompt。前端不自己拼文字，
+        // 免得两边因为发送方式不同而出现差异。
+        // ============================================================
+        let reqDraft = null;              // 分析结果 + 用户的编辑，尚未保存
+        let currentRequirements = null;   // 已确认：{filepath, module_type, ...}
+
+        /** 当前生效的模块配置：spec-first 下以 BDD 那张卡为准，否则以硬件卡为准 */
+        function activeConfig() {
+            const spec = currentWorkflowMode === 'specification';
+            const v = id => (document.getElementById(id) || {}).value;
+            const p = spec ? 'bdd' : 'hw';
+            return {
+                module_type: (spec ? v('bdd-module-type') : v('hw-module')) || 'alu',
+                bitwidth: parseInt(v(`${p}-bitwidth`) || '32', 10),
+                depth: parseInt(v(`${p}-depth`) || '32', 10),
+                pipeline_stages: parseInt(v(spec ? 'bdd-pipeline' : 'hw-pipeline') || '5', 10)
+            };
+        }
+
+        function refreshReqConfigLabel() {
+            const c = activeConfig();
+            const label = c.module_type === 'cpu' ? `CPU, ${c.pipeline_stages}-stage`
+                : c.module_type === 'regfile' ? `register file, ${c.depth} × ${c.bitwidth}-bit`
+                : `${c.module_type}, ${c.bitwidth}-bit`;
+            const el = document.getElementById('req-config-label');
+            if (el) el.textContent = label;
+        }
+
+        function fillReqFromConfig() {
+            const c = activeConfig();
+            const tpl = BDD_TEMPLATES[c.module_type] || BDD_TEMPLATES.other;
+            document.getElementById('req-desc').value =
+                c.module_type === 'cpu' ? tpl(c.pipeline_stages)
+                : c.module_type === 'regfile' ? tpl(c.bitwidth, c.depth) : tpl(c.bitwidth);
+            refreshReqConfigLabel();
+        }
+
+        function setReqLoading(on) {
+            document.getElementById('req-btn').disabled = on;
+            document.getElementById('req-spinner').style.display = on ? 'inline-block' : 'none';
+            document.getElementById('req-btn-text').textContent =
+                on ? 'Analyzing…' : '🔍 Analyze requirements';
+        }
+
+        async function analyzeRequirements() {
+            const description = document.getElementById('req-desc').value.trim();
+            if (!description) { showError('req', 'Describe the design first, or click "Fill from configuration".'); return; }
+            hideError('req');
+            refreshReqConfigLabel();
+            const cfg = activeConfig();
+            const llm = document.getElementById('req-llm').value;
+            setReqLoading(true);
+            updateStepStatus(0, 'in-progress');
+            try {
+                const r = await fetch('/api/requirements/analyze', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...cfg, llm, description, session_id: getSessionId(),
+                                           workflow_mode: currentWorkflowMode })
+                });
+                const data = await r.json();
+                if (!data.success) throw new Error(data.error || `HTTP ${r.status}`);
+                reqDraft = { ...data, module_type: cfg.module_type, config: cfg, description,
+                             questions: data.questions.map(q => ({ ...q, chosen: q.default, custom: '' })) };
+                renderReqReview();
+                document.getElementById('step-0-status').textContent = 'Review';
+            } catch (e) {
+                showError('req', `Analysis failed: ${e.message}`);
+                document.getElementById('step-0-status').className = 'step-status pending';
+                document.getElementById('step-0-status').textContent = 'Optional';
+            } finally {
+                setReqLoading(false);
+            }
+        }
+
+        function renderReqReview() {
+            if (!reqDraft) return;
+            const list = document.getElementById('req-list');
+            list.innerHTML = reqDraft.requirements.map((r, i) =>
+                `<div class="req-item"><span class="req-id">REQ-${i + 1}</span>`
+                + `<input type="text" value="${escapeHtml(r.text)}" oninput="editRequirement(${i}, this.value)">`
+                + `<button class="req-del" title="Remove" onclick="removeRequirement(${i})">×</button></div>`
+            ).join('') || '<p class="req-hint">No requirements. Add one below.</p>';
+            document.getElementById('req-count').textContent = `(${reqDraft.requirements.length})`;
+
+            const qs = reqDraft.questions;
+            document.getElementById('req-q-count').textContent = `(${qs.length})`;
+            document.getElementById('req-q-hint').style.display = qs.length ? '' : 'none';
+            document.getElementById('req-questions').innerHTML = qs.length ? qs.map((q, i) => {
+                const opts = q.options.map((o, k) =>
+                    `<label><input type="radio" name="req-q-${i}" ${q.chosen === k && !q.custom ? 'checked' : ''}`
+                    + ` onchange="chooseAnswer(${i}, ${k})"><span>${escapeHtml(o)}`
+                    + `${k === q.default ? '<span class="req-rec">RECOMMENDED</span>' : ''}</span></label>`
+                ).join('');
+                return `<div class="req-q"><div class="req-q-text">${escapeHtml(q.id)}. ${escapeHtml(q.question)}</div>`
+                     + (q.why ? `<div class="req-q-why">${escapeHtml(q.why)}</div>` : '')
+                     + opts
+                     + `<input class="req-custom" type="text" placeholder="Other (type your own answer)"`
+                     + ` value="${escapeHtml(q.custom || '')}" oninput="customAnswer(${i}, this.value)"></div>`;
+            }).join('') : '<p class="req-hint">The model found nothing ambiguous.</p>';
+
+            document.getElementById('req-review').style.display = 'block';
+            document.getElementById('req-confirmed').style.display = 'none';
+        }
+
+        function editRequirement(i, text) {
+            const r = reqDraft.requirements[i];
+            r.text = text;
+            if (r.source === 'llm') r.source = 'edited';
+        }
+        function removeRequirement(i) { reqDraft.requirements.splice(i, 1); renderReqReview(); }
+        function addRequirement() {
+            if (!reqDraft) return;
+            reqDraft.requirements.push({ text: '', source: 'user' });
+            renderReqReview();
+            const inputs = document.querySelectorAll('#req-list input');
+            if (inputs.length) inputs[inputs.length - 1].focus();
+        }
+        function chooseAnswer(i, k) { reqDraft.questions[i].chosen = k; }
+        function customAnswer(i, text) {
+            reqDraft.questions[i].custom = text;
+            // 写了自定义答案就取消单选（它优先），清空后恢复原来的选择，
+            // 避免界面上看起来两个都选中
+            const radios = document.querySelectorAll(`input[name="req-q-${i}"]`);
+            radios.forEach((el, k) => {
+                el.checked = !text.trim() && k === reqDraft.questions[i].chosen;
+            });
+        }
+
+        async function confirmRequirements(acceptDefaults) {
+            if (!reqDraft) return;
+            const questions = reqDraft.questions.map(q => acceptDefaults
+                ? { ...q, chosen: q.default, custom: '' } : q);
+            const payload = {
+                module_type: reqDraft.module_type, config: reqDraft.config,
+                description: reqDraft.description, llm: reqDraft.llm, model: reqDraft.model,
+                run_id: reqDraft.run_id, accepted_all_defaults: !!acceptDefaults,
+                requirements: reqDraft.requirements, questions
+            };
+            try {
+                const r = await fetch('/api/requirements/save', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await r.json();
+                if (!data.success) throw new Error(data.error || `HTTP ${r.status}`);
+                currentRequirements = { filepath: data.filepath, module_type: reqDraft.module_type,
+                                        requirements: data.requirements, decisions: data.decisions };
+                if (acceptDefaults) { reqDraft.questions = questions; }
+                hideError('req');
+                document.getElementById('req-confirmed-summary').innerHTML =
+                    `<strong>${data.requirements.length}</strong> requirements and `
+                    + `<strong>${data.decisions.length}</strong> decisions confirmed for `
+                    + `<strong>${escapeHtml(reqDraft.module_type)}</strong>. They will be added to `
+                    + `the prompts of both Step 1 (design) and Step 2 (BDD).`;
+                document.getElementById('req-prompt-block').textContent = data.prompt_block.trim();
+                document.getElementById('req-review').style.display = 'none';
+                document.getElementById('req-confirmed').style.display = 'block';
+                const st = document.getElementById('step-0-status');
+                st.className = 'step-status completed';
+                st.textContent = 'Confirmed';
+                document.getElementById('step-0-num').classList.add('completed');
+            } catch (e) {
+                showError('req', `Could not save: ${e.message}`);
+            }
+        }
+
+        function editRequirements() { renderReqReview(); }
+
+        function clearRequirements() {
+            reqDraft = null;
+            currentRequirements = null;
+            document.getElementById('req-review').style.display = 'none';
+            document.getElementById('req-confirmed').style.display = 'none';
+            const st = document.getElementById('step-0-status');
+            st.className = 'step-status pending';
+            st.textContent = 'Optional';
+            document.getElementById('step-0-num').classList.remove('completed');
+        }
+
+        /** 给 Step 1 / Step 2 的请求带上确认结果。模块类型对不上时返回错误文本。 */
+        function attachRequirements(payload) {
+            if (!currentRequirements) return null;
+            if (payload.module_type && currentRequirements.module_type !== payload.module_type) {
+                return `Requirements were confirmed for "${currentRequirements.module_type}" but you `
+                     + `are generating "${payload.module_type}". Re-run Step 0 or click `
+                     + `"Stop using these".`;
+            }
+            payload.requirements_filepath = currentRequirements.filepath;
+            return null;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            ['hw-module', 'hw-bitwidth', 'hw-depth', 'hw-pipeline',
+             'bdd-module-type', 'bdd-bitwidth', 'bdd-depth', 'bdd-pipeline'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('change', refreshReqConfigLabel);
+            });
+            refreshReqConfigLabel();
+        });
+
         function toggleStep(stepNum) {
             const section = document.getElementById(`step-${stepNum}`);
             section.classList.toggle('collapsed');
+            if (stepNum === 0) refreshReqConfigLabel();   // 工作流可能已切换
         }
 
         // ============================================================
@@ -4056,6 +4360,14 @@
             if (currentWorkflowMode === 'specification' && currentBDD && currentBDD.filepath) {
                 payload.bdd_filepath = currentBDD.filepath;
             }
+            // Step 0 的确认结果：与 Step 2 发的是同一个文件
+            const reqErr = attachRequirements(payload);
+            if (reqErr) {
+                showError('hw', reqErr);
+                setLoading('hw', false);
+                updateStepStatus(1, 'pending');
+                return;
+            }
 
             if (useStreaming) {
                 await generateHwWithStreaming(payload);
@@ -4087,6 +4399,12 @@
                     body: JSON.stringify(payload)
                 });
 
+                // 参数错误（BDD 文件读不到、确认的需求与模块类型不符）时后端在
+                // 开流之前就返回 JSON 错误；不检查的话它会被当成空的流吞掉
+                if (!response.ok) {
+                    const j = await response.json().catch(() => ({}));
+                    throw new Error(j.error || `HTTP ${response.status}`);
+                }
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 
@@ -4314,6 +4632,15 @@
                   workflow_mode: currentWorkflowMode,
                   sampling: collectSampling('bdd'), ...promptPayload('bdd') }, 'bdd');
 
+            // Step 0 的确认结果：与 Step 1 发的是同一个文件
+            const reqErr = attachRequirements(payload);
+            if (reqErr) {
+                showError('bdd', reqErr);
+                setLoading('bdd', false);
+                updateStepStatus(2, 'pending');
+                return;
+            }
+
             if (useStreaming) {
                 await generateBddWithStreaming(payload);
             } else {
@@ -4344,6 +4671,12 @@
                     body: JSON.stringify(payload)
                 });
 
+                // 参数错误（BDD 文件读不到、确认的需求与模块类型不符）时后端在
+                // 开流之前就返回 JSON 错误；不检查的话它会被当成空的流吞掉
+                if (!response.ok) {
+                    const j = await response.json().catch(() => ({}));
+                    throw new Error(j.error || `HTTP ${response.status}`);
+                }
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 

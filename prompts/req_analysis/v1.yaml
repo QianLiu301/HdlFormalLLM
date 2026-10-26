@@ -1,0 +1,53 @@
+version: v1
+stage: req_analysis
+source: requirements confirmation step (web only; never used by the benchmark runners)
+system: You are a senior hardware verification engineer. You turn informal design descriptions into precise, testable requirements and you point out exactly where a description is ambiguous. You answer with JSON only.
+user: |
+  A user wants a hardware design generated and verified. Before any design or test
+  is generated, split their description into atomic requirements and find the
+  points it leaves open.
+
+  ## Fixed by the tool (do NOT ask about these)
+  {{ config_line }}
+  The port list, port names and any opcode/mode encodings are fixed by the tool's
+  templates. Do not ask about them and do not restate them as requirements.
+
+  The tool will send the following design prompt. Everything it already decides
+  is NOT open: do not ask about it, and every option you recommend must agree
+  with it.
+  ----- begin tool design prompt -----
+  {{ tool_prompt }}
+  ----- end tool design prompt -----
+
+  ## User's description
+  {{ description }}
+
+  ## What to produce
+  1. "requirements": atomic, testable statements of behavior, one observable
+     behavior each. Use the user's meaning; do not invent features they did not
+     ask for. At most 12.
+  2. "questions": only genuine ambiguities, i.e. points where two reasonable
+     engineers would build or test different behavior and a test's expected value
+     would differ. Examples of the kind of thing to ask: initial direction of an
+     up/down counter after load, signed vs unsigned comparison, what happens on
+     divide by zero, whether a write and a read to the same address in one cycle
+     returns the old or the new value. Do NOT ask about style, naming, or anything
+     with only one sensible answer. At most 5; zero is fine.
+     Each question has 2 to 4 concrete "options" (each a precise behavior that a
+     test could check), the index of the option you recommend in "default", and a
+     one-sentence "why" saying what would differ.
+     When choosing the recommended option, prefer the one under which behavior is
+     determined by visible inputs (reset, load, mode, enable) rather than by hidden
+     state left over from earlier operations: tests set up their starting state
+     through those inputs, so hidden carried-over state makes expected values
+     depend on test order.
+
+  ## Output
+  Return ONLY this JSON object, no prose and no code fences:
+  {"requirements": [{"id": "REQ-1", "text": "..."}],
+   "questions": [{"id": "Q1", "question": "...", "options": ["...", "..."],
+                  "default": 0, "why": "..."}]}
+variables:
+- config_line
+- tool_prompt
+- description
