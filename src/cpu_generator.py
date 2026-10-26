@@ -141,6 +141,11 @@ class CPUGenerator:
         if getattr(self, 'bdd_context', None):
             prompt += _prompt_store.bdd_context_block(self.bdd_context)
             print(f"📋 BDD spec context appended to prompt ({len(self.bdd_context)} chars)")
+        # Step 0：用户确认过的需求与决策，与 BDD 生成器拿到的是同一段文本
+        if getattr(self, 'decisions', None):
+            prompt += _prompt_store.decisions_block(self.decisions)
+            print(f"📌 Confirmed decisions appended to prompt "
+                  f"({len(self.decisions.get('decisions') or [])} decisions)")
 
         if self.debug:
             print(f"\n📝 Prompt preview:")
