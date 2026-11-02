@@ -15,8 +15,9 @@ designs, BDD test scenarios, testbenches, and run simulations (iverilog/Yosys).
    LLM to iteratively fill test gaps; argue BDD as intermediate representation
    beats direct testbench regeneration. ← NOT started
 
-Related work to cite/compare: Bremen/DFKI "LLM-based BDD for HW Design"
-(arXiv 2512.17814, the only direct competitor), AutoBench (TUM), LLM4Cov
+Own prior work: "LLM-based BDD for HW Design" (Drechsler & Liu, arXiv
+2512.17814) — the user's own paper, not a competitor. Related work to
+cite/compare: AutoBench (TUM), LLM4Cov
 (VTS 2026), CVDP (NVIDIA), FVEval (Berkeley). Target venues: ASP-DAC / DATE /
 ISVLSI; workshop first (MLCAD/ICLAD).
 
@@ -32,13 +33,13 @@ ISVLSI; workshop first (MLCAD/ICLAD).
   `with call_context(task_type=, run_id=, module_name=):`.
   Tables: `llm_calls` (every API call) + `benchmark_results` (scores).
 - `benchmark/` — the benchmark suite (v0.1): 9 modules × 5 categories,
-  28 single-fault mutants, 60 numbered functional points.
+  64 single-fault mutants, 60 numbered functional points.
   - Per module: `spec.md` (NL spec + FP-n ground truth), `golden.v`
     (iverilog-verified), `tb_smoke.v` (deterministic stimulus), `bugs/*.v`
     (mutants labeled with taxonomy from `src/bug_taxonomy.py`), `manifest.json`.
   - `validate.py` — quality gate: golden must sim, every mutant must compile
     AND behave differently from golden (differential testing). Run after any
-    benchmark change. Current: 9/9 golden OK, 28/28 mutants killed.
+    benchmark change. Current: 9/9 golden OK, 64/64 mutants killed.
   - `run_experiments.py` — batch runner: (module × LLM × rep) →
     BDD generation (FP list withheld!) → testbench → golden gate →
     mutation testing → optional LLM judge for FP coverage.
@@ -94,6 +95,18 @@ download CSV/ZIP from the dashboard after important runs.
 - User (钱柳/QianLiu301) works locally on Windows/PowerShell, tests in browser.
 - Explain things in Chinese to the user; code/comments/docs in the repo mostly
   English (some Chinese comments in experiment tooling are fine).
+
+## Explainability track (branch `bdx-explainability`, 2026-11)
+
+Group wishlist ("BDX"): explanation coverage, real (RISC-V) + "unreal"
+(wind turbine = CAUSE demonstrator) examples, website UI backed by a DB of
+generated content, NL->formal->NL, spec-vs-impl validation, back-annotation
+RTL/SVA -> scenarios, deterministic LLM-free baseline (CAUSE = DFG RTG 2972,
+self-explaining systems; prefers verifiable, non-LLM explanations).
+Not bound to the BDX paper (Dominik & Drechsler, arXiv 2607.24881).
+Design doc: `docs/explainability_db_design.md` (SQLite = source of truth,
+ChromaDB = optional rebuildable semantic index). This branch is never merged
+into master.
 
 ## Next steps (agreed plan)
 
