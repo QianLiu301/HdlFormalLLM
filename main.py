@@ -1590,7 +1590,8 @@ def generate_hardware():
         _log_artifact(data, run_id, 'duv', hw_path,
                       meta={'llm': llm_name, 'module_type': module_type,
                             'bitwidth': bitwidth, 'streaming': False,
-                            'compiles': (duv_compile or {}).get('ok')})
+                            'compiles': (duv_compile or {}).get('ok'),
+                            'compile_error': (duv_compile or {}).get('error')})
 
         return jsonify({
             'success': True,
@@ -1846,7 +1847,8 @@ def generate_hardware_stream():
             _log_artifact(data, run_id, 'duv', hw_path,
                           meta={'llm': llm_name, 'module_type': module_type,
                                 'bitwidth': bitwidth, 'streaming': True,
-                                'compiles': (duv_compile or {}).get('ok')})
+                                'compiles': (duv_compile or {}).get('ok'),
+                            'compile_error': (duv_compile or {}).get('error')})
 
             # 到这里流式生成器已耗尽，其 finally 已写入 llm_calls，可安全回读
             yield make_sse_message("complete", filename=filename, filepath=str(hw_path),

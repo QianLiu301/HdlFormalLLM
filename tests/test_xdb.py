@@ -367,3 +367,23 @@ def test_storage_usage(db):
     from src.xdb.queries import storage_usage
     u = storage_usage(db)
     assert u['limit_mb'] > 0 and 0 < u['database_mb'] < u['limit_mb'] and u['artifacts_mb'] >= 0
+
+
+def test_design_that_does_not_compile_is_kept_with_its_error(run, db):
+    """A Step-1 design that fails to compile never reaches simulation; the
+    stored compiler error is then the only explanation there is."""
+    from sqlalchemy import create_engine, text
+    from src.xdb.ingest import ingest_duv
+    proj, _ = run
+    bad = proj / 'output/dut/alu_broken.v'
+    bad.write_text('module alu_32bit(input [31:0] a, output [31:0] r);\n'
+                   '  assign r = {32{a[31]}};\n  assign r = {31{1\'b0}, a[0]}};\nendmodule\n',
+                   encoding='utf-8')
+    err = f'{bad}:3: syntax error'
+    res = ingest_duv(proj, 'output/dut/alu_broken.v', 'web_broken',
+                     {'module_type': 'alu', 'bitwidth': 32},
+                     meta={'compiles': False, 'compile_error': err}, url=db)
+    with create_engine(db).connect() as c:
+        d = c.execute(text('SELECT compiles, compile_error FROM duv WHERE id = :i'),
+                      {'i': res['duv_id']}).one()
+    assert d.compiles is False and d.compile_error == err

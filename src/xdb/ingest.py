@@ -282,9 +282,11 @@ def _next_version(s, model, sess_id: int, sha: str):
 
 
 def _upsert_duv(s, sess, design, sha, verilog, data, calls, compiles=None,
-                feature_id=None) -> M.Duv:
+                feature_id=None, compile_error=None) -> M.Duv:
     row, parent = _next_version(s, M.Duv, sess.id, sha)
     if row is not None:
+        if row.compiles is None and compiles is not None:
+            row.compiles, row.compile_error = compiles, compile_error
         return row
     call = calls.get(_TASK['duv'])
     spec_first = (data.get('workflow_mode') or 'implementation') == 'specification'
@@ -296,7 +298,7 @@ def _upsert_duv(s, sess, design, sha, verilog, data, calls, compiles=None,
                 prompt_has_bdd=bool(spec_first and data.get('bdd_filepath')),
                 based_on_feature_id=feature_id if spec_first else None,
                 prompt_has_decisions=bool(data.get('requirements_filepath')),
-                compiles=compiles,
+                compiles=compiles, compile_error=None if compiles else compile_error,
                 prov_kind='llm' if call else 'import',
                 prov_ref=f'llm_call:{call}' if call else None)
     s.add(row)
@@ -352,6 +354,7 @@ def ingest_duv(project_root, path, run_id: Optional[str], data: Dict, meta: Opti
                                        data, calls)
             duv = _upsert_duv(s, sess, design, sha, verilog, data, calls,
                               compiles=(meta or {}).get('compiles'),
+                              compile_error=(meta or {}).get('compile_error'),
                               feature_id=feat.id if feat else None)
             _link_provenance(s, sess, calls)
             return {'ingested': True, 'stage': 'duv', 'session_id': sess.id, 'duv_id': duv.id}
