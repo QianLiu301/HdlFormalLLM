@@ -106,7 +106,11 @@ self-explaining systems; prefers verifiable, non-LLM explanations).
 Not bound to the BDX paper (Dominik & Drechsler, arXiv 2607.24881).
 Design doc: `docs/explainability_db_design.md` (v0.2: PostgreSQL + pgvector on
 Neon Frankfurt; canonical steps in three layers; revisions + provenance on
-every row; v1 = global/local explanations, click-first). This branch is never merged
+every row; v1 = global/local explanations, click-first). Code in `src/xdb/`
+(SQLAlchemy models, Alembic migrations, ingestion hooked into
+`/api/run-report`, inert without `DATABASE_URL`, read from env or a gitignored
+`.env`). Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
+(need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.
 
 ## Next steps (agreed plan)

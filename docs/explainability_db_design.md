@@ -1,6 +1,7 @@
 # Explainability Database — Design (v0.2)
 
-Status: **design, under review** — no code yet. Branch: `bdx-explainability`
+Status: **phase 2 implemented** (schema, migrations, web-workflow ingestion,
+v1 queries; see `explainability_db_setup.md`). Phases 3+ pending. Branch: `bdx-explainability`
 (never merged into `master`).
 
 Goal: add explainability to the HdlFormalLLM website. Every generated item

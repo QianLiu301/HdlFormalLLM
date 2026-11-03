@@ -5897,7 +5897,9 @@
                 requirements_filepath: currentRequirements ? currentRequirements.filepath : null,
                 bdd_filepath: currentBDD ? currentBDD.filepath : null,
                 duv_filepath: dutPath, testbench_path: tbPath,
-                log_file: currentSimResult ? currentSimResult.log_file : null
+                log_file: currentSimResult ? currentSimResult.log_file : null,
+                // 让可解释性数据库把这次运行和 llm_calls 里的调用记录对上
+                run_id: currentRunId
             };
         }
 
