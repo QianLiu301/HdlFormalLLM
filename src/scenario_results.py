@@ -140,6 +140,9 @@ def summarize(index: Dict, log: str) -> Dict:
             sc['rows'].append({'id': f"{entry['id']}/r{k}", 'status': 'skipped',
                                'reason': 'row malformed (column count differs '
                                          'from header)'})
+        for k in entry.get('rows_unmapped', []):
+            sc['rows'].append({'id': f"{entry['id']}/r{k}", 'status': 'skipped',
+                               'reason': 'row names no known ALU operation'})
         sc['rows'].sort(key=lambda r: int(r['id'].rsplit('/r', 1)[-1]))
         sc['rows_total'] = len(sc['rows'])
 
