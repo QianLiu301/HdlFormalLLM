@@ -1,7 +1,8 @@
 # Explainability Database — Design (v0.3)
 
-Status: **M1 implemented** (schema v2 with verdicts, step-by-step ingestion;
-see `explainability_db_setup.md`). M2+ pending. The ORM models in
+Status: **M1 + M2 implemented** (schema v2 with verdicts, step-by-step
+ingestion, ALU canonical-step and rule library, explanation engine; see
+`explainability_db_setup.md`). M3+ pending. The ORM models in
 `src/xdb/models.py` and the migrations are the authoritative schema; §5 shows
 the v0.2 baseline and §5a the v0.3 changes. Branch: `bdx-explainability`
 (never merged into `master`).
@@ -472,6 +473,32 @@ rendered with the row's values, plus expected vs. observed from
 
 ---
 
+## 6a. What M2 implements
+
+- `src/xdb/library.py` — ALU library v1, hand-written: 9 canonical steps
+  (width, operand A, operand B incl. "shift amount B", operation/opcode,
+  result, zero / overflow / negative / carry flags) with regex patterns and
+  port predicates; 10 operation rules (expression + EN/ZH sentence + an
+  independent implementation) and 3 flag rules. Rules are tested against
+  `TestbenchGenerator._reference_result` on random inputs (8/16/32 bit).
+- `src/xdb/mapping.py` — every stored step is mapped at ingestion
+  (`step_mapping`, method `rule`); unmatched steps are stored with
+  `canonical_step_id = NULL`. On the Gemini ALU feature: 63/63 steps mapped.
+- `src/xdb/explain.py` — `explain_check` (local: verdict, scenario steps
+  instantiated for the row, applied stimulus, rule with the concrete
+  calculation, design output vs. rule, contrasting row of the same scenario,
+  provenance, evidence, and Then steps the testbench does not compare — each
+  of these is checked against the flag rules, so a scenario that states a
+  wrong flag is reported even though nothing simulated it);
+  `explain_global` (BDX global, P_T = ∅: every row whose instantiated Q
+  contains port = value, grouped by operation, plus the general rule);
+  `explain_requirement`. Results are stored in `explanation_target` /
+  `explanation` (structure + English rendering) and reused; text is rendered
+  in English or Chinese on request.
+- CLI: `python -m src.xdb runs | remap | explain ...`.
+
+---
+
 ## 7. Evaluating explanations
 
 | Criterion | Meaning | Measurement |
@@ -513,7 +540,7 @@ rendered with the row's values, plus expected vs. observed from
 
 Milestones (2026-11-03): **M1** verdicts + schema v2 + step-by-step storage (done) ·
 **M2** ALU canonical-step and rule library, explanation engine (local, global,
-contrastive) · **M3** Step-4 UI: verdict summary and "why?" panel, EN/ZH ·
+contrastive) (done, see §6a) · **M3** Step-4 UI: verdict summary and "why?" panel, EN/ZH ·
 **M4** repair: apply reference value (new feature version) / regenerate design ·
 **M5** regfile, CPU; counter reference model · **M6** free-text questions.
 

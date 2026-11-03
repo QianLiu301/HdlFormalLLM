@@ -131,3 +131,15 @@ def scenarios_of_session(session_id: int, url=None) -> List[Dict]:
                          .where(M.Feature.session_id == session_id, M.Scenario.is_current)
                          .order_by(M.Scenario.scenario_key)).all()
         return [{'id': r.id, 'scenario_key': r.scenario_key, 'title': r.title} for r in rows]
+
+
+def recent_runs(limit: int = 10, url=None) -> List[Dict]:
+    sql = text("""
+        SELECT r.id AS sim_run_id, t.session_id, t.feature_id, d.name AS design, r.created_at,
+               (SELECT jsonb_object_agg(v, n) FROM (SELECT coalesce(verdict, status) v, count(*) n
+                FROM check_result WHERE sim_run_id = r.id GROUP BY 1) x) AS verdicts
+        FROM sim_run r JOIN testbench t ON t.id = r.testbench_id
+        JOIN session se ON se.id = t.session_id LEFT JOIN design d ON d.id = se.design_id
+        ORDER BY r.id DESC LIMIT :n""")
+    with xdb.session_scope(url) as s:
+        return [dict(r) for r in s.execute(sql, {'n': limit}).mappings()]

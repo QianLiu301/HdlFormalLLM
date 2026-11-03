@@ -80,13 +80,54 @@ python -m src.xdb ingest --testbench output/testbench/<llm>/alu_tb.v --log outpu
 Only testbenches generated after scenario tagging (they have a
 `*_tb.scenarios.json` next to them) can be ingested.
 
-## 5. Render
+## 5. Explanations in the terminal
+
+Until the website shows them (milestone M3), explanations can be printed:
+
+```bash
+python -m src.xdb runs
+```
+
+lists recent simulations with their verdict counts.
+
+```bash
+python -m src.xdb explain --failures --lang zh
+```
+
+explains every failing check of the latest simulation (`--run N` for another).
+
+```bash
+python -m src.xdb explain ALU-SUB-001/r7 --lang zh
+```
+
+explains one check (any row, passing or failing).
+
+```bash
+python -m src.xdb explain --global overflow=True --lang zh
+```
+
+answers "when does the specification say overflow = 1?" for the latest
+feature (`--feature N` for another).
+
+```bash
+python -m src.xdb explain --requirement REQ-2 --lang zh
+```
+
+summarises one Step-0 requirement.
+
+Runs stored before this version have no step mappings yet; map them once:
+
+```bash
+python -m src.xdb remap
+```
+
+## 6. Render
 
 Render dashboard → service → **Environment** → add `DATABASE_URL` with the
 same pooled connection string. Run the migration once from your machine
 (step 3) before the first deploy that uses it.
 
-## 6. Running the tests (developers)
+## 7. Running the tests (developers)
 
 The tests need a PostgreSQL they may wipe (never point them at Neon) and
 iverilog:

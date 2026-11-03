@@ -86,7 +86,10 @@ def run(tmp_path_factory):
 
     feat = (ROOT / 'artifact/ablation/variant_A_original.feature').read_text(encoding='utf-8')
     feat = (feat.replace('@add @arithmetic', '@add @arithmetic @req_1')
-                .replace('@sltu', '@sltu @req_2', 1))
+                .replace('@sltu', '@sltu @req_2', 1)
+                # plant one flag contradiction (ADD row 7: 100 + 200 = 300 is not zero);
+                # the testbench never compares flags, so it stays byte-identical
+                .replace('| 300             | False     |', '| 300             | True      |', 1))
     (out / 'bdd/alu.feature').write_text(feat, encoding='utf-8')
     (out / 'dut/alu_32bit.v').write_text(ALU, encoding='utf-8')
     record = {'module_type': 'alu', 'created_at': '2026-11-03T10:00:00',
@@ -387,3 +390,112 @@ def test_design_that_does_not_compile_is_kept_with_its_error(run, db):
         d = c.execute(text('SELECT compiles, compile_error FROM duv WHERE id = :i'),
                       {'i': res['duv_id']}).one()
     assert d.compiles is False and d.compile_error == err
+
+
+# ---------------------------------------------------------------- M2: library + explanations
+
+def test_rule_library_matches_reference_model():
+    import random
+    from src.testbench_generator import TestbenchGenerator as G
+    from src.xdb.library import ALU_RULES
+    rnd = random.Random(7)
+    for w in (8, 16, 32):
+        for op, r in ALU_RULES.items():
+            for _ in range(2000):
+                a, b = rnd.getrandbits(w), rnd.getrandbits(w)
+                assert r['fn'](a, b, w) == G._reference_result(op, a, b, w), (op, a, b, w)
+
+
+def test_every_step_of_the_real_feature_is_mapped(run, db):
+    from sqlalchemy import create_engine, text
+    with create_engine(db).connect() as c:
+        steps = c.execute(text("""SELECT count(*) FROM scenario_step st JOIN scenario sc ON sc.id = st.scenario_id
+                                  JOIN feature f ON f.id = sc.feature_id WHERE f.session_id = 1""")).scalar()
+        mapped = c.execute(text("""SELECT count(*) FILTER (WHERE m.canonical_step_id IS NOT NULL),
+                                          count(*) FILTER (WHERE m.canonical_step_id IS NULL)
+                                   FROM step_mapping m JOIN scenario sc ON sc.id = m.scenario_id
+                                   JOIN feature f ON f.id = sc.feature_id WHERE f.session_id = 1""")).one()
+    assert steps > 0 and tuple(mapped) == (steps, 0)
+
+
+def _run1():
+    return 1   # first simulation of the module fixture (test_ingest_matches_run_report)
+
+
+def test_local_explanation_scenario_wrong(run, db):
+    from src.xdb.explain import explain_check
+    out = explain_check('ALU-SUB-001/r7', sim_run_id=_run1(), url=db)
+    st = out['structure']
+    assert st['verdict'] == 'scenario_wrong'
+    assert st['rule']['op'] == 'SUB' and st['rule']['value'] == st['values']['expected_ref'] == 4294967246
+    assert st['values']['observed'] == 4294967246 and st['values']['expected_bdd'] == 4294967245
+    assert st['contrast'] and st['contrast']['status'] == 'pass'
+    assert {u['port'] for u in st['unverified']} == {'zero', 'overflow', 'negative'}
+    assert 'The scenario is wrong, not the design.' in out['text']
+    assert '50 − 100 = 4294967246' in out['text']
+    zh = explain_check('ALU-SUB-001/r7', sim_run_id=_run1(), lang='zh', url=db)['text']
+    assert '错的是场景，不是设计' in zh and '与规则一致' in zh
+
+
+def test_local_explanation_design_wrong(run, db):
+    from src.xdb.explain import explain_check
+    out = explain_check('ALU-SLTU-001/r4', sim_run_id=_run1(), url=db)
+    assert out['structure']['verdict'] == 'design_wrong'
+    assert 'does not agree with the rule' in out['text']
+    assert out['structure']['provenance']['scenario']['model'] == 'gemini-2.5-flash-001'
+
+
+def test_unverified_flag_contradiction_is_reported(run, db):
+    from src.xdb.explain import explain_check
+    out = explain_check('ALU-ADD-001/r7', sim_run_id=_run1(), url=db)
+    st = out['structure']
+    assert st['verdict'] == 'pass'                       # the compared result is right ...
+    zero = next(u for u in st['unverified'] if u['port'] == 'zero')
+    assert zero['consistent'] is False and zero['rule_value'] == 0   # ... the stated flag is not
+    assert 'contradicts the rule library' in out['text']
+
+
+def test_global_explanation_overflow(run, db):
+    from src.xdb.explain import explain_global
+    st = explain_global(1, 'overflow', 'True', url=db)['structure']
+    assert st['by_operation'] == {'ADD': 2, 'SUB': 2}
+    assert st['verified_by_testbench'] is False and st['rule']['expr'].startswith('overflow')
+
+
+def test_requirement_explanation(run, db):
+    from sqlalchemy import create_engine, text
+    from src.xdb.explain import explain_requirement
+    with create_engine(db).connect() as c:
+        ids = dict(c.execute(text("SELECT req_key, id FROM requirement WHERE session_id = 1")).all())
+    r2 = explain_requirement(ids['REQ-2'], sim_run_id=_run1(), url=db)['structure']
+    assert r2['status'] == 'fail' and {f['verdict'] for f in r2['failing']} == {'design_wrong'}
+    r3 = explain_requirement(ids['REQ-3'], sim_run_id=_run1(), url=db)['structure']
+    assert r3['status'] == 'not_covered'
+
+
+def test_explanations_are_stored_once(run, db):
+    from sqlalchemy import create_engine, text
+    from src.xdb.explain import explain_check
+    a = explain_check('ALU-SRA-001/r5', sim_run_id=_run1(), url=db)
+    b = explain_check('ALU-SRA-001/r5', sim_run_id=_run1(), lang='zh', url=db)
+    assert a['explanation_id'] == b['explanation_id'] and a['text'] != b['text']
+    with create_engine(db).connect() as c:
+        row = c.execute(text("SELECT e.structure->>'verdict', e.text_rule, t.scope, t.sim_run_id "
+                             "FROM explanation e JOIN explanation_target t ON t.id = e.target_id "
+                             "WHERE e.id = :i"), {'i': a['explanation_id']}).one()
+    assert row[0] == 'scenario_wrong' and row[1].startswith('❓') and row[2] == 'local' and row[3] == 1
+
+
+def test_remap_restores_mappings(run, db):
+    from sqlalchemy import create_engine, text
+    from src import xdb
+    from src.xdb.mapping import remap_all
+    eng = create_engine(db)
+    with eng.begin() as c:
+        before = c.execute(text('SELECT count(*) FROM step_mapping')).scalar()
+        c.execute(text('DELETE FROM step_mapping WHERE scenario_id IN (SELECT id FROM scenario LIMIT 3)'))
+    with xdb.session_scope(db) as s:
+        out = remap_all(s)
+    with eng.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM step_mapping')).scalar() == before
+    assert out['mapped'] > 0
