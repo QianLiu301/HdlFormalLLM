@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.6'   # v1.6: requirement 'compared' decided by the whole testbench
+ALGORITHM = 'bdx_v1.7'   # v1.7: register file (stateful replay, cause of each read)
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -50,7 +50,8 @@ def _steps(s, scenario_id: int, row_vals: Optional[Dict], module_type: str, widt
         c = canon.get(m.canonical_step_id) if m and m.canonical_step_id else None
         vals = L.resolve(m.params, row_vals) if m and m.params else {}
         port = (c.predicate or {}).get('port') if c else None
-        value = next(iter(vals.values()), None) if port else None
+        vp = L.value_param((c.params or {}).get('key') if c else None, vals.keys())
+        value = vals.get(vp) if port and vp else None
         out.append({'position': st.position, 'keyword': st.keyword, 'role': st.role,
                     'background': st.from_background,
                     'text': L.instantiate(st.surface_text, row_vals),
@@ -141,6 +142,19 @@ def requirement_subject(text: str, outputs: Optional[List[str]] = None) -> Optio
     return best[1] if best else None
 
 
+def _subject(module_type: Optional[str], text: str, outputs: List[str]) -> Optional[str]:
+    """The output a requirement is judged on. A register file is observed only
+    through its read ports: everything it stores shows up on rdata1, unless the
+    requirement names the second read port."""
+    import re
+    lib = L.library_for(module_type) or {}
+    if lib.get('stateful'):
+        return 'rdata2' if re.search(r'\b(?:rdata2|raddr2|read port 2|second read port|port 2|'
+                                     r'both read ports|two read ports)\b',
+                                     text or '', flags=re.I) else 'rdata1'
+    return requirement_subject(text, [o for o in outputs if o in _OUTPUT_WORDS] or None)
+
+
 def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
     """Status of one requirement from the evidence that exists for its subject port.
 
@@ -154,7 +168,8 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
     """
     outputs = [p.name for p in s.scalars(select(M.Port).where(M.Port.design_id == q.design_id,
                                                               M.Port.direction == 'output'))]
-    subject = requirement_subject(q.text, [o for o in outputs if o in _OUTPUT_WORDS] or None)
+    design = s.get(M.Design, q.design_id) if q.design_id else None
+    subject = _subject(design.module_type if design else None, q.text, outputs)
     links = s.execute(select(M.ScenarioRequirement, M.Scenario)
                       .join(M.Scenario, M.Scenario.id == M.ScenarioRequirement.scenario_id)
                       .where(M.ScenarioRequirement.requirement_id == q.id, M.Scenario.is_current)).all()
@@ -173,6 +188,8 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
                               & (M.CheckResult.sim_run_id == sim_run_id))
                         .where(M.CheckItem.scenario_id == sc.id)).all() if sim_run_id else []
         for ci, cr in res:
+            if cr.status == 'setup':
+                continue                 # a write or reset row checks nothing by itself
             main_ports_checked.add(ci.port)
             if subject and ci.port and ci.port != subject:
                 continue
@@ -278,6 +295,47 @@ def _latest_run_with(s, tag: str, session_id: Optional[int]) -> Optional[Tuple[M
     return (r[0], r[1]) if r else None
 
 
+# ----------------------------------------------------------------- stateful designs
+
+def _rf_history(s, testbench_id: int, width: Optional[int]) -> Dict[str, Dict]:
+    """Replay of the register file over the rows this testbench executed, by
+    the library's own model (L.regfile_replay): value and cause of every read."""
+    events = []
+    for ci in s.scalars(select(M.CheckItem).where(M.CheckItem.testbench_id == testbench_id,
+                                                  M.CheckItem.test_no.is_not(None),
+                                                  M.CheckItem.seq == 1)):
+        st = ci.stimulus or {}
+        events.append({'tag': ci.tag, 'test': ci.test_no, 'op': ci.operation,
+                       'addr': st.get('addr'), 'data': st.get('data')})
+    return L.regfile_replay(events, width or 32)
+
+
+def _row_ref(s, testbench_id: int, tag: Optional[str]) -> Dict:
+    """Scenario title and example number of the row a tag names (what a user can find)."""
+    if not tag:
+        return {}
+    row = s.execute(select(M.Scenario.title, M.ExampleRow.row_no)
+                    .select_from(M.CheckItem)
+                    .join(M.Scenario, M.Scenario.id == M.CheckItem.scenario_id)
+                    .outerjoin(M.ExampleRow, M.ExampleRow.id == M.CheckItem.example_row_id)
+                    .where(M.CheckItem.testbench_id == testbench_id, M.CheckItem.tag == tag)
+                    .limit(1)).first()
+    return {'title': row[0], 'row_no': row[1]} if row else {}
+
+
+def _history_for(s, testbench_id: int, tag: str, hist: Optional[Dict], B: Optional[int]) -> Optional[Dict]:
+    """Where the value of one read comes from, and which earlier write the
+    scenario's value (if different) belongs to."""
+    if not hist:
+        return None
+    cause = {**hist['cause'], **_row_ref(s, testbench_id, hist['cause'].get('tag'))}
+    cause['same_row'] = hist['cause'].get('tag') == tag
+    earlier = [{**w, **_row_ref(s, testbench_id, w['tag'])} for w in hist['earlier']]
+    match = (next((w for w in earlier if w['value'] == B), None)
+             if B is not None and B != hist['value'] else None)
+    return {'value': hist['value'], 'cause': cause, 'earlier': earlier, 'scenario_value_from': match}
+
+
 def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Optional[int] = None,
                   seq: int = 1, url=None) -> Optional[Dict]:
     """Local explanation of one assertion, e.g. tag='BDD:ALU-SUB-001/r7'."""
@@ -309,6 +367,11 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         rule = (L.library_for(mt) or {}).get('rules', {}).get((ci.operation or '').upper())
         rule_val = (L.apply_rule(mt, ci.operation, stim.get('a'), stim.get('b'), width)
                     if rule and width else None)
+        history = None
+        if (L.library_for(mt) or {}).get('stateful'):
+            history = _history_for(s, ci.testbench_id, ci.tag,
+                                   _rf_history(s, ci.testbench_id, width).get(ci.tag), B)
+            rule_val = history['value'] if history else None
 
         # scenario value vs. what was applied (e.g. -1 written, 2^W-1 applied: same bits)
         differs = []
@@ -373,7 +436,7 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
                        'port': ci.port, 'status': cr.status if cr else None},
             'verdict': cr.verdict if cr else None,
             'values': {'observed': O, 'expected_bdd': B, 'expected_ref': R, 'width': width},
-            'operation': ci.operation,
+            'operation': ci.operation, 'module_type': mt, 'history': history,
             'scenario': {'P': [x for x in steps if x['role'] == 'P'],
                          'Q': [x for x in steps if x['role'] == 'Q']},
             'stimulus': stim, 'stimulus_differs': differs,
@@ -572,11 +635,22 @@ def render(st: Dict) -> str:
             lines.append("② Applied: " + ', '.join(
                 f"{k} = {_num(v, w) if k != 'opcode' else v}" for k, v in stim.items()))
         r = st.get('rule')
+        h = st.get('history')
         if r:
             sym = _OP_SYMBOL.get(r['op'], r['op'])
             calc = (f"{_num(stim.get('a'), w)} {sym} {_num(stim.get('b'), w)} = {_num(r.get('value'), w)}"
-                    if stim.get('a') is not None else '')
+                    if stim.get('a') is not None else _num(r.get('value'), w))
             lines.append(f"③ Rule: {r['text']} → {calc}   ({r['source']})")
+        if h:
+            c = h['cause']
+            src = {'write': lambda: f"last write: step {c['test']} ({_where(c)}), value {_num(c['value'], w)}",
+                   'reset': lambda: f"cleared by the reset in step {c['test']} ({_where(c)})",
+                   'initial': lambda: 'never written since the start (initial reset)',
+                   'x0': lambda: 'register 0, hardwired to 0'}[c['kind']]()
+            prev = '; '.join(f"step {x['test']} wrote {_num(x['value'], w)}" + (' (ignored, register 0)'
+                                                                                 if x.get('ignored') else '')
+                             for x in sorted(h.get('earlier') or [], key=lambda x: x['test']))
+            lines.append(f"   Replay of the rows before this read: {src}" + (f"; earlier: {prev}" if prev else ''))
         o = vals.get('observed')
         agree = (('agrees with the rule' if r.get('value') == o else 'does not agree with the rule')
                  if r and o is not None else '')
@@ -585,8 +659,9 @@ def render(st: Dict) -> str:
         if c:
             cs = c.get('stimulus') or {}
             c_status = 'passed' if c['status'] == 'pass' else 'failed'
-            lines.append(f"⑤ Contrast: row {c['row_no']} (a = {_num(cs.get('a'), w)}, "
-                         f"b = {_num(cs.get('b'), w)}) {c_status} — {_VERDICT.get(c.get('verdict'), '')}")
+            what = (_example(st.get('module_type'), st.get('operation'), cs, w) if _stateful(st.get('module_type'))
+                    else f"a = {_num(cs.get('a'), w)}, b = {_num(cs.get('b'), w)}")
+            lines.append(f"⑤ Contrast: row {c['row_no']} ({what}) {c_status} — {_VERDICT.get(c.get('verdict'), '')}")
         for d in st.get('stimulus_differs') or []:
             lines.append(f"Note: the scenario writes {d['scenario']} for {d['port']}; the testbench applied "
                          f"{d['applied']} (same bits as a {w}-bit value)")
@@ -711,8 +786,8 @@ def check_specification(feature_id: int, sim_run_id: Optional[int] = None, url=N
         sess = s.get(M.Session, feat.session_id)
         design = s.get(M.Design, sess.design_id) if sess.design_id else None
         mt, width = (design.module_type, design.bitwidth) if design else (None, None)
-        if not L.library_for(mt):
-            return []
+        if not (L.library_for(mt) or {}).get('flags'):
+            return []                      # nothing but ALU flags is checked this way
         width = width or _width_from_steps(s, feature_id, mt)
         ov_mode, ov_basis = _overflow_mode(s, sess.id)
         per: Dict[str, Dict] = {}
@@ -934,7 +1009,135 @@ def _inputs(op, stim, w) -> str:
 _FLAG_WORD = {'zero': 'zero flag', 'negative': 'negative flag', 'overflow': 'overflow flag'}
 
 
+def _stateful(module_type: Optional[str]) -> bool:
+    return bool((L.library_for(module_type) or {}).get('stateful'))
+
+
+def _example(module_type: Optional[str], op, stim, w) -> str:
+    """One example in the words of its design type."""
+    if not _stateful(module_type):
+        return _inputs(op, stim, w)
+    stim = stim or {}
+    a, d = stim.get('addr'), stim.get('data')
+    op = (op or '').upper()
+    if op == 'WRITE_READ':
+        return f'writing {_pv(d, w)} to R{a} and reading it back'
+    if op == 'WRITE':
+        return f'writing {_pv(d, w)} to R{a}'
+    if op == 'RESET':
+        return 'reset'
+    return f'reading R{a}'
+
+
+def _rv(v, w=None) -> str:
+    """A register value: decimal, hex only when it is large (data, not bit patterns)."""
+    return _pv(v, w if isinstance(v, int) and v >= 1 << 16 else None)
+
+
+def _where(ref: Dict, other: Optional[Dict] = None) -> str:
+    """'example 4 of “Write values into registers”' -- what a user can look up;
+    'example 4 of the same scenario' when `other` names the same scenario."""
+    if not ref or not ref.get('title'):
+        return 'an earlier row'
+    if other and other.get('title') == ref['title'] and ref.get('row_no'):
+        return f"example {ref['row_no']} of the same scenario"
+    return (f"example {ref['row_no']} of “{ref['title']}”" if ref.get('row_no')
+            else f"“{ref['title']}”")
+
+
+def _cause_text(h: Dict, a, w) -> str:
+    """Why a register holds the value it holds at a read."""
+    c = h['cause']
+    if c['kind'] == 'x0':
+        return 'register 0 always reads 0; writes to it are ignored'
+    if c['kind'] == 'initial':
+        return f'nothing wrote R{a} since the simulation started, and every register starts at 0'
+    if c['kind'] == 'reset':
+        return f'the reset in {_where(c)} cleared it, and nothing wrote R{a} after that'
+    if c.get('same_row'):
+        return f'this row wrote {_rv(c["value"], w)} to R{a} just before reading it'
+    return f'{_where(c)} wrote {_rv(c["value"], w)} to R{a}, and nothing wrote R{a} after that'
+
+
+def _scenario_value_text(h: Dict, B, a, w) -> Optional[str]:
+    """Where the scenario's (wrong) value comes from: an earlier write that a
+    later write, a reset, or the register-0 rule made obsolete."""
+    m = h.get('scenario_value_from')
+    if not m:
+        return None
+    c = h['cause']
+    if m.get('ignored'):
+        return f'{_rv(B, w)} is what {_where(m)} tried to write to register 0, and writes to register 0 are ignored'
+    if c['kind'] == 'reset' and m['test'] < c.get('test', 0):
+        return (f'{_rv(B, w)} was written by {_where(m)}, but the reset in {_where(c, m)} '
+                f'cleared it before this read')
+    return (f'{_rv(B, w)} was written by {_where(m)}, but {_where(c, m)} overwrote it with '
+            f'{_rv(c.get("value"), w)} before this read')
+
+
+def _design_value_text(h: Dict, O, a, w) -> Optional[str]:
+    """A hint at what the design did, when its value is recognisable."""
+    if O is None:
+        return None
+    c = h['cause']
+    old = next((x for x in h.get('earlier') or [] if x['value'] == O and not x.get('ignored')), None)
+    if old is not None:
+        return (f'{_rv(O, w)} is the value written by {_where(old)}: the design behaves as if '
+                f'{"the reset" if c["kind"] == "reset" else "the later write"} had not taken effect.')
+    if O == 0 and c['kind'] == 'write':
+        return 'The design returns 0, as if the write had not taken effect.'
+    ign = next((x for x in h.get('earlier') or [] if x['value'] == O and x.get('ignored')), None)
+    if ign is not None:
+        return (f'{_rv(O, w)} is what {_where(ign)} tried to write to register 0; '
+                f'the design stored it, but that write must be ignored.')
+    return None
+
+
+def _plain_local_stateful(st: Dict) -> Dict:
+    v, vals, w = st.get('verdict'), st['values'], st['values'].get('width')
+    O, B, R = vals.get('observed'), vals.get('expected_bdd'), vals.get('expected_ref')
+    stim = st.get('stimulus') or {}
+    a = stim.get('addr')
+    h = st.get('history')
+    title = _example(st.get('module_type'), st.get('operation'), stim, w)
+    title = title[0].upper() + title[1:]
+    lines = []
+    if v == 'pass':
+        lines.append(f'Correct: R{a} reads {_rv(O, w)}, as the scenario expects.')
+    elif v == 'scenario_wrong':
+        lines.append(f'The scenario is wrong, not the design. It expects {_rv(B, w)}, but R{a} holds '
+                     f'{_rv(R, w)} at this point — and that is what the design returns.')
+    elif v == 'design_wrong':
+        lines.append(f'The design is wrong. R{a} should read {_rv(R, w)}, as the scenario expects, '
+                     f'but the design returns {_rv(O, w)}.')
+    elif v == 'both_wrong':
+        lines.append(f'Both are wrong: the scenario expects {_rv(B, w)}, the design returns {_rv(O, w)}, '
+                     f'R{a} should read {_rv(R, w)}.')
+    elif v == 'consistent_wrong':
+        lines.append(f'The test passed, but scenario and design are wrong in the same way: both say '
+                     f'{_rv(O, w)}, R{a} should read {_rv(R, w)}.')
+    else:
+        lines.append('This check was not executed.')
+    if h and v is not None:
+        x = _scenario_value_text(h, B, a, w) if v in ('scenario_wrong', 'both_wrong') else None
+        lines.append(x[0].upper() + x[1:] + '.' if x else f'Why {_rv(R, w)}: {_cause_text(h, a, w)}.')
+        if v in ('design_wrong', 'both_wrong', 'consistent_wrong'):
+            y = _design_value_text(h, O, a, w)
+            if y:
+                lines.append(y)
+    c = st.get('contrast')
+    if c and v not in ('pass', None):
+        lines.append(f"For comparison, {_example(st.get('module_type'), st.get('operation'), c.get('stimulus'), w)} "
+                     f"in the same scenario {'passed' if c['status'] == 'pass' else 'failed'}.")
+    unv = st.get('unverified') or []
+    if unv:
+        lines.append('Not checked: ' + ', '.join(x['text'] for x in unv) + '.')
+    return {'title': title, 'verdict': v, 'lines': lines}
+
+
 def plain_local(st: Dict) -> Dict:
+    if _stateful(st.get('module_type')):
+        return _plain_local_stateful(st)
     v, vals, w = st.get('verdict'), st['values'], st['values'].get('width')
     O, B, R = vals.get('observed'), vals.get('expected_bdd'), vals.get('expected_ref')
     title = _inputs(st.get('operation'), st.get('stimulus'), w)
@@ -1058,6 +1261,40 @@ _WHO = {'design_wrong': 'design', 'both_wrong': 'design', 'scenario_wrong': 'sce
         'consistent_wrong': 'design'}
 
 
+_PORT_WORD = {'rdata1': 'read port 1', 'rdata2': 'read port 2 (the testbench never reads through it)'}
+_RF_OP_WORD = {'READ': 'register reads', 'WRITE_READ': 'reads right after a write'}
+
+
+def _stateful_problem(s, testbench_id, v, op, n, m, ci, B, R, O, w, h) -> Tuple[str, str]:
+    """Title and detail of one problem group of a register file."""
+    st = ci.stimulus or {}
+    a = st.get('addr')
+    ex = _example('regfile', op, st, w)
+    hh = _history_for(s, testbench_id, ci.tag, h, B) if h else None
+    why = f' ({_cause_text(hh, a, w)})' if hh else ''
+    what = _RF_OP_WORD.get(op, 'register reads')
+    if v == 'design_wrong':
+        hint = _design_value_text(hh, O, a, w) if hh else None
+        return (f'The design returns wrong values on {what}',
+                f'{n} of {m} {what} give a wrong value. E.g. {ex}: the design returns {_rv(O, w)}, '
+                f'correct is {_rv(R, w)}{why}.' + (f' {hint}' if hint else ''))
+    if v == 'both_wrong':
+        return (f'{what.capitalize()}: both the design and the scenario are wrong',
+                f'{n} of {m}. E.g. {ex}: scenario {_rv(B, w)}, design {_rv(O, w)}, correct {_rv(R, w)}{why}.')
+    if v == 'consistent_wrong':
+        return (f'{what.capitalize()}: the design repeats a mistake of the scenario',
+                f'{n} of {m} pass the test, but both give the wrong value. E.g. {ex}: both say '
+                f'{_rv(O, w)}, correct is {_rv(R, w)}{why}.')
+    x = _scenario_value_text(hh, B, a, w) if hh else None
+    title = ('A scenario expects a wrong register value' if n == 1
+             else f'{n} scenario examples expect a wrong register value')
+    if x:
+        return title, (f'E.g. {ex}: the scenario expects {_rv(B, w)}, but R{a} holds {_rv(R, w)}. '
+                       f'{x[0].upper() + x[1:]}. The design is right.')
+    return title, (f'E.g. {ex}: the scenario expects {_rv(B, w)}, but R{a} holds {_rv(R, w)} at that '
+                   f'point{why}. The design is right.')
+
+
 def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[Dict],
                    spec: List[Dict]) -> Tuple[List[Dict], Dict]:
     """Everything that is wrong or untested in one simulation, in plain words,
@@ -1079,12 +1316,23 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
             by_op.setdefault((cr.verdict, ci.operation or '?'), []).append((ci, cr))
             main_bad_tags.add(ci.tag)
     probs: List[Dict] = []
+    tbrow = s.get(M.Testbench, run.testbench_id)
+    sess = s.get(M.Session, tbrow.session_id)
+    design = s.get(M.Design, sess.design_id) if sess.design_id else None
+    mt = design.module_type if design else None
+    hist = _rf_history(s, run.testbench_id, width) if _stateful(mt) else {}
 
     order = ['design_wrong', 'both_wrong', 'consistent_wrong', 'scenario_wrong']
     for (v, op), items in sorted(by_op.items(), key=lambda kv: (order.index(kv[0][0]), kv[0][1])):
         ci, cr = items[0]
         n, m = len(items), total_op.get(op, len(items))
         B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
+        if _stateful(mt):
+            title, detail = _stateful_problem(s, run.testbench_id, v, op, n, m, ci, B, R, O, width,
+                                              hist.get(ci.tag))
+            probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
+                          'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
+            continue
         ex = _inputs(op, ci.stimulus, width)
         if v == 'design_wrong':
             title = f'The design computes {op} wrong'
@@ -1173,6 +1421,21 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                           'detail': f"“{r['text']}” — the scenarios state it, but nothing simulated "
                                     f"{r.get('subject') or 'it'}.",
                           'explain': {'kind': 'requirement', 'id': r['requirement_id']}})
+    # checks the testbench adds by itself (not from a scenario), e.g. "register 0
+    # reads as 0 after a write": a failure is the design's
+    gen_fail = [ci for ci, cr in main if ci.tag.startswith('GEN:') and cr.status == 'fail']
+    if gen_fail:
+        labels = [(ci.label or ci.tag[4:]) for ci in gen_fail]
+        first_design = next((pr for pr in probs if pr['who'] == 'design'), None)
+        note = ('The check the testbench adds by itself, “' + '”, “'.join(labels) + '”, fails as well.')
+        if first_design is not None:
+            first_design['detail'] += ' ' + note
+        else:
+            probs.insert(0, {'severity': 'error', 'who': 'design',
+                             'title': 'The design fails a check the testbench adds by itself',
+                             'detail': '“' + '”, “'.join(labels) + '”. This check does not come from '
+                                       'the scenarios; the testbench adds it for this design type.',
+                             'explain': None})
     if consequences:
         for pr in probs:
             if pr['who'] == 'design' and pr['explain'] and pr['explain'].get('kind') == 'check':
@@ -1183,7 +1446,15 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     for pr in probs:
         counts[pr['who']] = counts.get(pr['who'], 0) + 1
     n_checks = sum(total_op.values())
-    checked = [f'{n_checks} examples were simulated and compared with a reference model.']
+    if _stateful(mt):
+        checked = [f'{n_checks} register reads were simulated, in the order of the scenarios, and each was '
+                   f'compared with a reference model that replays every write and reset before it.']
+        compared = {ci.port for ci, _ in main if ci.port}
+        unread = [p_ for p_ in (L.library_for(mt) or {}).get('outputs', ()) if p_ not in compared]
+        if unread:
+            checked.append('Not checked: ' + ', '.join(_PORT_WORD.get(p_, p_) for p_ in unread) + '.')
+    else:
+        checked = [f'{n_checks} examples were simulated and compared with a reference model.']
     if probe:
         flags = sorted({port for (_, port) in probe}, key=lambda x: FLAG_PORTS.index(x) if x in FLAG_PORTS else 9)
         checked.append('The flags (' + ', '.join(flags) + ') were checked in an extra simulation.')

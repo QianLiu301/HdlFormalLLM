@@ -1,8 +1,9 @@
 # Explainability Database — Design (v0.3)
 
-Status: **M1–M4 implemented** (schema v2 with verdicts, step-by-step
-ingestion, ALU canonical-step and rule library, explanation engine, Step-4
-explanations, repair; see `explainability_db_setup.md`). M5+ pending. The ORM models in
+Status: **M1–M4 and M5a (register file) implemented** (schema v2 with
+verdicts, step-by-step ingestion, ALU and register-file rule libraries,
+explanation engine, Step-4 explanations, repair; see
+`explainability_db_setup.md`). M5b (CPU) and M6 pending. The ORM models in
 `src/xdb/models.py` and the migrations are the authoritative schema; §5 shows
 the v0.2 baseline and §5a the v0.3 changes. Branch: `bdx-explainability`
 (never merged into `master`).
@@ -47,6 +48,7 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D24 | **Requirement status by subject port.** A requirement is judged on the output it is about — the first output port its text names (rule, reproducible). Statuses: verified (testbench checks of that port all pass), verified_by_probe, fail, stated_only (nothing simulated the port), not_tested, not_covered. Replaces "all checks of the linked scenarios passed", which marked requirements about uncompared flags as verified | 2026-11-03 |
 | D25 | **Plain-language first.** Step 4 opens with a Problems card: "No problems found" or "N problems found", one line per problem (grouped by operation, concrete inputs and values, who is at fault: design / scenario / not tested / coverage), a Details button, and one line "What was checked". No internal ids (scenario keys, check tags, REQ numbers) in it. The detailed sections fold into "Technical details". Explanations carry a plain rendering (`render_plain`) shown first; the technical text is behind a toggle. A requirement whose scenarios produced no tests is "not tested" (whether an output is compared is decided by the whole testbench) | 2026-11-03 |
 | D26 | **Repair acts on the verdicts, never on the raw test outcome.** (a) *Scenario correction*: every Examples cell whose check is scenario_wrong / both_wrong / consistent_wrong (result: reference model; flags: flag rule via the probe) is set to the reference value — deterministic, no model call. The corrected text is written to a NEW file `<stem>_fixN.feature` (the old one is kept), stored as the next feature version (parent_id, reason `feedback:<id>`); the feature keeps the provenance of the model that wrote it and only the changed Examples rows get `prov_kind='rule'`, `prov_ref='feedback:<id>'`. Refused if the file on disk is not the one the simulation was generated from (catalog spans would be stale) or if a cell no longer holds the simulated value. (b) *Design regeneration* (ALU): Step 1 is called again with the failing checks of verdict design_wrong / both_wrong / consistent_wrong (inputs, correct value, the design's value; one example per operation first, at most 12), the rules they follow, and the simulated Verilog, appended after the Step-0 decisions. Scenario-side failures never reach the design prompt. The new design continues the same run (session), is stored synchronously as the next design version with reason `feedback:<id>`, and the call row carries `repair_feedback_id`. Both are recorded as a `feedback` row (subject = the simulation, kind correction, `proposed.action` = apply_reference_values / regenerate_design, status open → applied / failed, `result_ref` = feature:<id> / duv:<id>). Both rerun Step 3 and Step 4 | 2026-11-03 |
+| D27 | **Register file: explanations over a sequence.** The web testbench runs every Examples row in document order and carries the register contents from row to row and from scenario to scenario (what prompts/bdd_regfile asks for). The scenario index records every executed row — writes and resets as setup rows with operation and stimulus, reads with B, R and the value compared — and the Verilog is unchanged. R of a read is the generator's model; the rule library has an independent replay (`regfile_replay`) that must give the same value for every read (test) and also yields the *cause* of the value: the last write since the last reset, the reset itself, the initial reset, or register 0. Explanations name the cause by example number and scenario title; for a wrong scenario value they name the earlier write it belongs to and what made it obsolete (a later write, a reset, the register-0 rule); for a wrong design value they recognise stale data and stored register-0 writes. A requirement is judged on rdata1 (rdata2 only when named; the testbench never reads port 2, which "What was checked" says). A read without an expected column is compared with the reference model by the testbench, so its verdict is pass or design_wrong. Checks the testbench adds by itself (GEN, e.g. register 0 after a write) count as design failures. No flag probe and no flag specification check for this type | 2026-11-03 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -626,6 +628,43 @@ and after each step.
 
 ---
 
+## 6e. Register file (M5a, D27)
+
+Data flow for one read, `RF-READ-001/r1` of the test feature (R1 is written
+100 in example 1 and 300 in example 4 of "Write values into registers"; the
+read scenario still expects 100):
+
+```
+index detail   test 5, READ, addr 1, B = 100, R = 300, compared with 100
+replay         cause = write at test 4 (example 4), value 300; earlier: 100 (test 1)
+verdict        O = 300 (design), B = 100, R = 300  ->  scenario_wrong
+plain text     The scenario is wrong, not the design. It expects 100, but R1 holds 300
+               at this point — and that is what the design returns.
+               100 was written by example 1 of “Write values into registers”, but
+               example 4 of the same scenario overwrote it with 300 before this read.
+repair         Examples cell expected 100 -> 300 (outcome column of RF.Q.RDATA)
+```
+
+Canonical steps: `RF.P.CONFIG`, `RF.P.STATE` (Givens that only describe the
+carried-over state), `RF.A.WRITE`, `RF.A.READ`, `RF.A.RESET`, `RF.Q.RDATA`,
+`RF.Q.CLEARED` (stated, not compared), `RF.Q.WRITE`. All steps of the prompt's
+example format map.
+
+Design repair for a register file sends each failing read with its position
+in the sequence and the writes/resets it depends on, e.g. "read of R0 at
+step 12 of the sequence: rdata1 must be 0, the design gave 123. Before it:
+step 11 wrote 123 to R0 (must be ignored); register 0 must always read 0",
+plus failing checks the testbench adds by itself and the rules for WRITE,
+RESET and the failing reads.
+
+Limitations: the sequence semantics differ from Gherkin's scenario isolation;
+a scenario written as if it started from an empty register file shows up as
+scenario_wrong, with the write from another scenario named as the cause —
+the explanation makes the dependency visible rather than hiding it. Read
+port 2 and same-cycle read/write are not exercised by the testbench.
+
+---
+
 ## 7. Evaluating explanations
 
 | Criterion | Meaning | Measurement |
@@ -669,7 +708,7 @@ Milestones (2026-11-03): **M1** verdicts + schema v2 + step-by-step storage (don
 **M2** ALU canonical-step and rule library, explanation engine (local, global,
 contrastive) (done, see §6a) · **M3** Step-4 UI: verdict summary and "why?" panel (English) (done, §6b) ·
 **M4** repair: apply reference value (new feature version) / regenerate design (done, §6d) ·
-**M5** regfile, CPU; counter reference model · **M6** free-text questions.
+**M5** regfile (done, §6e), CPU; counter reference model · **M6** free-text questions.
 
 Original phase list:
 

@@ -1472,9 +1472,11 @@ def generate_hardware():
     # database stores it as the next version of the design, reason feedback:<id>.
     repair, repair_fb_id = None, None
     if data.get('repair_of'):
-        if module_type != 'alu':
+        from src.xdb import repair as XR
+        if module_type not in XR.DESIGN_REPAIR_TYPES:
             return jsonify({'success': False,
-                            'error': 'Regenerating a design from its failures is available for ALU designs only'}), 400
+                            'error': 'Regenerating a design from its failures is available for ALU and '
+                                     'register-file designs only'}), 400
         if not xdb.enabled():
             return jsonify({'success': False,
                             'error': 'Regenerating a design from its failures needs the explainability database'}), 400
@@ -1570,6 +1572,9 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
+                if repair:
+                    generator.repair_feedback = repair['text']
+                    generator.repair_previous = repair.get('previous_verilog')
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 

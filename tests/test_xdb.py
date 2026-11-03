@@ -1048,4 +1048,319 @@ def test_design_repair_only_for_alu(run, db, monkeypatch):
     r = c.post('/api/generate-hardware', json={'module_type': 'counter', 'llm': 'deepseek',
                                                'repair_of': {'testbench_path': paths['testbench'],
                                                              'log_file': paths['log']}})
-    assert r.status_code == 400 and 'ALU designs only' in r.get_json()['error']
+    assert r.status_code == 400 and 'register-file designs only' in r.get_json()['error']
+
+
+# ================================================================ register file (M5)
+# A stateful design: the testbench runs every Examples row in document order and
+# carries the register contents from row to row. RF_FEATURE has one stateful
+# scenario mistake (R1 is written 100, then 300 by a later row; the read still
+# expects 100); RF_BUGGY does not protect register 0 (writes to it are stored,
+# reads of it return them).
+
+RF_FEATURE = """Feature: 32x32-bit Register File Verification
+  As a hardware verification engineer
+  I want to verify the Register File implementation
+  So that I can ensure correct read/write behavior
+
+  Background:
+    Given the Register File has 32 registers of 32-bit width
+
+  @write @req_1
+  Scenario Outline: Write values into registers
+    Given the register file is ready
+    When I write <data> to register <addr>
+    Then the write is accepted
+
+    Examples:
+      | addr | data       |
+      | 1    | 100        |
+      | 2    | 255        |
+      | 5    | 4294967295 |
+      | 1    | 300        |
+
+  @read @req_1
+  Scenario Outline: Read back values written earlier
+    Given the register file holds earlier writes
+    When I read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | expected   |
+      | 1    | 100        |
+      | 2    | 255        |
+      | 5    | 4294967295 |
+      | 9    | 0          |
+
+  @write_read @req_1
+  Scenario Outline: Write and immediately read back
+    Given the register file is ready
+    When I write <data> to register <addr>
+    And I read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | data | expected |
+      | 7    | 42   | 42       |
+      | 12   | 7    | 7        |
+
+  @write @req_2
+  Scenario Outline: Writes to register 0 are ignored
+    Given the register file is ready
+    When I write <data> to register <addr>
+    Then the write is discarded
+
+    Examples:
+      | addr | data |
+      | 0    | 123  |
+
+  @read @req_2
+  Scenario Outline: Register 0 always reads as zero
+    Given register 0 is hardwired
+    When I read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | expected |
+      | 0    | 0        |
+
+  @reset @req_3
+  Scenario Outline: Reset clears every register
+    Given registers hold values
+    When reset is asserted
+    Then register <addr> is cleared
+
+    Examples:
+      | addr |
+      | 1    |
+
+  @read @req_3
+  Scenario Outline: Everything reads zero after reset
+    Given reset has completed
+    When I read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | expected |
+      | 1    | 0        |
+      | 7    | 0        |
+"""
+
+RF_BUGGY = """module regfile #(parameter WIDTH = 32, parameter DEPTH = 32, parameter ADDR_WIDTH = 5) (
+    input  wire                  clk,
+    input  wire                  rst_n,
+    input  wire [ADDR_WIDTH-1:0] raddr1,
+    output wire [WIDTH-1:0]      rdata1,
+    input  wire [ADDR_WIDTH-1:0] raddr2,
+    output wire [WIDTH-1:0]      rdata2,
+    input  wire                  wen,
+    input  wire [ADDR_WIDTH-1:0] waddr,
+    input  wire [WIDTH-1:0]      wdata
+);
+    reg [WIDTH-1:0] registers [0:DEPTH-1];
+    integer i;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (i = 0; i < DEPTH; i = i + 1) registers[i] <= 0;
+        end else if (wen) begin
+            registers[waddr] <= wdata;          // BUG: register 0 is not protected
+        end
+    end
+    assign rdata1 = registers[raddr1];          // BUG: register 0 is not hardwired
+    assign rdata2 = (raddr2 == 0) ? 0 : registers[raddr2];
+endmodule
+"""
+
+RF_FIXED = (RF_BUGGY.replace("registers[waddr] <= wdata;          // BUG: register 0 is not protected",
+                             "if (waddr != 0) registers[waddr] <= wdata;")
+            .replace("assign rdata1 = registers[raddr1];          // BUG: register 0 is not hardwired",
+                     "assign rdata1 = (raddr1 == 0) ? 0 : registers[raddr1];"))
+
+RF_RECORD = {'module_type': 'regfile', 'created_at': '2026-11-03T12:00:00', 'questions': [], 'decisions': [],
+             'requirements': [
+                 {'id': 'REQ-1', 'text': 'A read returns the value last written to that register.', 'source': 'llm'},
+                 {'id': 'REQ-2', 'text': 'Register 0 always reads as zero; writes to it are ignored.', 'source': 'llm'},
+                 {'id': 'REQ-3', 'text': 'Reset clears every register.', 'source': 'llm'},
+                 {'id': 'REQ-4', 'text': 'Both read ports can read any register at the same time.', 'source': 'llm'}]}
+RF_DUT = {'module_type': 'regfile', 'module_name': 'regfile', 'bitwidth': 32, 'depth': 32}
+
+
+def _simulate(proj, tb_path, duv_path, log_rel):
+    vvp = proj / (Path(log_rel).stem + '.vvp')
+    subprocess.run(['iverilog', '-g2012', '-o', str(vvp), str(tb_path), str(duv_path)], check=True, cwd=proj)
+    log = subprocess.run(['vvp', str(vvp)], capture_output=True, text=True, cwd=proj,
+                         encoding='utf-8', errors='replace').stdout
+    (proj / log_rel).write_text(log, encoding='utf-8')
+    return log
+
+
+@pytest.fixture(scope='module')
+def rf_run(db, tmp_path_factory):
+    """The register-file sample, simulated on the buggy design and ingested (run id rf_run)."""
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.ingest import ingest_run
+    proj = tmp_path_factory.mktemp('rfproj')
+    out = proj / 'output'
+    for d in ('bdd', 'dut', 'requirements', 'simulation'):
+        (out / d).mkdir(parents=True)
+    (out / 'bdd/rf.feature').write_text(RF_FEATURE, encoding='utf-8')
+    (out / 'dut/regfile.v').write_text(RF_BUGGY, encoding='utf-8')
+    (out / 'requirements/req.json').write_text(json.dumps(RF_RECORD), encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/rf.feature'), {**RF_DUT, 'dut_filepath': str(out / 'dut/regfile.v')})
+    assert tb['success'], tb
+    _simulate(proj, tb['filepath'], out / 'dut/regfile.v', 'output/simulation/rf.log')
+    paths = {'requirements': 'output/requirements/req.json', 'bdd': 'output/bdd/rf.feature',
+             'duv': 'output/dut/regfile.v', 'testbench': Path(tb['filepath']).relative_to(proj).as_posix(),
+             'log': 'output/simulation/rf.log'}
+    res = ingest_run(proj, paths, run_id='rf_run', url=db, data={'bitwidth': 32})
+    assert res['ingested'], res
+    return proj, paths, res
+
+
+def test_regfile_replay_matches_the_testbench_model(rf_run):
+    """The library's own replay gives the same value for every read as the
+    testbench generator's model (two independent implementations)."""
+    from src import scenario_results as SR
+    from src.xdb import library as L
+    proj, paths, _ = rf_run
+    detail = SR.load_index(proj / paths['testbench'])['trace']['detail']
+    events = [{'tag': f'BDD:{rid}', 'test': d['test'], 'op': d['operation'],
+               'addr': d['stimulus'].get('addr'), 'data': d['stimulus'].get('data')}
+              for rid, ds in detail.items() for d in ds]
+    rep = L.regfile_replay(events, 32)
+    reads = {f'BDD:{rid}': ds[0]['expected_ref'] for rid, ds in detail.items() if ds[0]['port'] == 'rdata1'}
+    assert reads and {t: rep[t]['value'] for t in reads} == reads
+    # causes: a later write, the reset row, register 0, a write in the same row
+    assert rep['BDD:RF-READ-001/r1']['cause'] == {'kind': 'write', 'tag': 'BDD:RF-WRITE-001/r4', 'test': 4,
+                                                 'value': 300, 'ignored': False}
+    assert [w['value'] for w in rep['BDD:RF-READ-001/r1']['earlier']] == [100]
+    assert rep['BDD:RF-READ-003/r1']['cause']['kind'] == 'reset'
+    assert rep['BDD:RF-READ-002/r1']['cause'] == {'kind': 'x0'}
+    assert rep['BDD:RF-WRITE_READ-001/r1']['cause']['tag'] == 'BDD:RF-WRITE_READ-001/r1'
+    assert rep['BDD:RF-READ-001/r4']['cause'] == {'kind': 'initial'}
+
+
+def test_regfile_testbench_is_unchanged_by_the_index(tmp_path):
+    """The index records every executed row; the Verilog does not change.
+    Pinned by the number of tests and the absence of index text in the file."""
+    from src.testbench_generator import TestbenchGenerator
+    f = tmp_path / 'rf.feature'
+    f.write_text(RF_FEATURE, encoding='utf-8')
+    tb = TestbenchGenerator(output_dir=str(tmp_path / 'tb'), debug=False).generate_single(str(f), dict(RF_DUT))
+    text = Path(tb['filepath']).read_text(encoding='utf-8')
+    assert tb['test_count'] == 15 and 'expected_ref' not in text and text.count('[BDD:') == 9 * 3
+
+
+def test_regfile_steps_are_all_mapped(rf_run, db):
+    from src import xdb
+    from src.xdb import models as M
+    from sqlalchemy import select, func
+    with xdb.session_scope(db) as s:
+        n = dict(s.execute(select(M.StepMapping.canonical_step_id.is_(None), func.count())
+                           .join(M.Scenario, M.Scenario.id == M.StepMapping.scenario_id)
+                           .join(M.Feature, M.Feature.id == M.Scenario.feature_id)
+                           .join(M.Session, M.Session.id == M.Feature.session_id)
+                           .where(M.Session.run_id == 'rf_run')
+                           .group_by(M.StepMapping.canonical_step_id.is_(None))).all())
+    assert n.get(True, 0) == 0 and n[False] > 20
+
+
+def test_regfile_verdicts_problems_and_requirements(rf_run, db):
+    from src.xdb.explain import summarize_run
+    proj, paths, res = rf_run
+    assert res['verdicts'] == {'pass': 7, 'scenario_wrong': 1, 'design_wrong': 1}
+    assert res['probe'] == {'status': 'not_applicable'}
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    titles = [p['title'] for p in s['problems']]
+    assert titles == ['The design returns wrong values on register reads',
+                      'A scenario expects a wrong register value',
+                      'A requirement is not tested by any scenario']
+    design, scen = s['problems'][0]['detail'], s['problems'][1]['detail']
+    assert 'reading R0: the design returns 123, correct is 0' in design
+    assert '123 is what example 1 of “Writes to register 0 are ignored” tried to write to register 0' in design
+    assert '“register 0 reads as 0 after a write”, fails as well' in design      # the testbench's own check
+    assert ('100 was written by example 1 of “Write values into registers”, but example 4 of the same '
+            'scenario overwrote it with 300 before this read') in scen
+    for p in s['problems']:
+        assert 'RF-' not in p['title'] + p['detail'] and 'BDD:' not in p['detail']
+    checked = ' '.join(s['overview']['checked'])
+    assert checked.startswith('9 register reads were simulated') and 'read port 2' in checked
+    st = {r['req_key']: (r['status'], r['subject']) for r in s['requirements']}
+    assert st == {'REQ-1': ('fail', 'rdata1'), 'REQ-2': ('fail', 'rdata1'), 'REQ-3': ('verified', 'rdata1'),
+                  'REQ-4': ('not_covered', 'rdata2')}
+    assert s['repairs']['scenario_values'] == 1 and s['repairs']['design_failures'] == 2
+    assert s['spec_check'] == []
+
+
+def test_regfile_local_explanations(rf_run, db):
+    from src.xdb.explain import explain_check, summarize_run
+    proj, paths, _ = rf_run
+    run = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)['sim_run_id']
+    e = explain_check('RF-READ-001/r1', sim_run_id=run, url=db)
+    assert e['plain']['title'] == 'Reading R1'
+    assert e['plain']['lines'][:2] == [
+        'The scenario is wrong, not the design. It expects 100, but R1 holds 300 at this point — and that '
+        'is what the design returns.',
+        '100 was written by example 1 of “Write values into registers”, but example 4 of the same scenario '
+        'overwrote it with 300 before this read.']
+    assert e['structure']['history']['cause']['row_no'] == 4
+    after_reset = explain_check('RF-READ-003/r1', sim_run_id=run, url=db)['plain']['lines']
+    assert after_reset[1] == ('Why 0: the reset in example 1 of “Reset clears every register” cleared it, '
+                              'and nothing wrote R1 after that.')
+    wr = explain_check('RF-WRITE_READ-001/r1', sim_run_id=run, url=db)['plain']
+    assert wr['title'] == 'Writing 42 to R7 and reading it back'
+    assert wr['lines'][1] == 'Why 42: this row wrote 42 to R7 just before reading it.'
+    x0 = explain_check('RF-READ-002/r1', sim_run_id=run, url=db)
+    assert x0['structure']['verdict'] == 'design_wrong'
+    assert x0['plain']['lines'][1] == 'Why 0: register 0 always reads 0; writes to it are ignored.'
+
+
+def test_regfile_repair_scenarios_and_design(rf_run, db, monkeypatch):
+    """Correct the stale expected value (100 -> 300), then regenerate the design
+    with a fake model returning the fixed register file: no problem is left
+    but the uncovered requirement."""
+    from src import experiment_logger
+    proj, paths, _ = rf_run
+    c = _client((proj, paths), db, monkeypatch)
+    body = _page_body(paths, run_id='rf_run', dut_info=dict(RF_DUT))
+    r = c.post('/api/repair/scenarios', json=body).get_json()
+    assert r['success'], r
+    assert [(x['column'], x['old'], x['new']) for x in r['corrections']] == [('expected', '100', '300')]
+    assert r['corrections'][0]['text'] == 'Reading R1: expected value 100 → 300'
+    body2 = _page_body(paths, run_id='rf_run', dut_info=dict(RF_DUT), bdd_filepath=r['feature_path'],
+                       testbench_path=r['testbench_path'], log_file=r['simulation']['log_file'])
+    assert c.post('/api/run-report', json=body2).get_json()['success']
+    s2 = _summary_when_ready(c, body2)
+    assert s2['verdicts'] == {'pass': 8, 'design_wrong': 1, 'setup': 6, 'fail': 1}
+
+    fb = c.post('/api/repair/design-feedback', json=body2).get_json()
+    assert fb['success'] and fb['count'] == 2
+    assert ('- read of R0 at step 12 of the sequence: rdata1 must be 0, the design gave 123. Before it: '
+            'step 11 wrote 123 to R0 (must be ignored); register 0 must always read 0') in fb['text']
+    assert "the testbench's own check “register 0 reads as 0 after a write” failed" in fb['text']
+    assert '- WRITE: a write stores the data at the clock edge; writes to register 0 are ignored' in fb['text']
+
+    class FakeDesignModel:
+        def _call_api(self, prompt, max_tokens=None, system_prompt=None, sampling=None):
+            return '```verilog\n' + RF_FIXED + '\n```'
+    experiment_logger.instrument_class(FakeDesignModel)
+    import main
+    monkeypatch.setattr(main.RegFileGenerator, '_setup_llm', lambda self: FakeDesignModel())
+    hw = c.post('/api/generate-hardware', json={
+        'module_type': 'regfile', 'llm': 'deepseek', 'bitwidth': 32, 'depth': 32,
+        'workflow_mode': 'implementation', 'run_id': 'rf_run',
+        'repair_of': {'testbench_path': r['testbench_path'], 'log_file': r['simulation']['log_file']}}).get_json()
+    assert hw['success'], hw
+    new_duv = Path(hw['filepath']).relative_to(proj).as_posix()
+    rr = c.post('/api/repair/rerun', json=_page_body(paths, run_id='rf_run', dut_info=dict(RF_DUT),
+                                                     bdd_filepath=r['feature_path'], duv_filepath=new_duv)).get_json()
+    assert rr['success'], rr
+    body3 = _page_body(paths, run_id='rf_run', dut_info=dict(RF_DUT), bdd_filepath=r['feature_path'],
+                       duv_filepath=new_duv, testbench_path=rr['testbench_path'],
+                       log_file=rr['simulation']['log_file'])
+    assert c.post('/api/run-report', json=body3).get_json()['success']
+    s3 = _summary_when_ready(c, body3)
+    assert s3['verdicts'] == {'pass': 10, 'setup': 6}          # 9 reads + the testbench's own R0 check
+    assert [p['who'] for p in s3['problems']] == ['coverage']
+    assert s3['repairs']['duv_reason'] == f"feedback:{hw['repair']['feedback_id']}"

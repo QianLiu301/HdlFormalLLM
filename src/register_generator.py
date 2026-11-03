@@ -145,6 +145,11 @@ class RegFileGenerator:
             prompt += _prompt_store.decisions_block(self.decisions)
             print(f"📌 Confirmed decisions appended to prompt "
                   f"({len(self.decisions.get('decisions') or [])} decisions)")
+        # M4 repair: the failures of the last simulation, judged by the reference model
+        if getattr(self, 'repair_feedback', None):
+            prompt += _prompt_store.repair_feedback_block(self.repair_feedback,
+                                                          getattr(self, 'repair_previous', None))
+            print(f"🔁 Repair feedback appended to prompt ({len(self.repair_feedback)} chars)")
 
         if self.debug:
             print(f"\n📝 Prompt preview:")

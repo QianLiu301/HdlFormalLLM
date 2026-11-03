@@ -2184,6 +2184,11 @@ class TestbenchGenerator:
                 model.clear()
                 if scenario.get('_bdd_id'):
                     trace['setup'][scenario['_bdd_id']] = 'reset (no check of its own)'
+                # 索引里记下每个执行了的行（含没有检查的写和复位）：解释要说出
+                # 一次读的值来自哪一行，而行序只有这里知道
+                self._trace_detail(trace, scenario, test=i, port=None, width=bitwidth,
+                                   operation='RESET', stimulus={}, expected_bdd=None,
+                                   expected_ref=None, expected_used=None, oracle=None)
                 lines.append(f"        // row {i}: reset")
                 lines.append(f"        rst_n = 0; @(posedge clk); #1; rst_n = 1; #1;")
                 lines.append("")
@@ -2208,6 +2213,11 @@ class TestbenchGenerator:
                 if addr != 0:               # 写 x0 被硬件忽略
                     model[addr] = data
                 stats['write'] += 1
+                if op == 'write':
+                    self._trace_detail(trace, scenario, test=i, port=None, width=bitwidth,
+                                       operation='WRITE', stimulus={'addr': addr, 'data': data},
+                                       expected_bdd=None, expected_ref=None, expected_used=None,
+                                       oracle=None)
 
             if op in ('read', 'write_read'):
                 if op == 'read' and addr in model:
@@ -2216,11 +2226,22 @@ class TestbenchGenerator:
                 # 参考模型只依赖行序与规格，因此它的失败只可能来自 DUV。
                 ref = 0 if addr == 0 else model.get(addr, 0)
                 expect = ref
+                e = _pick(scenario, 'expected')
                 if oracle_source != 'spec':
-                    e = _pick(scenario, 'expected')
                     if isinstance(e, int):
                         expect = e & mask
                 emit_read(i, addr, expect, self._trace_tag(trace, scenario))
+                stim = {'addr': addr}
+                if op == 'write_read':
+                    stim['data'] = data
+                # 没写 expected 的行，testbench 比较的是参考模型的值
+                self._trace_detail(trace, scenario, test=i, port='rdata1', width=bitwidth,
+                                   operation='WRITE_READ' if op == 'write_read' else 'READ',
+                                   stimulus=stim,
+                                   expected_bdd=e & mask if isinstance(e, int) else None,
+                                   expected_ref=ref, expected_used=expect,
+                                   oracle='spec' if oracle_source == 'spec' or not isinstance(e, int)
+                                   else 'bdd')
                 stats['read'] += 1 if op == 'read' else 0
                 stats['write_read'] += 1 if op == 'write_read' else 0
             lines.append("")

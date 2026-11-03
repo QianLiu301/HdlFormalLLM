@@ -12,7 +12,8 @@ Writes, where the page itself would put them (provider folder "gemini"):
 and prints the page state as JSON. The testbench and the simulation are left
 to the page (Step 3 / Step 4), so the browser check runs the real flow.
 
-    python tests/ui/stage_run.py
+    python tests/ui/stage_run.py            # ALU
+    python tests/ui/stage_run.py regfile    # register file (32 x 32 bit)
 """
 import json
 import sys
@@ -22,7 +23,28 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests'))
 
-from test_xdb import ALU  # noqa: E402  (the test design: SLTU compares signed)
+from test_xdb import ALU, RF_BUGGY, RF_FEATURE, RF_FIXED, RF_RECORD  # noqa: E402
+# ALU: SLTU compares signed. Register file: register 0 is not protected; the
+# feature reads R1 expecting 100 after a later row wrote 300.
+
+
+def regfile():
+    out = ROOT / 'output'
+    for d in ('bdd/gemini', 'dut/gemini', 'requirements'):
+        (out / d).mkdir(parents=True, exist_ok=True)
+    (out / 'bdd/gemini/xdb_ui_rf.feature').write_text(RF_FEATURE, encoding='utf-8')
+    (out / 'dut/gemini/xdb_ui_rf.v').write_text(RF_BUGGY, encoding='utf-8')
+    (out / 'dut/gemini/xdb_ui_rf_fixed.v').write_text(RF_FIXED, encoding='utf-8')
+    (out / 'requirements/xdb_ui_rf_req.json').write_text(json.dumps(RF_RECORD), encoding='utf-8')
+    print(json.dumps({
+        'bdd': {'filename': 'xdb_ui_rf.feature', 'filepath': 'output/bdd/gemini/xdb_ui_rf.feature',
+                'llm': 'gemini'},
+        'dut': {'moduleType': 'regfile', 'moduleName': 'Register File', 'bitwidth': 32, 'depth': 32,
+                'pipelineStages': 5, 'filename': 'xdb_ui_rf.v', 'source': 'llm', 'llm': 'gemini'},
+        'requirements': {'filepath': 'output/requirements/xdb_ui_rf_req.json', 'module_type': 'regfile'},
+        'fixed_design': {'filename': 'xdb_ui_rf_fixed.v', 'content': RF_FIXED},
+        'fake_repair': {'failures': 2, 'operations': ['READ']},
+    }))
 
 
 def main():
@@ -53,8 +75,9 @@ def main():
                 'pipelineStages': 5, 'filename': 'xdb_ui_alu.v', 'source': 'llm', 'llm': 'gemini'},
         'requirements': {'filepath': 'output/requirements/xdb_ui_req.json', 'module_type': 'alu'},
         'fixed_design': {'filename': 'xdb_ui_alu_fixed.v', 'content': fixed},
+        'fake_repair': {'failures': 3, 'operations': ['SLTU']},
     }))
 
 
 if __name__ == '__main__':
-    main()
+    regfile() if sys.argv[1:] == ['regfile'] else main()

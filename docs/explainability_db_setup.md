@@ -127,10 +127,23 @@ Both ask for confirmation first, show a note on what was changed above the
 new result, and are stored in the database as feedback with the new file as
 the next version (`reason = feedback:<id>`).
 
+### Register files (M5a)
+
+The same card works for register-file designs (Step 1 module type
+"Register File"). The testbench runs the Examples rows in order and keeps the
+register contents between rows, so each explanation says where the value of a
+read comes from — which example wrote it, or the reset that cleared it — and,
+when a scenario expects an old value, which later write replaced it. Read
+port 2 is never read by the testbench; the card says so under "What was
+checked". "Regenerate the design" is available for register files too.
+
+To try it without a model: `python tests/ui/stage_run.py regfile` writes a
+sample feature and a design with a register-0 bug under `output/`.
+
 Browser checks (developers; app running with `DATABASE_URL`, iverilog):
 
 ```bash
-mkdir -p /tmp/ui && python tests/ui/stage_run.py > /tmp/ui/state.json
+mkdir -p /tmp/ui && python tests/ui/stage_run.py > /tmp/ui/state.json    # or: stage_run.py regfile
 ```
 
 ```bash

@@ -27,7 +27,7 @@ _VAL = r'(?P<{n}><[^>]+>|[-+]?\w+)'
 
 
 def _p(rx: str) -> re.Pattern:
-    for n in ('A', 'B', 'R', 'Z', 'V', 'N', 'C', 'W', 'OP', 'CODE'):
+    for n in ('A', 'B', 'R', 'Z', 'V', 'N', 'C', 'W', 'OP', 'CODE', 'ADDR', 'DATA'):
         rx = rx.replace('{' + n + '}', _VAL.format(n=n))
     return re.compile(rx, re.I)
 
@@ -102,8 +102,133 @@ FLAG_RULES = {
     # overflow: one of OVERFLOW_DEFINITIONS, chosen per session (flag_rule)
 }
 
-LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES}}
+# ----------------------------------------------------------------- register file
+# The web testbench runs every Examples row of the feature in document order
+# with the register contents carried from row to row (and from scenario to
+# scenario, as prompts/bdd_regfile asks), so the meaning of a read depends on
+# the rows before it. The rules below describe one step; regfile_replay gives
+# the value of each read over the whole sequence.
+
+_REG = r'(?:register |reg |R|x)'
+RF_STEPS: List[Dict] = [
+    {'key': 'RF.P.CONFIG', 'role': 'context', 'template': '<N> registers of <W> bits',
+     'patterns': [_p(r'^the register file has {N} registers of {W}-bit width$'),
+                  _p(r'^the register file has {N} registers(?: each)? {W} bits wide$')],
+     'port': None, 'expr': None},
+    {'key': 'RF.P.STATE', 'role': 'context', 'template': 'state carried over from the rows before',
+     'patterns': [_p(r'^the register file is (?:ready|initiali[sz]ed|idle|out of reset)$'),
+                  _p(r'^the register file holds (?:earlier|previous|prior) writes$'),
+                  _p(r'^(?:the )?registers hold (?:values|data)$'),
+                  _p(r'^reset has (?:completed|been applied|finished|been released)$'),
+                  _p(r'^register 0 is hardwired(?: to (?:zero|0))?$')],
+     'port': None, 'expr': None},
+    {'key': 'RF.A.WRITE', 'role': 'action', 'template': 'write <DATA> to register <ADDR>',
+     'patterns': [_p(r'^I write {DATA} (?:to|into) ' + _REG + r'{ADDR}$')],
+     'port': 'wdata', 'value': 'DATA', 'expr': 'wen && waddr == {ADDR} && wdata == {DATA}'},
+    {'key': 'RF.A.READ', 'role': 'action', 'template': 'read register <ADDR>',
+     'patterns': [_p(r'^I read (?:from )?' + _REG + r'{ADDR}(?: (?:on|through|via) (?:read )?port 1)?$')],
+     'port': 'raddr1', 'value': 'ADDR', 'expr': 'raddr1 == {ADDR}'},
+    {'key': 'RF.A.RESET', 'role': 'action', 'template': 'assert reset',
+     'patterns': [_p(r'^(?:the )?reset is (?:asserted|applied)$'),
+                  _p(r'^I (?:assert|apply) (?:the )?reset$')],
+     'port': 'rst_n', 'expr': 'rst_n == 0'},
+    {'key': 'RF.Q.RDATA', 'role': 'outcome', 'template': 'read data = <R>',
+     'patterns': [_p(r'^the (?:value|read data|data|output|read value) should (?:be|equal) {R}$'),
+                  _p(r'^I should (?:read|get|see) {R}$'),
+                  _p(r'^register {ADDR} should (?:contain|hold|read) {R}$')],
+     'port': 'rdata1', 'value': 'R', 'expr': 'rdata1 == {R}'},
+    {'key': 'RF.Q.CLEARED', 'role': 'outcome', 'template': 'register <ADDR> holds 0',
+     'patterns': [_p(r'^register {ADDR} is cleared$'),
+                  _p(r'^register {ADDR} (?:should be|is) (?:cleared|zero|0)$')],
+     'port': None, 'expr': 'regs[{ADDR}] == 0'},
+    {'key': 'RF.Q.WRITE', 'role': 'outcome', 'template': 'the write is accepted or ignored',
+     'patterns': [_p(r'^the write is (?:accepted|stored|performed|discarded|ignored)$')],
+     'port': None, 'expr': None},
+]
+
+RF_RULES: Dict[str, Dict] = {r['op']: r for r in [
+    _rule('READ', 'rdata1 == regs[addr]; regs[0] == 0',
+          'a read returns the value last written to that register since the last reset, '
+          '0 if there was none; register 0 always reads 0', None),
+    _rule('WRITE_READ', 'regs[addr] <= data at the clock edge, then rdata1 == regs[addr]',
+          'a write takes effect at the clock edge, so the read after it returns the new value; '
+          'writes to register 0 are ignored', None),
+    _rule('WRITE', 'regs[addr] <= data at the clock edge (addr != 0)',
+          'a write stores the data at the clock edge; writes to register 0 are ignored', None),
+    _rule('RESET', 'regs[*] <= 0', 'reset sets every register to 0', None),
+]}
+
+
+def regfile_replay(events: List[Dict], width: int) -> Dict[str, Dict]:
+    """Independent reference model of the register file over the executed rows.
+
+    events: {'tag', 'test', 'op' (RESET | WRITE | READ | WRITE_READ), 'addr',
+    'data'} in any order; they are replayed by test number. For every read:
+    {'value', 'cause', 'earlier'} where cause says where the value comes from
+    ({'kind': 'write', 'tag', 'test', 'value'} | {'kind': 'reset', 'tag', 'test'}
+    | {'kind': 'initial'} (the testbench's own reset at the start) | {'kind': 'x0'})
+    and earlier lists the other writes to that register before the read, newest
+    first (at most 3) -- the values a wrong scenario typically expects."""
+    mask = (1 << width) - 1
+    regs: Dict[int, int] = {}
+    last: Dict[int, Dict] = {}
+    writes: Dict[int, List[Dict]] = {}
+    last_reset = None
+    out: Dict[str, Dict] = {}
+    for e in sorted(events, key=lambda e: e['test']):
+        op, a = (e.get('op') or '').upper(), e.get('addr')
+        if op == 'RESET':
+            regs.clear()
+            last.clear()
+            last_reset = {'tag': e['tag'], 'test': e['test']}
+            continue
+        if a is None:
+            continue
+        if op in ('WRITE', 'WRITE_READ'):
+            ev = {'tag': e['tag'], 'test': e['test'], 'value': (e.get('data') or 0) & mask,
+                  'ignored': a == 0}
+            writes.setdefault(a, []).append(ev)
+            if a != 0:
+                regs[a], last[a] = ev['value'], ev
+        if op in ('READ', 'WRITE_READ'):
+            if a == 0:
+                v, cause = 0, {'kind': 'x0'}
+            elif a in regs:
+                v, cause = regs[a], {'kind': 'write', **last[a]}
+            elif last_reset is not None:
+                v, cause = 0, {'kind': 'reset', **last_reset}
+            else:
+                v, cause = 0, {'kind': 'initial'}
+            earlier = [w for w in writes.get(a, []) if w is not last.get(a)][-3:][::-1]
+            out[e['tag']] = {'value': v, 'cause': cause, 'earlier': earlier}
+    return out
+
+
+LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES,
+                     'outcome_key': 'ALU.Q.RESULT', 'outputs': ('result', 'zero', 'negative',
+                                                                 'overflow', 'carry')},
+             'regfile': {'steps': RF_STEPS, 'rules': RF_RULES, 'flags': {},
+                         'outcome_key': 'RF.Q.RDATA', 'outputs': ('rdata1', 'rdata2'),
+                         'stateful': True}}
 LIBRARIES['alu_comb'] = LIBRARIES['alu']
+
+
+def step_by_key(key: Optional[str]) -> Optional[Dict]:
+    for lib in LIBRARIES.values():
+        for st in lib['steps']:
+            if st['key'] == key:
+                return st
+    return None
+
+
+def value_param(key: Optional[str], names) -> Optional[str]:
+    """Which parameter of a mapped step holds the port value (the first one
+    unless the library says otherwise, e.g. DATA of 'write <DATA> to <ADDR>')."""
+    st = step_by_key(key)
+    names = list(names or [])
+    if st and st.get('value') in names:
+        return st['value']
+    return names[0] if names else None
 
 
 def library_for(module_type: Optional[str]) -> Optional[Dict]:
@@ -169,7 +294,7 @@ def apply_rule(module_type: str, op: Optional[str], a, b, width: int) -> Optiona
     lib = library_for(module_type)
     rule = (lib or {}).get('rules', {}).get((op or '').upper())
     ai, bi = to_int(a, width), to_int(b, width)
-    if rule is None or ai is None or bi is None:
+    if rule is None or rule.get('fn') is None or ai is None or bi is None:
         return None
     return rule['fn'](ai, bi, width)
 
