@@ -35,6 +35,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src import xdb
 from src.xdb import gherkin
+from src.xdb import mapping
 from src.xdb import models as M
 from src.xdb.verdict import classify, observed_value
 
@@ -443,6 +444,7 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
         scen: Dict[str, M.Scenario] = {}
         rows: Dict[str, M.ExampleRow] = {}
         n_new_scen = 0
+        canon_ids = mapping.ensure_library(s, module_type)
         for entry in (index.get('catalog') or []) if feature else []:
             sc = s.scalar(select(M.Scenario).where(M.Scenario.feature_id == feature.id,
                                                    M.Scenario.scenario_key == entry['id'],
@@ -473,6 +475,7 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                         s.add(M.ScenarioRequirement(scenario_id=sc.id, requirement_id=reqs[rid].id,
                                                     method='llm_tag', prov_ref=sc.prov_ref))
                 s.flush()
+                mapping.map_scenario(s, sc.id, module_type, canon_ids)
             scen[entry['id']] = sc
             for er in s.scalars(select(M.ExampleRow).where(M.ExampleRow.scenario_id == sc.id,
                                                            M.ExampleRow.is_current)):

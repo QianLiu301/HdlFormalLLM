@@ -118,7 +118,9 @@ TestbenchGenerator): pass, scenario_wrong, design_wrong, both_wrong,
 consistent_wrong, undecided — testbench Verilog is unchanged, the data comes
 from the `*_tb.scenarios.json` index v2 (ALU only so far). Scope on this branch:
 web Steps 0–4 (+explain, repair); benchmark/golden/mutants set aside.
-Milestones M1 (done) … M6 in the design doc. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
+Milestones M1, M2 done (M2: `src/xdb/library.py` ALU canonical steps + rules,
+`mapping.py`, `explain.py`; CLI `python -m src.xdb runs|remap|explain`), M3 next
+(Step-4 UI panel) … M6 in the design doc. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.
 
