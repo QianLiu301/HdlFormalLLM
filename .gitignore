@@ -69,3 +69,6 @@ logs/
 *.vcd
 
 .claude/
+
+# Local secrets (DATABASE_URL for the explainability DB, ...)
+.env

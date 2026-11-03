@@ -38,6 +38,7 @@ from src.experiment_logger import call_context, log_artifact  # noqa: E402
 from src import prompt_store  # noqa: E402
 from src import requirements_store  # noqa: E402
 from src import run_report  # noqa: E402
+from src import xdb  # noqa: E402  (explainability DB; inert without DATABASE_URL)
 
 # ============================================================================
 # Configuration Loading
@@ -2413,10 +2414,20 @@ def _report_paths(data):
 @app.route('/api/run-report', methods=['POST'])
 def run_report_json():
     """一次运行的报告：需求 → 场景 → 断言 → 结果。供 Step 4 页面显示。"""
-    report, err = run_report.build(PROJECT_ROOT, _report_paths(request.json or {}))
+    data = request.json or {}
+    paths = _report_paths(data)
+    report, err = run_report.build(PROJECT_ROOT, paths)
     if err:
         return jsonify({'success': False, 'error': err}), 400
-    return jsonify({'success': True, **report})
+    # Step 4 页面每次仿真后都会请求这份报告，它手里正好有整条链的全部产物，
+    # 于是在这里顺手写入可解释性数据库。没配置 DATABASE_URL 时什么都不做；
+    # 写库在后台线程里进行且吞掉一切异常，报告本身不受影响。
+    db = None
+    if xdb.enabled():
+        from src.xdb.ingest import ingest_run_safe
+        db = ingest_run_safe(PROJECT_ROOT, paths,
+                             run_id=(data.get('run_id') or '').strip() or None)
+    return jsonify({'success': True, **report, 'explainability_db': db})
 
 
 @app.route('/api/run-report/download', methods=['POST'])
