@@ -290,6 +290,13 @@ def _next_version(s, model, sess_id: int, sha: str):
     return None, (prev.id if prev else None)
 
 
+def _version_reason(data: Dict, parent) -> str:
+    """generated | regenerated | feedback:<id> (a repair sets '_version_reason')."""
+    if not parent:
+        return 'generated'
+    return (data or {}).get('_version_reason') or 'regenerated'
+
+
 def _upsert_duv(s, sess, design, sha, verilog, data, calls, compiles=None,
                 feature_id=None, compile_error=None) -> M.Duv:
     row, parent = _next_version(s, M.Duv, sess.id, sha)
@@ -302,7 +309,7 @@ def _upsert_duv(s, sess, design, sha, verilog, data, calls, compiles=None,
     row = M.Duv(session_id=sess.id, design_id=design.id, artifact=sha,
                 module_name=parse_ports(verilog)['module'] if verilog else None,
                 origin='llm' if call else 'unknown', parent_id=parent,
-                reason='regenerated' if parent else 'generated',
+                reason=_version_reason(data, parent),
                 workflow_mode=data.get('workflow_mode') or 'implementation',
                 prompt_has_bdd=bool(spec_first and data.get('bdd_filepath')),
                 based_on_feature_id=feature_id if spec_first else None,
@@ -320,8 +327,11 @@ def _upsert_feature(s, sess, sha, text, data, calls) -> M.Feature:
     if row is not None:
         return row
     call = calls.get(_TASK['bdd'])
+    # A feature repaired from a feedback row (src/xdb/repair.py) keeps the
+    # provenance of the model that wrote it; the Examples rows the repair
+    # changed get their own (see _row_provenance).
     row = M.Feature(session_id=sess.id, artifact=sha, title=gherkin.feature_title(text),
-                    parent_id=parent, reason='regenerated' if parent else 'generated',
+                    parent_id=parent, reason=_version_reason(data, parent),
                     workflow_mode=data.get('workflow_mode') or 'implementation',
                     prompt_has_decisions=bool(data.get('requirements_filepath')),
                     prov_kind='llm' if call else 'import',
@@ -400,6 +410,28 @@ def _log_by_test(log: str) -> Dict[int, Dict]:
     return out
 
 
+def _parent_rows(s, feature: M.Feature, scenario_key: str) -> Dict[int, Dict]:
+    """row_no -> vals of the same scenario in the version this feature repairs."""
+    if not feature.parent_id or not (feature.reason or '').startswith('feedback:'):
+        return {}
+    psc = s.scalar(select(M.Scenario).where(M.Scenario.feature_id == feature.parent_id,
+                                            M.Scenario.scenario_key == scenario_key)
+                   .order_by(M.Scenario.id.desc()).limit(1))
+    if psc is None:
+        return {}
+    return {r.row_no: r.vals for r in s.scalars(select(M.ExampleRow)
+                                                 .where(M.ExampleRow.scenario_id == psc.id))}
+
+
+def _row_provenance(feature: M.Feature, sc: M.Scenario, prev_vals: Optional[Dict],
+                    vals: Dict) -> tuple:
+    """A row the repair changed was written by the rules (feedback:<id>);
+    every other row keeps the provenance of its scenario."""
+    if prev_vals is not None and prev_vals != vals:
+        return 'rule', feature.reason
+    return sc.prov_kind, sc.prov_ref
+
+
 def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[str] = None,
                url: Optional[str] = None, data: Optional[Dict] = None) -> Dict:
     """paths: requirements / bdd / duv / testbench / log, relative to project_root
@@ -475,9 +507,11 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                     s.add(M.ScenarioStep(scenario_id=sc.id, position=pos, keyword=st['keyword'],
                                          role=st['role'], surface_text=st['text'],
                                          from_background=bg))
+                prev_rows = _parent_rows(s, feature, entry['id'])
                 for row in parsed['rows']:
+                    pk, pr = _row_provenance(feature, sc, prev_rows.get(row['row_no']), row['vals'])
                     s.add(M.ExampleRow(scenario_id=sc.id, row_no=row['row_no'], vals=row['vals'],
-                                       prov_kind=sc.prov_kind, prov_ref=sc.prov_ref))
+                                       prov_kind=pk, prov_ref=pr))
                 for rid in entry.get('requirements') or []:
                     if rid in reqs:
                         s.add(M.ScenarioRequirement(scenario_id=sc.id, requirement_id=reqs[rid].id,

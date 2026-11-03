@@ -861,9 +861,12 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
         sr = _sr.summarize_for_testbench(tb, log.read_text(encoding='utf-8', errors='replace'))
     except Exception:
         sr = None
+    from src.xdb import repair as _repair
     with xdb.session_scope(url) as s:
         problems, overview = build_problems(s, sim_run_id, sr, reqs, spec)
+        repairs = _repair.available(s, sim_run_id, mt)
     return {'sim_run_id': sim_run_id, 'session_id': session_id, 'feature_id': feature_id,
+            'repairs': repairs,
             'design': design_name, 'module_type': mt,
             'has_rule_library': L.library_for(mt) is not None,
             'verdicts': verdicts, 'checks': checks, 'requirements': reqs,

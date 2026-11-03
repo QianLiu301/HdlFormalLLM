@@ -1,35 +1,31 @@
 // Browser check of the Step-4 explanations (Problems card, technical details, Details popup).
-// Needs: the app running on localhost:5000 with DATABASE_URL set, and the files of
-// one run under output/ (paths below; see docs/explainability_db_setup.md).
-//   NODE_PATH=$(npm root -g) node tests/ui/explain_panel.js <screenshot dir>
+// Runs the page's own Step 3 and Step 4 on a staged run. Needs: the app on
+// localhost:5000 with DATABASE_URL set, iverilog, and
+//   python tests/ui/stage_run.py > <dir>/state.json
+//   NODE_PATH=$(npm root -g) node tests/ui/explain_panel.js <dir>
+const fs = require('fs');
 const { chromium } = require('playwright');
 (async () => {
   const out = process.argv[2] || '.';
+  const state = JSON.parse(fs.readFileSync(`${out}/state.json`, 'utf-8'));
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto('http://localhost:5000/', { waitUntil: 'networkidle' });
-  const paths = {
-    requirements_filepath: 'output/xdb_ui/requirements/req.json',
-    bdd_filepath: 'output/xdb_ui/bdd/alu.feature',
-    duv_filepath: 'output/xdb_ui/dut/alu_32bit.v',
-    testbench_path: 'output/testbench/default/xdb_ui_alu_tb.v',
-    log_file: 'output/xdb_ui/simulation/alu.log',
-    run_id: 'web_ui_test', workflow_mode: 'implementation'
-  };
-  // what the page does after "Run Simulation": show the result, then load the run report
-  await page.evaluate(async (paths) => {
+  // as after Steps 0-2, then the page's own Step 3 and Step 4
+  await page.evaluate(async (st) => {
     document.getElementById('main-app').style.display = 'block';   // as after entering the access password
     document.querySelectorAll('.step-section').forEach(s => s.classList.remove('collapsed'));
-    const rep = await (await fetch('/api/run-report', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(paths) })).json();
-    currentSimResult = { paths, log_file: paths.log_file };
-    document.getElementById('sim-result').classList.add('visible');
-    renderScenarioResults(rep.scenario_results);
-    await loadRunReport();
-  }, paths);
+    currentWorkflowMode = 'implementation';
+    currentRunId = 'web_ui_explain_' + Date.now();
+    currentRequirements = st.requirements;
+    currentDUT = st.dut;
+    currentBDD = st.bdd;
+    await generateTestbench();
+    await runSimulation();
+  }, state);
 
   await page.waitForSelector('#sim-problems', { state: 'visible', timeout: 30000 });
   console.log('banner:', (await page.textContent('#pb-banner')).trim());

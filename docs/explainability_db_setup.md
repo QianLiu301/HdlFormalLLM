@@ -108,6 +108,38 @@ pulling.
 For ALU designs, Step 0 now always asks what "overflow" means; the answer is
 used by both generators and by the rule library.
 
+### Repair (M4)
+
+Below the problems the card offers what can be done about them:
+
+- **Correct the scenarios** — when scenarios state values the reference
+  model disagrees with. The values are set to the reference values, saved as
+  a new feature file (`<name>_fix1.feature`; the old file is kept), and the
+  testbench is generated and simulated again. No model is called. Step 2 and
+  Step 3 then show the new files.
+- **Regenerate the design with <LLM>** — when the design fails checks (ALU,
+  generated on this page). The model that wrote the design gets the failing
+  checks with the correct values, the rules, and the current design, and
+  writes a new version (a new file; the old one is kept). The testbench is
+  then generated and simulated again. This calls the model's API.
+
+Both ask for confirmation first, show a note on what was changed above the
+new result, and are stored in the database as feedback with the new file as
+the next version (`reason = feedback:<id>`).
+
+Browser checks (developers; app running with `DATABASE_URL`, iverilog):
+
+```bash
+mkdir -p /tmp/ui && python tests/ui/stage_run.py > /tmp/ui/state.json
+```
+
+```bash
+NODE_PATH=$(npm root -g) node tests/ui/repair_flow.js /tmp/ui
+```
+
+The staging script writes files named `xdb_ui_*` under `output/`; delete
+them afterwards if you like (`output/` is not in git).
+
 ## 6. Explanations in the terminal
 
 The same explanations can be printed:

@@ -188,6 +188,26 @@ def decisions_block(record: Optional[dict]) -> str:
     return "\n".join(lines)
 
 
+def repair_feedback_block(feedback: Optional[str], previous: Optional[str] = None) -> str:
+    """Appended to the design prompt when the design is regenerated from the
+    failures of its last simulation (src/xdb/repair.design_feedback).
+
+    The failures are the reference model's verdicts, not the scenarios' values,
+    so a wrong scenario never turns into a design change. Empty feedback -> "".
+    """
+    if not (feedback or '').strip():
+        return ""
+    lines = ["", "", "IMPORTANT - Repair of a previous version:",
+             "A previous version of this design was simulated and made the errors "
+             "listed below. Write a corrected version: fix these errors, keep what "
+             "was correct, and keep the module name, the ports, their order and "
+             "their widths exactly as they are.", "", feedback.strip()]
+    if (previous or '').strip():
+        lines += ["", "The previous version:", "```verilog", previous.strip(), "```"]
+    lines += ["", "Return the complete corrected module.", ""]
+    return "\n".join(lines)
+
+
 def req_tag_instruction(record: Optional[dict]) -> str:
     """只给 BDD 生成器：让每个场景用 @req_N 标出它验证哪几条需求。
 

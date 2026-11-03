@@ -825,3 +825,227 @@ def test_scenario_without_tests_makes_its_requirement_not_tested(run, db):
     nt = next(p for p in s['problems'] if p['who'] == 'test')
     assert nt['title'] == 'Not tested: “Verify SLT against SLTU on the same operands”'
     assert 'without an Examples table' in nt['detail'] and 'For SLT, result is 1' in nt['detail']
+
+
+# ---------------------------------------------------------------- M4 repair
+
+def test_apply_corrections_edits_only_the_named_cells():
+    from src.xdb.repair import apply_corrections
+    text = ("Feature: f\n\n  Scenario Outline: A\n    Then the result should be <r>\n"
+            "    Examples:\n      | a | r   | zero  |\n      | 1 | 5   | False |\n      | 2 | 6   | True  |\n"
+            "    # a comment inside the table block\n"
+            "    Examples:\n      | a | r |\n      | 3 | 7 |\n\n  Scenario: B\n    Then x\n")
+    span = [text.index('  Scenario Outline'), text.index('  Scenario: B')]
+    corr = [{'tag': 'BDD:S1/r2', 'scenario_key': 'S1', 'row_no': 2, 'column': 'zero', 'old': 'True', 'new': 'False'},
+            {'tag': 'BDD:S1/r3', 'scenario_key': 'S1', 'row_no': 3, 'column': 'r', 'old': '7', 'new': '1234'},
+            # the file says 5, not 9: never overwrite a cell that is not what was simulated
+            {'tag': 'BDD:S1/r1', 'scenario_key': 'S1', 'row_no': 1, 'column': 'r', 'old': '9', 'new': '5'}]
+    new, applied, skipped = apply_corrections(text, [{'id': 'S1', 'span': span}], corr)
+    assert '      | 2 | 6   | False |\n' in new          # column width kept
+    assert '      | 3 | 1234 |\n' in new                 # rows are counted across Examples tables
+    assert '      | 1 | 5   | False |\n' in new
+    assert [c['row_no'] for c in applied] == [2, 3] and [c['row_no'] for c in skipped] == [1]
+    assert new.endswith('  Scenario: B\n    Then x\n')
+
+
+def test_reference_value_keeps_the_cell_style():
+    from src.xdb.repair import _fmt_flag, _fmt_result
+    assert _fmt_result(0xC0000000, '0x7FFFFFFF', 32) == '0xC0000000'
+    assert _fmt_result(0xFFFFFFCE, '-49', 32) == '-50'
+    assert _fmt_result(3221225472, '3221225471', 32) == '3221225472'
+    assert (_fmt_flag(0, 'True'), _fmt_flag(1, 'false'), _fmt_flag(1, '0')) == ('False', 'true', '1')
+
+
+FIXED_ALU = ALU.replace("4'b1001: result = ($signed(a) < $signed(b)) ? 1 : 0;   // BUG: SLTU compares signed",
+                        "4'b1001: result = (a < b) ? 1 : 0;")
+
+
+def _client(run, db, monkeypatch):
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        import main
+    from src.simulation_runner import WebSimulationRunner
+    proj, _ = run
+    monkeypatch.setattr(main, 'PROJECT_ROOT', proj)
+    monkeypatch.setattr(main, 'simulation_runner', WebSimulationRunner(project_root=str(proj)))
+    monkeypatch.setenv('DATABASE_URL', db)
+    return main.app.test_client()
+
+
+def _page_body(paths, **over):
+    """What Step 4 of the page sends for the simulation it shows."""
+    body = {'testbench_path': paths['testbench'], 'log_file': paths['log'],
+            'bdd_filepath': paths['bdd'], 'duv_filepath': paths['duv'],
+            'requirements_filepath': paths['requirements'], 'run_id': 'web_test_run',
+            'workflow_mode': 'implementation',
+            'dut_info': {'module_type': 'alu', 'bitwidth': 32}}
+    body.update(over)
+    return body
+
+
+def _session_run_id(db, summary):
+    from src import xdb
+    from src.xdb import models as M
+    with xdb.session_scope(db) as ss:
+        return ss.get(M.Session, summary['session_id']).run_id
+
+
+def _summary_when_ready(c, body, tries=40):
+    import time
+    for _ in range(tries):
+        s = c.post('/api/explain/summary', json=body).get_json()
+        if s.get('ready'):
+            return s
+        time.sleep(0.5)
+    raise AssertionError('the new simulation never reached the database')
+
+
+def test_repair_scenarios_end_to_end(run, db, monkeypatch):
+    """SUB r7, SRA r5 (result) and ADD r7 (zero flag) are set to the reference
+    values in a NEW feature file; testbench and simulation run again; the new
+    run has no scenario errors left and only the design's SLTU bug."""
+    from sqlalchemy import select
+    from src import xdb
+    from src.xdb import models as M
+    proj, paths = run
+    c = _client(run, db, monkeypatch)
+    body = _page_body(paths)
+    before = (proj / paths['bdd']).read_text(encoding='utf-8')
+    s = _summary_when_ready(c, body)
+    rp = s['repairs']
+    assert (rp['scenario_values'], rp['design_failures'], rp['design_regeneration']) == (3, 3, True)
+    # earlier tests stored discarded generations in this session, so 'regenerated' is right too
+    assert rp['feature_reason'] in ('generated', 'regenerated') and rp['duv_reason'] == 'generated'
+
+    r = c.post('/api/repair/scenarios', json=body).get_json()
+    assert r['success'], r
+    # the new version joins the session of the simulation it repairs (earlier
+    # tests stored these same files under several run ids; the newest wins)
+    assert r['feature_filename'] == 'alu_fix1.feature' and r['run_id'] == _session_run_id(db, s)
+    got = {(x['scenario_key'], x['row_no'], x['port']): (x['old'], x['new']) for x in r['corrections']}
+    assert got == {('ALU-SUB-001', 7, 'result'): ('4294967245', '4294967246'),
+                   ('ALU-SRA-001', 5, 'result'): ('3221225471', '3221225472'),
+                   ('ALU-ADD-001', 7, 'zero'): ('True', 'False')}
+    assert r['skipped'] == []
+    # in file order, in plain words with the inputs the page shows elsewhere
+    assert [x['operation'] for x in r['corrections']] == ['ADD', 'SUB', 'SRA']
+    assert r['corrections'][2]['text'] == ('SRA with A = 2147483648 (0x80000000), B = 1: '
+                                           'result 3221225471 → 3221225472')
+    assert r['corrections'][0]['text'].endswith('zero flag True → False')
+    assert (proj / paths['bdd']).read_text(encoding='utf-8') == before     # the old file is kept
+    fixed = (proj / r['feature_path']).read_text(encoding='utf-8')
+    assert len(fixed) == len(before) and fixed.count('\n') == before.count('\n')
+    assert r['simulation']['success'] and r['testbench_path'].endswith('alu_fix1_tb.v')
+
+    # the page then asks for the run report of the new simulation, under the run id the repair returned
+    body2 = _page_body(paths, bdd_filepath=r['feature_path'], testbench_path=r['testbench_path'],
+                       log_file=r['simulation']['log_file'], run_id=r['run_id'])
+    assert c.post('/api/run-report', json=body2).get_json()['success']
+    s2 = _summary_when_ready(c, body2)
+    assert s2['verdicts'] == {'pass': 64, 'design_wrong': 3}
+    assert s2['probe']['issues'].get('BDD:ALU-ADD-001/r7') is None
+    assert s2['repairs']['scenario_values'] == 0 and s2['repairs']['design_failures'] == 3
+    assert s2['repairs']['feature_reason'] == f"feedback:{r['feedback_id']}"
+    assert not any(p['who'] == 'scenario' for p in s2['problems'])
+
+    with xdb.session_scope(db) as ss:
+        new = ss.get(M.Feature, r['feature_id'])
+        old = ss.get(M.Feature, new.parent_id)
+        assert old.artifact != new.artifact and not old.reason.startswith('feedback:')
+        fb = ss.get(M.Feedback, r['feedback_id'])
+        assert (fb.status, fb.result_ref, fb.subject_id) == ('applied', f'feature:{new.id}', s['sim_run_id'])
+        prov = {(sc.scenario_key, er.row_no): er.prov_kind for sc, er in ss.execute(
+            select(M.Scenario, M.ExampleRow).join(M.ExampleRow, M.ExampleRow.scenario_id == M.Scenario.id)
+            .where(M.Scenario.feature_id == new.id))}
+        # only the rows the repair changed are the rules' work
+        assert {k for k, v in prov.items() if v == 'rule'} == {('ALU-SUB-001', 7), ('ALU-SRA-001', 5),
+                                                               ('ALU-ADD-001', 7)}
+        # every other row keeps the provenance of the feature, as before the repair
+        assert new.prov_kind == old.prov_kind and new.prov_kind != 'rule'
+        assert {v for v in prov.values()} == {'rule', new.prov_kind}
+
+    # nothing left to correct
+    again = c.post('/api/repair/scenarios', json=body2).get_json()
+    assert not again['success'] and again['error'].startswith('nothing to correct')
+
+
+def test_repair_refuses_a_feature_that_was_not_simulated(run, db, monkeypatch):
+    proj, paths = run
+    c = _client(run, db, monkeypatch)
+    r = c.post('/api/repair/scenarios', json=_page_body(paths, bdd_filepath='output/bdd/alu_v1.feature')).get_json()
+    assert not r['success'] and 'not the one this simulation was generated from' in r['error']
+
+
+def test_repair_design_with_feedback(run, db, monkeypatch):
+    """The design is regenerated with its failing checks in the prompt (fake
+    model returns the fixed SLTU); it is stored as the next version of the
+    design in the same session, and the rerun has no design errors left."""
+    from sqlalchemy import select
+    from src import experiment_logger, xdb
+    from src.alu_generator import ALUGenerator
+    from src.xdb import models as M
+    proj, paths = run
+    c = _client(run, db, monkeypatch)
+    body = _page_body(paths)
+
+    run_id = _session_run_id(db, _summary_when_ready(c, body))
+    fb = c.post('/api/repair/design-feedback', json=body).get_json()
+    assert fb['success'] and fb['count'] == 3 and fb['operations'] == ['SLTU']
+    assert 'SLTU is 1 when A < B as unsigned numbers' in fb['text']
+    assert 'result must be 1, the design gave 0' in fb['text'] or 'result must be 0, the design gave 1' in fb['text']
+    assert 'BUG: SLTU compares signed' in fb['previous_verilog']
+
+    seen = {}
+
+    class FakeDesignModel:
+        def _call_api(self, prompt, max_tokens=None, system_prompt=None, sampling=None):
+            seen['prompt'] = prompt
+            return '```verilog\n' + FIXED_ALU + '\n```'
+    experiment_logger.instrument_class(FakeDesignModel)
+    import main
+    for cls in {ALUGenerator, main.ALUGenerator}:            # main may import it under another module name
+        monkeypatch.setattr(cls, '_setup_llm', lambda self: FakeDesignModel())
+
+    hw = c.post('/api/generate-hardware', json={
+        'module_type': 'alu', 'llm': 'deepseek', 'bitwidth': 32, 'workflow_mode': 'implementation',
+        'requirements_filepath': paths['requirements'], 'run_id': 'some_other_run',
+        'repair_of': {'testbench_path': paths['testbench'], 'log_file': paths['log']}}).get_json()
+    assert hw['success'], hw
+    assert hw['run_id'] == run_id                            # continues the repaired run
+    assert hw['repair']['failures'] == 3
+    p = seen['prompt']
+    assert 'IMPORTANT - Repair of a previous version' in p and 'SLTU with a = ' in p
+    assert p.index('Confirmed Requirements') < p.index('Repair of a previous version')
+    assert 'BUG: SLTU compares signed' in p                  # the previous version is shown
+
+    new_duv = Path(hw['filepath']).relative_to(proj).as_posix()
+    rr = c.post('/api/repair/rerun', json=_page_body(paths, duv_filepath=new_duv, run_id=run_id)).get_json()
+    assert rr['success'], rr
+    body2 = _page_body(paths, duv_filepath=new_duv, testbench_path=rr['testbench_path'],
+                       log_file=rr['simulation']['log_file'], run_id=run_id)
+    assert c.post('/api/run-report', json=body2).get_json()['success']
+    s2 = _summary_when_ready(c, body2)
+    assert s2['verdicts'] == {'pass': 65, 'scenario_wrong': 2}
+    assert s2['repairs']['design_failures'] == 0
+    assert s2['repairs']['duv_reason'] == f"feedback:{hw['repair']['feedback_id']}"
+
+    with xdb.session_scope(db) as ss:
+        duv = ss.scalar(select(M.Duv).where(M.Duv.reason == f"feedback:{hw['repair']['feedback_id']}"))
+        sess = ss.get(M.Session, duv.session_id)
+        assert sess.run_id == run_id and duv.parent_id is not None
+        assert duv.prov_kind == 'llm'
+        call = ss.get(M.LlmCall, int(duv.prov_ref.split(':')[1]))
+        assert call.params['repair_feedback_id'] == hw['repair']['feedback_id']
+        fbr = ss.get(M.Feedback, hw['repair']['feedback_id'])
+        assert (fbr.status, fbr.result_ref, fbr.proposed['action']) == ('applied', f'duv:{duv.id}',
+                                                                         'regenerate_design')
+
+
+def test_design_repair_only_for_alu(run, db, monkeypatch):
+    proj, paths = run
+    c = _client(run, db, monkeypatch)
+    r = c.post('/api/generate-hardware', json={'module_type': 'counter', 'llm': 'deepseek',
+                                               'repair_of': {'testbench_path': paths['testbench'],
+                                                             'log_file': paths['log']}})
+    assert r.status_code == 400 and 'ALU designs only' in r.get_json()['error']
