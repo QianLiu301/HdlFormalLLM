@@ -104,8 +104,9 @@ generated content, NL->formal->NL, spec-vs-impl validation, back-annotation
 RTL/SVA -> scenarios, deterministic LLM-free baseline (CAUSE = DFG RTG 2972,
 self-explaining systems; prefers verifiable, non-LLM explanations).
 Not bound to the BDX paper (Dominik & Drechsler, arXiv 2607.24881).
-Design doc: `docs/explainability_db_design.md` (SQLite = source of truth,
-ChromaDB = optional rebuildable semantic index). This branch is never merged
+Design doc: `docs/explainability_db_design.md` (v0.2: PostgreSQL + pgvector on
+Neon Frankfurt; canonical steps in three layers; revisions + provenance on
+every row; v1 = global/local explanations, click-first). This branch is never merged
 into master.
 
 ## Next steps (agreed plan)
