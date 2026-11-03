@@ -2458,6 +2458,55 @@ def run_report_download():
                      as_attachment=True, download_name=name)
 
 
+# ============================================================================
+# Explainability (src/xdb): read-only explanations for the Step-4 page.
+# No model is called here, so these need no access password. Without
+# DATABASE_URL every endpoint answers {"enabled": false} and the page hides
+# the panel.
+# ============================================================================
+def _explain_call(fn):
+    if not xdb.enabled():
+        return jsonify({'success': True, 'enabled': False})
+    try:
+        out = fn(request.json or {})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'enabled': True, 'error': f'{type(e).__name__}: {e}'}), 500
+    if out is None:
+        return jsonify({'success': True, 'enabled': True, 'ready': False})
+    return jsonify({'success': True, 'enabled': True, 'ready': True, **out})
+
+
+@app.route('/api/explain/summary', methods=['POST'])
+def explain_summary():
+    """Verdicts, specification check and ids for the simulation the page shows.
+    ready=false until the background ingestion of that run has finished."""
+    from src.xdb import explain as E
+    return _explain_call(lambda d: E.summarize_run(PROJECT_ROOT, _report_paths(d)))
+
+
+@app.route('/api/explain/check', methods=['POST'])
+def explain_check_api():
+    from src.xdb import explain as E
+    return _explain_call(lambda d: E.explain_check(
+        str(d.get('tag') or ''), sim_run_id=int(d['sim_run_id']) if d.get('sim_run_id') else None))
+
+
+@app.route('/api/explain/global', methods=['POST'])
+def explain_global_api():
+    from src.xdb import explain as E
+    return _explain_call(lambda d: E.explain_global(int(d['feature_id']), str(d['port']),
+                                                    str(d.get('value', 'True'))))
+
+
+@app.route('/api/explain/requirement', methods=['POST'])
+def explain_requirement_api():
+    from src.xdb import explain as E
+    return _explain_call(lambda d: E.explain_requirement(
+        int(d['requirement_id']), sim_run_id=int(d['sim_run_id']) if d.get('sim_run_id') else None))
+
+
 def _requirements_config_line(data):
     """告诉分析模型哪些东西已由工具定死，免得它去问端口名和操作码。"""
     mt = (data.get('module_type') or 'design').strip()
@@ -2532,6 +2581,8 @@ def analyze_requirements():
     if err:
         return jsonify({'success': False, 'run_id': run_id, 'error': err,
                         'raw': (text or '')[:2000]}), 502
+    # 工具固定要问的问题（如 ALU 的 overflow 含义），设计和场景必须用同一个答案
+    analysis = requirements_store.add_fixed_questions(analysis, module_type)
     return jsonify({'success': True, 'run_id': run_id, 'llm': llm_name, 'model': model,
                     **analysis})
 

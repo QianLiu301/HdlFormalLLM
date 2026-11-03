@@ -80,9 +80,25 @@ python -m src.xdb ingest --testbench output/testbench/<llm>/alu_tb.v --log outpu
 Only testbenches generated after scenario tagging (they have a
 `*_tb.scenarios.json` next to them) can be ingested.
 
-## 5. Explanations in the terminal
+## 5. Explanations on the website
 
-Until the website shows them (milestone M3), explanations can be printed:
+With `DATABASE_URL` set, Step 4 shows a section **Who Is Wrong? —
+Explanations** a few seconds after each simulation (the run is written to the
+database in the background first):
+
+- a headline and counts per verdict (design wrong, scenario wrong, …);
+- a specification check: for each flag the scenarios state (zero, negative,
+  overflow), how many rows contradict the rule — flags are not compared by the
+  testbench, so this is the only place such errors show up;
+- a **Why?** button on every scenario row, every requirement and every flag
+  line, opening the explanation.
+
+For ALU designs, Step 0 now always asks what "overflow" means; the answer is
+used by both generators and by the rule library.
+
+## 6. Explanations in the terminal
+
+The same explanations can be printed:
 
 ```bash
 python -m src.xdb runs
@@ -121,13 +137,13 @@ Runs stored before this version have no step mappings yet; map them once:
 python -m src.xdb remap
 ```
 
-## 6. Render
+## 7. Render
 
 Render dashboard → service → **Environment** → add `DATABASE_URL` with the
 same pooled connection string. Run the migration once from your machine
 (step 3) before the first deploy that uses it.
 
-## 7. Running the tests (developers)
+## 8. Running the tests (developers)
 
 The tests need a PostgreSQL they may wipe (never point them at Neon) and
 iverilog:

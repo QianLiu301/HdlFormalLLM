@@ -584,3 +584,80 @@ def test_global_explanation_detects_carry_meaning_of_overflow(run, db):
     assert (rc['alternative']['explains_missed'], rc['alternative']['missed_total']) == (1, 1)
     assert 'and so does the one row it omits' in g['text']
     assert 'seems to use "overflow" in that sense' in g['text']
+
+
+
+# ---------------------------------------------------------------- A: fixed Step-0 question
+
+def test_fixed_overflow_question_is_added_for_alu():
+    from src import requirements_store as R
+    a = {'requirements': [], 'questions': [
+        {'id': 'Q1', 'question': 'Is overflow signed?', 'options': ['y', 'n'], 'default': 0, 'why': ''},
+        {'id': 'Q2', 'question': 'Reset synchronous?', 'options': ['a', 'b'], 'default': 0, 'why': ''}]}
+    out = R.add_fixed_questions(a, 'alu')
+    assert [q['question'] for q in out['questions']] == ['Reset synchronous?', R.OVERFLOW_QUESTION]
+    assert [q['id'] for q in out['questions']] == ['Q1', 'Q2']
+    assert out['questions'][1]['options'] == [R.OVERFLOW_SIGNED, R.OVERFLOW_CARRY]
+    assert R.add_fixed_questions(a, 'counter') == a
+    # the answer survives build_record unchanged, so the rule library can read it back
+    rec, err = R.build_record({'module_type': 'alu', 'requirements': [],
+                               'questions': [{**out['questions'][1], 'chosen': 1}]})
+    assert err is None and rec['decisions'][0]['answer'] == R.OVERFLOW_CARRY
+
+
+def test_overflow_rule_follows_the_step0_answer(run, db):
+    """Same carry-style specification as above, but now Step 0 said overflow
+    means carry/borrow: the rows are consistent and nothing is flagged."""
+    from sqlalchemy import create_engine, text
+    from src import requirements_store as R
+    from src.xdb.explain import explain_check, explain_global
+    eng = create_engine(db)
+    with eng.begin() as c:
+        sid, fid = c.execute(text("SELECT s.id, f.id FROM session s JOIN feature f ON f.session_id = s.id "
+                                  "WHERE s.run_key = 'web_carry'")).one()
+        c.execute(text("INSERT INTO decision (session_id, question_key, question, answer, answer_source, "
+                       "prov_kind) VALUES (:s, 'Q1', :q, :a, 'user', 'human')"),
+                  {'s': sid, 'q': R.OVERFLOW_QUESTION, 'a': R.OVERFLOW_CARRY})
+    g = explain_global(fid, 'overflow', 'True', url=db)
+    rc = g['structure']['rule_check']
+    assert (rc['judged'], rc['contradicting'], rc['missed_count']) == (5, 0, 0)
+    assert rc['alternative'] is None and 'decided in Step 0' in g['text']
+    loc = explain_check('ALU-ADD-001/r2', session_id=sid, url=db)['structure']
+    assert next(u for u in loc['unverified'] if u['port'] == 'overflow')['consistent'] is True
+    with eng.begin() as c:     # leave the session as the earlier test found it
+        c.execute(text("DELETE FROM decision WHERE session_id = :s"), {'s': sid})
+
+
+# ---------------------------------------------------------------- M3: website API
+
+def test_explain_api(run, db, monkeypatch):
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        import main
+    proj, paths = run
+    monkeypatch.setattr(main, 'PROJECT_ROOT', proj)
+    monkeypatch.setenv('DATABASE_URL', db)
+    c = main.app.test_client()
+    body = {'testbench_path': paths['testbench'], 'log_file': paths['log']}
+    s = c.post('/api/explain/summary', json=body).get_json()
+    assert s['enabled'] and s['ready'] and s['design'] == 'alu_32bit'
+    assert s['verdicts'] == {'pass': 62, 'design_wrong': 3, 'scenario_wrong': 2}
+    assert s['checks']['BDD:ALU-SUB-001/r7']['verdict'] == 'scenario_wrong'
+    assert any('zero flag' in x and 'contradicts' in x for x in s['spec_check_text'])
+    e = c.post('/api/explain/check', json={'tag': 'BDD:ALU-SLTU-001/r4',
+                                           'sim_run_id': s['sim_run_id']}).get_json()
+    assert 'The design is wrong' in e['text']
+    g = c.post('/api/explain/global', json={'feature_id': s['feature_id'], 'port': 'zero',
+                                            'value': 'True'}).get_json()
+    assert g['text'].splitlines()[3].startswith('  • ALU-ADD-001 r7')   # the contradicting row first
+    req = next(r['requirement_id'] for r in s['requirements'] if r['req_key'] == 'REQ-3')
+    q = c.post('/api/explain/requirement', json={'requirement_id': req}).get_json()
+    assert 'not covered' in q['text']
+    # a run that is not in the database yet, and no database at all
+    nf = c.post('/api/explain/summary', json={'testbench_path': paths['bdd'],
+                                              'log_file': paths['log']}).get_json()
+    assert nf == {'success': True, 'enabled': True, 'ready': False}
+    monkeypatch.delenv('DATABASE_URL')
+    monkeypatch.setenv('XDB_DISABLE_DOTENV', '1')
+    assert c.post('/api/explain/summary', json=body).get_json() == {'success': True, 'enabled': False}

@@ -119,8 +119,12 @@ consistent_wrong, undecided — testbench Verilog is unchanged, the data comes
 from the `*_tb.scenarios.json` index v2 (ALU only so far). Scope on this branch:
 web Steps 0–4 (+explain, repair); benchmark/golden/mutants set aside.
 Milestones M1, M2 done (M2: `src/xdb/library.py` ALU canonical steps + rules,
-`mapping.py`, `explain.py`; CLI `python -m src.xdb runs|remap|explain`), M3 next
-(Step-4 UI panel) … M6 in the design doc. Product output (explanations, UI text,
+`mapping.py`, `explain.py`; CLI `python -m src.xdb runs|remap|explain`), M3 done
+(`/api/explain/*` + Step-4 "Who Is Wrong?" panel with Why? buttons; browser
+check `tests/ui/explain_panel.js`; the app sits behind the access-password
+screen, `#main-app` must be shown in automated tests). Step 0 always asks
+what ALU "overflow" means (`requirements_store.FIXED_QUESTIONS`); the rule
+library follows the answer. M4 next (repair) … M6 in the design doc. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.

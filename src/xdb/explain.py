@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.3'   # v1.3: the alternative meaning is also tested on omitted rows
+ALGORITHM = 'bdx_v1.4'   # v1.4: overflow rule follows the Step-0 decision
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -59,6 +59,20 @@ def _steps(s, scenario_id: int, row_vals: Optional[Dict], module_type: str, widt
                     'port': port, 'values': vals,
                     'value': value, 'value_int': L.to_int(value, width) if port else None})
     return out
+
+
+def _overflow_mode(s, session_id: Optional[int]) -> Tuple[Optional[str], str]:
+    """(definition, basis) of the overflow rule for a session: the Step-0 answer
+    when the fixed question was answered, else the design template's."""
+    from src import requirements_store as R
+    d = s.scalar(select(M.Decision).where(M.Decision.session_id == session_id,
+                                          M.Decision.question == R.OVERFLOW_QUESTION)) \
+        if session_id else None
+    if d is None:
+        return L.DEFAULT_OVERFLOW_MODE, "the tool's design template, prompts/duv_alu"
+    mode = L.overflow_mode_from_answer(d.answer)
+    return mode, (f'decided in Step 0 ({d.question_key})' if mode
+                  else f'custom answer in Step 0 ({d.question_key}), not checked')
 
 
 def _width_from_steps(s, feature_id: int, module_type: str) -> Optional[int]:
@@ -178,15 +192,16 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         compared = {c.port for c in s.scalars(select(M.CheckItem).where(
             M.CheckItem.testbench_id == ci.testbench_id, M.CheckItem.tag == ci.tag))}
         unverified = []
+        ov_mode, _ = _overflow_mode(s, sess.id)
         for st in steps:
             if st['role'] == 'Q' and st['port'] and st['port'] not in compared:
                 # not simulated, but the scenario can still contradict the rule library
-                expect = (L.flag_value(mt, st['port'], ci.operation, stim.get('a'), stim.get('b'), width)
-                          if width and stim.get('a') is not None else None)
+                expect = (L.flag_value(mt, st['port'], ci.operation, stim.get('a'), stim.get('b'), width,
+                                       ov_mode) if width and stim.get('a') is not None else None)
                 stated = L.to_int(st['value'], 1)
                 consistent = None if expect is None or stated is None else expect == stated
                 alts = ([a['name'] for a in L.flag_alternatives(mt, st['port'], ci.operation,
-                                                                 stim.get('a'), stim.get('b'), width)
+                                                                 stim.get('a'), stim.get('b'), width, ov_mode)
                          if a['value'] == stated] if consistent is False else [])
                 unverified.append({'port': st['port'], 'value': st['value'], 'text': st['text'],
                                    'rule_value': expect, 'consistent': consistent,
@@ -239,7 +254,9 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         }
         p_t = [{'canonical': x['canonical'], 'values': x['values']} for x in steps
                if x['role'] == 'P' and x['canonical']]
-        q_t = [{'port': ci.port, 'value': O}]
+        # the overflow definition in force is part of the target: a different
+        # Step-0 answer must not reuse an explanation computed under the other one
+        q_t = [{'port': ci.port, 'value': O, 'overflow_mode': ov_mode}]
         ex = _store(s, {'subject_type': 'check_item', 'subject_id': ci.id, 'scope': 'local',
                         'feature_id': tb.feature_id, 'sim_run_id': run.id, 'p_t': p_t, 'q_t': q_t,
                         'mode': 'complete'},
@@ -261,6 +278,7 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
         sess = s.get(M.Session, feat.session_id)
         design = s.get(M.Design, sess.design_id) if sess.design_id else None
         mt, width = (design.module_type, design.bitwidth) if design else (None, None)
+        ov_mode, ov_basis = _overflow_mode(s, sess.id)
         if width is None:     # fall back to the Background step ("initialized with 16-bit operands")
             width = _width_from_steps(s, feature_id, mt)
         target_w = width if port == 'result' else 1
@@ -278,17 +296,19 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
                 op = next((x['values'].get('OP') for x in steps if x['canonical'] == 'ALU.A.OP'), None)
                 a = next((x['value'] for x in steps if x['canonical'] == 'ALU.P.A'), None)
                 b = next((x['value'] for x in steps if x['canonical'] == 'ALU.P.B'), None)
-                rule_v = L.flag_value(mt, port, op, a, b, width) if port != 'result' and width else None
+                rule_v = (L.flag_value(mt, port, op, a, b, width, ov_mode)
+                          if port != 'result' and width else None)
                 stated = L.to_int(q[0]['value'], target_w) if q and q[0]['value_int'] is not None else None
                 if stated != want:
                     if q and stated is not None and rule_v == want:
-                        alts_m = [x['name'] for x in L.flag_alternatives(mt, port, op, a, b, width)
+                        alts_m = [x['name'] for x in L.flag_alternatives(mt, port, op, a, b, width, ov_mode)
                                   if x['value'] == stated]
                         missed.append({'scenario_key': sc.scenario_key, 'row_no': er.row_no,
                                        'operation': op, 'stated': q[0]['value'], 'a': a, 'b': b,
                                        'alternatives': alts_m})
                     continue
-                alts = [x for x in L.flag_alternatives(mt, port, op, a, b, width) if x['value'] == want]
+                alts = [x for x in L.flag_alternatives(mt, port, op, a, b, width, ov_mode)
+                        if x['value'] == want]
                 matches.append({'scenario_key': sc.scenario_key, 'row_no': er.row_no, 'operation': op,
                                 'P': [x['text'] for x in steps if x['role'] == 'P' and not x['background']],
                                 'example_row_id': er.id, 'rule_value': rule_v,
@@ -300,14 +320,14 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
         verified = s.scalar(select(M.CheckItem.id).join(M.Testbench)
                             .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port)
                             .limit(1)) is not None
-        flag_rule = (L.library_for(mt) or {}).get('flags', {}).get(port)
+        flag_rule = L.flag_rule(mt, port, ov_mode, ov_basis if port == 'overflow' else None)
         judged = [m for m in matches if m['consistent'] is not None]
         contra = [m for m in judged if not m['consistent']]
         alt_names = {n for m in contra for n in m['alternatives']}
         alternative = None
         for name in sorted(alt_names):
             if contra and all(name in m['alternatives'] for m in contra):
-                alt = next(a for a in L.FLAG_ALTERNATIVES.get(port, []) if a['name'] == name)
+                alt = L.alternative_by_name(name)
                 alternative = {'name': name, 'text': alt['text'], 'explains': len(contra),
                                'explains_missed': sum(name in m['alternatives'] for m in missed),
                                'missed_total': len(missed)}
@@ -323,7 +343,8 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
                               if flag_rule else None),
                      'provenance': {'scenario': _call_summary(s, feat.prov_ref)}}
         ex = _store(s, {'subject_type': 'feature', 'subject_id': feature_id, 'scope': 'global',
-                        'feature_id': feature_id, 'p_t': [], 'q_t': [{'port': port, 'value': want}]},
+                        'feature_id': feature_id, 'p_t': [],
+                        'q_t': [{'port': port, 'value': want, 'overflow_mode': ov_mode}]},
                     structure, selected=[{'example_row_id': m['example_row_id']} for m in matches],
                     evidence={'feature_id': feature_id})
         return _out(ex)
@@ -463,18 +484,23 @@ def render(st: Dict) -> str:
         else:
             ops = ', '.join(f'{k} ×{n}' for k, n in st['by_operation'].items())
             lines.append(f"{st['match_count']} of {st['rows_total']} rows state it ({ops}):")
-            for m in st['matches'][:20]:
+            # rows that contradict the rule first: they are the point of the explanation
+            ordered = sorted(st['matches'], key=lambda m: m.get('consistent') is not False)
+            for m in ordered[:20]:
                 mark = '' if m.get('consistent') is None else (
                     '   [✓ rule]' if m['consistent'] else f"   [✗ rule gives {m['rule_value']}]")
                 lines.append(f"  • {m['scenario_key']} r{m['row_no']}: " + '; '.join(m['P']) + mark)
             if len(st['matches']) > 20:
                 lines.append(f"  … (+{len(st['matches']) - 20})")
         if st.get('rule'):
-            lines += ['', f"General rule: {st['rule']['text']}   ({st['rule']['source']})"]
+            basis = st['rule'].get('basis')
+            lines += ['', f"General rule: {st['rule']['text']}"
+                          + (f" ({basis})" if basis else '') + f"   ({st['rule']['source']})"]
         rc = st.get('rule_check')
         if rc and (rc['judged'] or rc['missed_count']):
+            n = rc['contradicting']
             lines.append(f"Check against the rule: {rc['consistent']} of {rc['judged']} rows agree"
-                         + (f", {rc['contradicting']} contradict it." if rc['contradicting'] else '.'))
+                         + (f", {n} contradict{'s' if n == 1 else ''} it." if n else '.'))
             if rc['missed_count']:
                 lines.append(f"Rows where the rule gives {tg['port']} = {tg['value']} but the specification "
                              f"states otherwise ({rc['missed_count']}): " + ', '.join(
@@ -492,7 +518,8 @@ def render(st: Dict) -> str:
                         also = f', and so do {k} of the {n} rows it omits'
                 lines.append(f"The {alt['explains']} contradicting rows all match a different definition: "
                              f"{alt['name']} ({alt['text']}){also}. The specification seems to use "
-                             f"\"{tg['port']}\" in that sense, unlike the design template.")
+                             f"\"{tg['port']}\" in that sense, unlike the rule"
+                             f"{' (' + st['rule']['basis'] + ')' if (st.get('rule') or {}).get('basis') else ''}.")
         if not st.get('verified_by_testbench'):
             lines += ['', f"⚠ The testbench never compares {tg['port']}, so these rows are stated, not verified."]
         return '\n'.join(lines)
@@ -512,3 +539,135 @@ def render(st: Dict) -> str:
         lines.append(f'Links: {_R_LINK}')
         return '\n'.join(lines)
     return ''
+
+
+# ----------------------------------------------------------------- whole-specification check
+
+FLAG_PORTS = ('zero', 'negative', 'overflow')
+
+
+def check_specification(feature_id: int, url=None) -> List[Dict]:
+    """For every flag the scenarios state, compare each row with the rule.
+
+    This is a check of the specification itself: flags are usually not
+    compared by the testbench, so a simulation can pass while the scenarios
+    state wrong flags (design doc §6a, first field observation)."""
+    with xdb.session_scope(url) as s:
+        feat = s.get(M.Feature, feature_id)
+        sess = s.get(M.Session, feat.session_id)
+        design = s.get(M.Design, sess.design_id) if sess.design_id else None
+        mt, width = (design.module_type, design.bitwidth) if design else (None, None)
+        if not L.library_for(mt):
+            return []
+        width = width or _width_from_steps(s, feature_id, mt)
+        ov_mode, ov_basis = _overflow_mode(s, sess.id)
+        per: Dict[str, Dict] = {}
+        for sc in s.scalars(select(M.Scenario).where(M.Scenario.feature_id == feature_id,
+                                                     M.Scenario.is_current)
+                            .order_by(M.Scenario.scenario_key)):
+            for er in s.scalars(select(M.ExampleRow).where(M.ExampleRow.scenario_id == sc.id,
+                                                           M.ExampleRow.is_current)
+                                .order_by(M.ExampleRow.row_no)):
+                steps = _steps(s, sc.id, er.vals, mt, width)
+                op = next((x['values'].get('OP') for x in steps if x['canonical'] == 'ALU.A.OP'), None)
+                a = next((x['value'] for x in steps if x['canonical'] == 'ALU.P.A'), None)
+                b = next((x['value'] for x in steps if x['canonical'] == 'ALU.P.B'), None)
+                for x in steps:
+                    if x['role'] != 'Q' or x['port'] not in FLAG_PORTS:
+                        continue
+                    p = per.setdefault(x['port'], {'port': x['port'], 'rows_stated': 0, 'judged': 0,
+                                                   'contradicting': 0, 'examples': [], '_alts': []})
+                    p['rows_stated'] += 1
+                    stated = L.to_int(x['value'], 1)
+                    rule_v = L.flag_value(mt, x['port'], op, a, b, width, ov_mode) if width else None
+                    if rule_v is None or stated is None:
+                        continue
+                    p['judged'] += 1
+                    if rule_v != stated:
+                        p['contradicting'] += 1
+                        alts = [al['name'] for al in L.flag_alternatives(mt, x['port'], op, a, b, width,
+                                                                          ov_mode) if al['value'] == stated]
+                        p['_alts'].append(alts)
+                        if len(p['examples']) < 10:
+                            p['examples'].append({'scenario_key': sc.scenario_key, 'row_no': er.row_no,
+                                                  'operation': op, 'a': a, 'b': b, 'stated': x['value'],
+                                                  'rule_value': rule_v})
+        out = []
+        for port, p in per.items():
+            alts = p.pop('_alts')
+            alternative = None
+            for name in sorted({n for x in alts for n in x}):
+                if alts and all(name in x for x in alts):
+                    alternative = {**L.alternative_by_name(name), 'explains': len(alts)}
+            verified = s.scalar(select(M.CheckItem.id).join(M.Testbench)
+                                .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port)
+                                .limit(1)) is not None
+            out.append({**p, 'alternative': alternative, 'verified_by_testbench': verified,
+                        'rule': L.flag_rule(mt, port, ov_mode, ov_basis if port == 'overflow' else None)})
+        return sorted(out, key=lambda x: FLAG_PORTS.index(x['port']))
+
+
+def render_spec_check(items: List[Dict]) -> List[str]:
+    lines = []
+    for it in items:
+        head = f"{it['port']} flag: stated in {it['rows_stated']} rows"
+        if not it['rule']:
+            lines.append(f"{head}; no rule to check it against.")
+            continue
+        if not it['judged']:
+            lines.append(f"{head}; none could be checked against the rule.")
+        elif not it['contradicting']:
+            lines.append(f"{head}; all {it['judged']} agree with the rule.")
+        else:
+            alt = it.get('alternative')
+            n = it['contradicting']
+            lines.append(f"{head}; {n} of {it['judged']} contradict{'s' if n == 1 else ''} the rule"
+                         + (f" — all of them match {alt['name']} ({alt['text']})" if alt else '') + '.')
+        if not it['verified_by_testbench']:
+            lines[-1] += ' Not compared by the testbench.'
+    return lines
+
+
+# ----------------------------------------------------------------- website summary
+
+def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Optional[Dict]:
+    """What the Step-4 page needs, for the simulation whose testbench and log
+    are these files. None until the run has been written to the database."""
+    import hashlib
+    from src import run_report
+    tb, err1 = run_report.safe_path(paths.get('testbench_path') or paths.get('testbench'), project_root)
+    log, err2 = run_report.safe_path(paths.get('log_file') or paths.get('log'), project_root)
+    if err1 or err2 or not tb or not log:
+        return None
+    tb_sha = hashlib.sha256(tb.read_bytes()).hexdigest()
+    log_sha = hashlib.sha256(log.read_bytes()).hexdigest()
+    with xdb.session_scope(url) as s:
+        hit = s.execute(select(M.SimRun, M.Testbench).join(M.Testbench, M.Testbench.id == M.SimRun.testbench_id)
+                        .where(M.Testbench.artifact == tb_sha, M.SimRun.log_artifact == log_sha)
+                        .order_by(M.SimRun.id.desc()).limit(1)).first()
+        if hit is None:
+            return None
+        run, tbrow = hit
+        sess = s.get(M.Session, tbrow.session_id)
+        design = s.get(M.Design, sess.design_id) if sess.design_id else None
+        checks, verdicts = {}, {}
+        for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
+                                .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+                                .where(M.CheckResult.sim_run_id == run.id)):
+            key = cr.verdict or cr.status
+            verdicts[key] = verdicts.get(key, 0) + 1
+            if ci.seq == 1:
+                checks[ci.tag] = {'verdict': cr.verdict, 'status': cr.status}
+        reqs = [{'req_key': q.req_key, 'requirement_id': q.id} for q in s.scalars(
+            select(M.Requirement).where(M.Requirement.session_id == sess.id, M.Requirement.is_current)
+            .order_by(M.Requirement.id))]
+        feature_id, session_id, sim_run_id = tbrow.feature_id, sess.id, run.id
+        mt = design.module_type if design else None
+        design_name = design.name if design else None
+    spec = check_specification(feature_id, url=url) if feature_id else []
+    return {'sim_run_id': sim_run_id, 'session_id': session_id, 'feature_id': feature_id,
+            'design': design_name, 'module_type': mt,
+            'has_rule_library': L.library_for(mt) is not None,
+            'verdicts': verdicts, 'checks': checks, 'requirements': reqs,
+            'spec_check': spec, 'spec_check_text': render_spec_check(spec),
+            'algorithm': ALGORITHM}
