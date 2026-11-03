@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.2'
+ALGORITHM = 'bdx_v1.3'   # v1.3: the alternative meaning is also tested on omitted rows
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -282,8 +282,11 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
                 stated = L.to_int(q[0]['value'], target_w) if q and q[0]['value_int'] is not None else None
                 if stated != want:
                     if q and stated is not None and rule_v == want:
+                        alts_m = [x['name'] for x in L.flag_alternatives(mt, port, op, a, b, width)
+                                  if x['value'] == stated]
                         missed.append({'scenario_key': sc.scenario_key, 'row_no': er.row_no,
-                                       'operation': op, 'stated': q[0]['value'], 'a': a, 'b': b})
+                                       'operation': op, 'stated': q[0]['value'], 'a': a, 'b': b,
+                                       'alternatives': alts_m})
                     continue
                 alts = [x for x in L.flag_alternatives(mt, port, op, a, b, width) if x['value'] == want]
                 matches.append({'scenario_key': sc.scenario_key, 'row_no': er.row_no, 'operation': op,
@@ -305,7 +308,9 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
         for name in sorted(alt_names):
             if contra and all(name in m['alternatives'] for m in contra):
                 alt = next(a for a in L.FLAG_ALTERNATIVES.get(port, []) if a['name'] == name)
-                alternative = {'name': name, 'text': alt['text'], 'explains': len(contra)}
+                alternative = {'name': name, 'text': alt['text'], 'explains': len(contra),
+                               'explains_missed': sum(name in m['alternatives'] for m in missed),
+                               'missed_total': len(missed)}
         rule_check = ({'judged': len(judged), 'consistent': len(judged) - len(contra),
                        'contradicting': len(contra), 'missed': missed[:50], 'missed_count': len(missed),
                        'alternative': alternative} if flag_rule else None)
@@ -477,8 +482,16 @@ def render(st: Dict) -> str:
                                  for x in rc['missed'][:10]))
             alt = rc.get('alternative')
             if alt:
+                also = ''
+                if alt.get('missed_total'):
+                    n, k = alt['missed_total'], alt['explains_missed']
+                    if k == n:
+                        also = (', and so does the one row it omits' if n == 1
+                                else f', and so do all {n} rows it omits')
+                    elif k:
+                        also = f', and so do {k} of the {n} rows it omits'
                 lines.append(f"The {alt['explains']} contradicting rows all match a different definition: "
-                             f"{alt['name']} ({alt['text']}). The specification seems to use "
+                             f"{alt['name']} ({alt['text']}){also}. The specification seems to use "
                              f"\"{tg['port']}\" in that sense, unlike the design template.")
         if not st.get('verified_by_testbench'):
             lines += ['', f"⚠ The testbench never compares {tg['port']}, so these rows are stated, not verified."]
