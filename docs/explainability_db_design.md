@@ -1,311 +1,501 @@
-# Explainability Database — Design Draft (v0.1)
+# Explainability Database — Design (v0.2)
 
-Status: **draft for discussion** (no code yet). Branch: `bdx-explainability`.
+Status: **design, under review** — no code yet. Branch: `bdx-explainability`
+(never merged into `master`).
 
-Goal: add explainability to the HdlFormalLLM web platform. Every generated
-artifact (requirement, BDD scenario, assertion, simulation verdict,
-explanation) is stored with its provenance and its links to the others, so
-that the platform can answer *why* a check passed or failed, *which
-requirement* it serves, and *who* (human, LLM, or deterministic rule)
-produced each piece.
+Goal: add explainability to the HdlFormalLLM website. Every generated item
+(requirement, BDD scenario, step, check, simulation verdict, explanation,
+user correction) is stored with its provenance and its links to the others,
+so the site can answer *why* a check passed or failed, *which requirement* it
+serves, *who* produced each piece, and *what changed* after a correction.
 
-We are not bound to the definitions of the BDX paper (arXiv 2607.24881);
-it is related work, not a specification.
-
----
-
-## 1. Competency questions
-
-The schema is driven by the questions it must answer. Every question below
-must be answerable with one SQL query (Section 6 gives examples).
-
-| ID | Question |
-|----|----------|
-| CQ1 | Which scenarios cover requirement R, and did they pass on the golden design? |
-| CQ2 | A fault (mutant) was detected: by which check, from which scenario, serving which requirement? |
-| CQ3 | Requirement R is uncovered: was no scenario generated, or was one generated but its check never compiled/ran (`not_tested`) or was too weak? |
-| CQ4 | For design D, which requirements does LLM A cover that LLM B does not? |
-| CQ5 | Explanation E: who produced it (rule id / LLM model + prompt version), and on which evidence (check, log, trace)? |
-| CQ6 | On the same runs, what is the explanation coverage of the deterministic generator vs. the LLM generator? |
-| CQ7 | Scenario S: which LLM call produced it? Show the raw prompt and response. |
-| CQ8 | Which requirements are violated by no fault at all (benchmark blind spots)? |
-| CQ9 | For a failing check on the website, give a natural-language "why" built from Given/When/Then + observed value. |
-| CQ10 | Find scenarios semantically similar to a free-text user question (website search). *(ChromaDB, Section 7)* |
+Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
+2607.24881). We reuse its concepts (Section 3) but are not bound to them.
 
 ---
 
-## 2. Design principles
+## 0. Decision log
 
-1. **SQLite is the single source of truth.** One file
-   (`output/experiments/experiments.db`, extended — not a new DB), ships in
-   the replication package, no server. Rejected alternatives: Neo4j (server,
-   harder to package), hosted LLM-observability tools (only cover the LLM-call
-   layer; data leaves the machine).
-2. **Graph-shaped relational schema.** Node tables + link tables, so the data
-   can be exported to a graph DB / visualizer later without redesign.
-3. **Provenance on every generated row.** Columns
-   `prov_kind ∈ {human, llm, rule, import}` and `prov_ref`
-   (`llm_calls.id`, rule id, or file path). This is what makes the
-   LLM-vs-deterministic comparison (CQ6) possible.
-4. **Raw LLM output is kept** (already true: `llm_calls.prompt/response`).
-   Structured rows point back to the call that produced them (CQ7).
-   Benefits: reproducibility, re-scoring without new API cost, error analysis.
-5. **Artifacts are content-addressed.** Feature files, testbenches, logs are
-   stored by SHA-256; identical content is stored once and can never be
-   silently overwritten.
-6. **Stable IDs.** Scenario keys reuse the existing deterministic tags
-   (`ALU-ADD-001/r3`, from commit ee0b481). Requirement keys reuse `FP-n`.
-7. **Anti-leak preserved.** Ground-truth links (`fault_violates`,
-   human `scenario_covers`) are never read by any prompt-building code.
-8. **ChromaDB is a derived index, never a store.** It can be deleted and
-   rebuilt from SQLite at any time (Section 7).
+| # | Decision | Date |
+|---|----------|------|
+| D1 | Users: hardware developers, researchers, reviewers | 2026-11-03 |
+| D2 | v1 explanation types: **global** and **local**, complete only. Counterfactual / action-oriented → v2 (needs a solver) | 2026-11-03 |
+| D3 | Entry points: **click** on a scenario / example row / check / requirement (primary, deterministic) **and** free-text question (secondary; an LLM maps it to the same subjects, the explanation is then computed exactly as for a click) | 2026-11-03 |
+| D4 | Web workflow is ingested first; benchmark workflow later | 2026-11-03 |
+| D5 | Designs in scope: existing ones (ALU, ALU-comb, counter, register file, CPU). Wind turbine dropped | 2026-11-03 |
+| D6 | Database: **PostgreSQL + pgvector**, hosted on **Neon, region AWS Frankfurt (`aws-eu-central-1`)**. Local development also on PostgreSQL (no SQLite/Postgres dialect split) | 2026-11-03 |
+| D7 | No user accounts. All content is **publicly readable**. Operations that call an LLM (generate, regenerate, NL question) are behind an **access password** + rate limit to protect API credit | 2026-11-03 |
+| D8 | Canonical steps: **three layers** (surface text → canonical step → signal predicate), Section 4. v1 mapping is rule-based | 2026-11-03 |
+| D9 | Nothing is overwritten: every edit creates a new revision (needed for correction requests) | 2026-11-03 |
+| D10 | Explanations are computed by deterministic rules and **stored** with their evidence. An LLM may only rephrase them; rephrasings are checked for added facts | 2026-11-03 |
+| D11 | Every LLM call is kept, including failed ones | 2026-11-03 |
+| D12 | Semantic search (embeddings) is v2. Embedding provider decided then (OpenAI API vs. local open model) | 2026-11-03 |
 
 ---
 
-## 3. Two existing workflows that must be unified
+## 1. Users and their questions
 
-| | Web workflow (`main.py`, Step 0–4) | Benchmark workflow (`benchmark/`) |
-|---|---|---|
-| Requirements | Step-0 requirement file (`output/requirements/`) | `spec.md` FP-n (ground truth, withheld) |
-| Scenarios | Feature file, tagged `ALU-ADD-001/r3` | Feature text in `llm_calls.response`, **no IDs** |
-| Checks | Template TB, every line tagged `[BDD:id]` / `[GEN:id]` | LLM-written TB, **untagged** |
-| Faults | none | 64 mutants in `bugs/*.v` + `manifest.json` |
-| Results | `*_tb.scenarios.json` + sim log | `benchmark_results` (aggregate only) |
+Imagined against the current 4-step website (Step 0 requirements → Step 1
+DUV → Step 2 BDD → Step 3 testbench → Step 4 simulation).
 
-Consequence: the full chain requirement → scenario → check → fault exists in
-**neither** workflow today. The schema covers both; closing the gap needs
-(a) scenario IDs + check tags in benchmark TBs, and (b) fault→requirement
-labels (Section 8).
+| User | Example question | Type |
+|------|------------------|------|
+| Developer | Why does this check fail on the golden design? | local |
+| Developer | Row 3 of ADD expects −2147483648 — why not 2147483648? | local |
+| Developer | When is the overflow flag set? | global |
+| Developer | In UP-DOWN mode, which way does the counter count after a load? | global (answer comes from a Step-0 decision) |
+| Developer | Is reset behaviour tested at all? | coverage |
+| Researcher | Which requirements do GPT and Claude scenarios each cover? | comparison |
+| Researcher | Which requirements did no LLM cover? | coverage |
+| Researcher | Which model and prompt version produced this scenario? | provenance |
+| Researcher | Why was this mutant not detected? | local (v2, benchmark) |
+| Reviewer | Where does this number in the paper come from? | provenance |
+| Reviewer | What evidence supports this explanation? | evidence |
+| Any | Scenario 5 has a wrong expected value — please fix it. | **correction** |
+| Any | This scenario misses the reset case — please add it. | **correction** |
+| Any | This explanation is wrong. | **feedback** |
+
+Corrections are not explanations, but they drive two requirements: keep every
+old revision (D9), and record who asked for what and why — itself research
+data (where do LLMs err most?).
 
 ---
 
-## 4. Entities and tables
+## 2. Concepts (mapping to BDX)
 
-Existing tables stay unchanged: `llm_calls`, `run_artifacts`,
-`benchmark_results`, `feedback_results`, `baseline_runs`.
-New tables (prefix `x_` to keep them apart):
+| BDX | Here |
+|-----|------|
+| Model **M** (spec, tests, implementation) | requirements, feature file, scenarios, testbench, DUV — all stored as revisions + artifacts |
+| Belief **B** (observed behaviour) | simulation runs, check results, extracted trace events |
+| Alphabet **Σ** (all steps) | canonical steps of a design (Section 4) |
+| Scenario **s = P_s → Q_s** | `P_s` = Given/When steps, `Q_s` = Then steps (`scenario_step.role`) |
+| Target **T = (P_T, Q_T)** | `explanation_target` (from a click or an NL question) |
+| Explanation **X** | `explanation`: selected scenarios `S_T` + rendered Given/When steps |
+| global / local | `P_T = ∅` / `P_T ≠ ∅` |
+
+BDX computation (paper §IV-C): (1) translate T into Σ; (2) `S_T` = scenarios
+with `Q_T ⊆ Q_s`, maximising `|P_T ∩ P_s|`; (3) render the Given/When steps of
+`S_T` as text. Gaps we must close: step (1) is unspecified; canonical steps
+are assumed but LLM-generated text is not canonical; ties in step (2) need a
+fixed rule (we use: larger overlap, then fewer extra steps, then
+`scenario_key` order).
+
+---
+
+## 3. Competency questions
+
+Every question must be answerable from the database. **v1** = needed for the
+first website release. New questions should only need a new query, not a new
+table — that is the test of the schema.
+
+### Traceability
+- **Q1** (v1) Which scenarios / example rows cover requirement R, and did their checks pass on the golden design?
+- **Q2** (v1) Requirement R is uncovered: no scenario, scenario without a check (`not_tested`), check only `weak`, or check failed?
+- **Q3** (v1) Which checks belong to scenario S, and which checks were added by the generator itself (`GEN:` tags)?
+- **Q4** (v2) A mutant was detected: by which check, scenario, requirement?
+- **Q5** (v2) Which requirements are violated by no mutant (benchmark blind spots)?
+
+### Explanation (BDX)
+- **Q6** (v1, global) Under which conditions does outcome `Q_T` occur? (e.g. *When is overflow = 1?*)
+- **Q7** (v1, local) Why did check C on example row r produce the observed value?
+- **Q8** (v1) Which canonical steps does a free-text question refer to?
+- **Q9** (v1) Which explanations exist for subject X, by which algorithm/version, and on what evidence?
+- **Q10** (v2, counterfactual) What minimal change to the inputs avoids `Q_T`?
+
+### Provenance and reproducibility
+- **Q11** (v1) Who produced item X (human / LLM model + prompt version / rule id), and when?
+- **Q12** (v1) Show the raw prompt and response of the LLM call that produced X.
+- **Q13** (v1) Re-run: given a simulation run, retrieve the exact DUV, testbench and simulator version used.
+
+### Corrections and versions
+- **Q14** (v1) What is the revision history of scenario S, and which feedback caused each change?
+- **Q15** (v1) Which corrections are still open?
+- **Q16** (v2) Which kinds of errors do users report most often, per LLM?
+
+### Comparison and evaluation (paper)
+- **Q17** (v1) For design D, which requirements does LLM A cover that LLM B does not?
+- **Q18** (v1) Which surface steps could not be mapped to a canonical step (per LLM)?
+- **Q19** (v2) Explanation coverage of the deterministic vs. the LLM method on the same runs.
+- **Q20** (v2) Explanation quality metrics (Section 7) per method.
+
+### Search
+- **Q21** (v2) Which scenarios / requirements / explanations are semantically closest to a question? (pgvector)
+
+---
+
+## 4. Canonical steps (Σ)
+
+**Problem.** The same step is written differently by different LLMs:
+
+```
+Given I have operand A = <A>          Given input a is <A>
+When I perform the ADD operation      When the ALU executes ADD (op=0000)
+  with opcode 0000
+Then the result should be <R>         Then the output equals <R>
+```
+
+BDX compares steps as sets (`Q_T ⊆ Q_s`, overlap of P). Without a single
+canonical form these comparisons — and every coverage or cross-LLM
+statistic — are wrong.
+
+**Design: three layers.**
+
+```
+layer 1  surface text     "Given I have operand A = 5"        (as generated, kept verbatim)
+            │ mapping (method + confidence)
+layer 2  canonical step   "operand A = <value>"   params {value: 5}
+            │ definition
+layer 3  signal predicate a == 5                  (over the DUV's ports)
+```
+
+- A canonical step belongs to one design type and has a `role`
+  (`context` = Given, `action` = When, `outcome` = Then), a text template
+  with typed parameters, and a predicate template over **ports**
+  (`port`, operator, value, optional cycle offset).
+- Canonical steps are derived from the port list plus the step patterns
+  the BDD prompts already prescribe (`prompts/bdd_*/v1.yaml`); the
+  testbench generator already parses these patterns, so v1 mapping is
+  **rule-based (regex), deterministic**.
+- Steps that match no rule stay unmapped and are flagged; the unmapped rate
+  is a quality metric (Q18).
+- Later mapping methods (embedding, LLM, human) are stored side by side with
+  `method` and `confidence` and can be compared.
+- Layer 3 is the bridge to formal properties (SVA atoms), wishlist item
+  "NL → formal → NL".
+
+---
+
+## 5. Schema (PostgreSQL)
+
+Conventions:
+
+- **Revisions.** Editable entities (`requirement`, `scenario`, `example_row`,
+  `explanation`) carry `uid` (stable identity across revisions), `rev`,
+  `supersedes` (previous row id), `is_current`, `created_at`. Old rows are
+  never updated except to clear `is_current`.
+- **Provenance.** Generated rows carry `prov_kind ∈ {human, llm, rule, import}`
+  and `prov_ref` (`llm_call.id`, rule id, or feedback id).
+- **Artifacts** (feature files, DUV, testbench, logs) are content-addressed
+  by SHA-256 and stored in the DB (all are KB-sized). VCD waveforms are **not**
+  stored: they are re-created by re-simulating the stored DUV + testbench
+  (deterministic), which keeps the DB within the free storage limit.
 
 ```sql
--- ---------- static design data (imported from benchmark/ or web) ----------
-CREATE TABLE x_design (
-  id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,          -- counter_8bit, alu_16bit_web ...
-  category TEXT,                      -- combinational / sequential / fsm / memory / cpu
-  source TEXT NOT NULL,               -- benchmark | web
-  spec_artifact TEXT,                 -- -> x_artifact.sha256
-  golden_artifact TEXT
+-- ===== core objects =====
+CREATE TABLE design (
+  id          bigserial PRIMARY KEY,
+  module_type text NOT NULL,          -- alu | alu_comb | counter | regfile | cpu
+  bitwidth    int,
+  source      text NOT NULL,          -- web | benchmark
+  name        text NOT NULL,          -- e.g. alu_16bit
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE x_requirement (
-  id INTEGER PRIMARY KEY,
-  design_id INTEGER NOT NULL REFERENCES x_design(id),
-  req_key TEXT NOT NULL,              -- FP-4 / REQ-3
-  text TEXT NOT NULL,
-  origin TEXT NOT NULL,               -- spec_fp | req_step
-  prov_kind TEXT NOT NULL, prov_ref TEXT,
-  UNIQUE (design_id, req_key, origin)
+CREATE TABLE port (
+  design_id  bigint REFERENCES design(id),
+  name       text NOT NULL,
+  direction  text NOT NULL,           -- input | output | inout
+  width      int  NOT NULL,
+  PRIMARY KEY (design_id, name)
 );
 
-CREATE TABLE x_fault (
-  id INTEGER PRIMARY KEY,
-  design_id INTEGER NOT NULL REFERENCES x_design(id),
-  file TEXT NOT NULL,                 -- bug03_down_overflow_missing.v
-  taxonomy TEXT, difficulty TEXT, description TEXT,
-  artifact TEXT,                      -- mutant source sha256
-  UNIQUE (design_id, file)
+CREATE TABLE artifact (
+  sha256     char(64) PRIMARY KEY,
+  kind       text NOT NULL,           -- requirements | feature | duv | testbench | sim_log | golden | mutant
+  content    bytea NOT NULL,
+  orig_name  text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- ground truth, hand-labelled once (NEW work, see Section 8)
-CREATE TABLE x_fault_violates (
-  fault_id INTEGER REFERENCES x_fault(id),
-  requirement_id INTEGER REFERENCES x_requirement(id),
-  prov_kind TEXT NOT NULL, prov_ref TEXT,
-  PRIMARY KEY (fault_id, requirement_id)
+-- one website workflow run (Steps 0-4), no personal data stored
+CREATE TABLE session (
+  id         bigserial PRIMARY KEY,
+  design_id  bigint REFERENCES design(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  note       text
 );
 
--- ---------- per-run generated data ----------
-CREATE TABLE x_run (
-  id INTEGER PRIMARY KEY,
-  run_id TEXT NOT NULL,               -- same key as llm_calls.run_id
-  design_id INTEGER REFERENCES x_design(id),
-  workflow TEXT NOT NULL,             -- benchmark | web | feedback
-  llm TEXT, model_requested TEXT, model_served TEXT,
-  prompt_version TEXT, rep INTEGER, arm TEXT, iteration INTEGER,
-  created_at TEXT NOT NULL, config_json TEXT
+-- every LLM call, including failures (D11); successor of SQLite llm_calls
+CREATE TABLE llm_call (
+  id              bigserial PRIMARY KEY,
+  session_id      bigint REFERENCES session(id),
+  task_type       text,               -- requirements | bdd | duv | nl_question | polish | judge
+  provider        text, model_requested text, model_served text,
+  prompt_name     text, prompt_version text,
+  system_prompt   text, prompt text, response text,
+  params          jsonb,              -- sampling actually sent / ignored
+  usage           jsonb,              -- tokens, cost if known
+  latency_ms      int, success boolean NOT NULL, error text,
+  created_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE x_artifact (
-  sha256 TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,                 -- spec|golden|mutant|feature|testbench|duv|log|trace|report
-  path TEXT,                          -- original location (informational)
-  content BLOB,                       -- NULL if large and kept on disk
-  created_at TEXT NOT NULL
+-- ===== model M: requirements, scenarios, steps =====
+CREATE TABLE requirement (
+  id bigserial PRIMARY KEY, uid uuid NOT NULL, rev int NOT NULL,
+  supersedes bigint REFERENCES requirement(id), is_current boolean NOT NULL,
+  design_id  bigint REFERENCES design(id),
+  session_id bigint REFERENCES session(id),      -- NULL for benchmark FPs
+  req_key    text NOT NULL,                      -- FP-4 | REQ-3
+  text       text NOT NULL,
+  origin     text NOT NULL,                      -- spec_fp | req_step | user
+  prov_kind  text NOT NULL, prov_ref text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE x_scenario (
-  id INTEGER PRIMARY KEY,
-  run_pk INTEGER NOT NULL REFERENCES x_run(id),
-  scenario_key TEXT NOT NULL,         -- ALU-ADD-001/r3
-  title TEXT, given_text TEXT, when_text TEXT, then_text TEXT,
-  feature_artifact TEXT REFERENCES x_artifact(sha256),
-  prov_kind TEXT NOT NULL, prov_ref TEXT,   -- llm + llm_calls.id
-  UNIQUE (run_pk, scenario_key)
+CREATE TABLE feature (
+  id bigserial PRIMARY KEY,
+  session_id bigint REFERENCES session(id),
+  artifact   char(64) REFERENCES artifact(sha256),
+  title      text,
+  prov_kind  text NOT NULL, prov_ref text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- which requirement a scenario serves; may come from a human, a judge LLM,
--- or a rule -> several rows per pair are allowed, distinguished by method
-CREATE TABLE x_scenario_covers (
-  scenario_id INTEGER REFERENCES x_scenario(id),
-  requirement_id INTEGER REFERENCES x_requirement(id),
-  method TEXT NOT NULL,               -- human | judge_llm | rule
-  confidence REAL,
-  prov_ref TEXT,
+CREATE TABLE scenario (
+  id bigserial PRIMARY KEY, uid uuid NOT NULL, rev int NOT NULL,
+  supersedes bigint REFERENCES scenario(id), is_current boolean NOT NULL,
+  feature_id   bigint REFERENCES feature(id),
+  scenario_key text NOT NULL,                    -- ALU-ADD-001 (existing deterministic tag)
+  title        text, tags text[], is_outline boolean NOT NULL,
+  prov_kind    text NOT NULL, prov_ref text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE example_row (
+  id bigserial PRIMARY KEY, uid uuid NOT NULL, rev int NOT NULL,
+  supersedes bigint REFERENCES example_row(id), is_current boolean NOT NULL,
+  scenario_id bigint REFERENCES scenario(id),
+  row_no      int NOT NULL,                      -- ALU-ADD-001/r3
+  vals        jsonb NOT NULL,                    -- {"A": "5", "B": "10", "Expected_Result": "15"}
+  prov_kind   text NOT NULL, prov_ref text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE canonical_step (                    -- alphabet Σ
+  id          bigserial PRIMARY KEY,
+  module_type text NOT NULL,
+  role        text NOT NULL,                     -- context | action | outcome
+  template    text NOT NULL,                     -- 'operand A = <value>'
+  params      jsonb NOT NULL,                    -- {"value": "int"}
+  predicate   jsonb,                             -- {"port":"a","op":"==","value":"<value>","cycle":0}
+  version     int NOT NULL DEFAULT 1,
+  UNIQUE (module_type, template, version)
+);
+
+CREATE TABLE scenario_step (
+  scenario_id   bigint REFERENCES scenario(id),
+  position      int NOT NULL,
+  keyword       text NOT NULL,                   -- Given | When | Then | And | But
+  role          text NOT NULL,                   -- P (Given/When) | Q (Then)
+  surface_text  text NOT NULL,                   -- layer 1, verbatim
+  PRIMARY KEY (scenario_id, position)
+);
+
+CREATE TABLE step_mapping (                      -- layer 1 -> layer 2, several methods side by side
+  scenario_id bigint, position int,
+  canonical_step_id bigint REFERENCES canonical_step(id),   -- NULL = unmapped
+  params      jsonb,
+  method      text NOT NULL,                     -- rule | embedding | llm | human
+  method_ref  text,                              -- rule id / model / llm_call id
+  confidence  real,
+  PRIMARY KEY (scenario_id, position, method),
+  FOREIGN KEY (scenario_id, position) REFERENCES scenario_step
+);
+
+CREATE TABLE scenario_requirement (
+  scenario_id    bigint REFERENCES scenario(id),
+  requirement_id bigint REFERENCES requirement(id),
+  method         text NOT NULL,                  -- rule | judge_llm | human
+  confidence     real, prov_ref text,
   PRIMARY KEY (scenario_id, requirement_id, method)
 );
 
-CREATE TABLE x_check (
-  id INTEGER PRIMARY KEY,
-  run_pk INTEGER NOT NULL REFERENCES x_run(id),
-  tag TEXT NOT NULL,                  -- BDD:ALU-ADD-001/r3 | GEN:RF-R0
-  scenario_id INTEGER REFERENCES x_scenario(id),   -- NULL for GEN checks
-  kind TEXT NOT NULL,                 -- sim_assert | sva (future)
-  strength TEXT DEFAULT 'normal',     -- normal | weak (e.g. count <= max)
-  tb_artifact TEXT REFERENCES x_artifact(sha256)
+-- ===== tests and belief B =====
+CREATE TABLE testbench (
+  id bigserial PRIMARY KEY,
+  session_id bigint REFERENCES session(id),
+  artifact   char(64) REFERENCES artifact(sha256),
+  generator  text NOT NULL,                      -- template | llm
+  prov_kind  text NOT NULL, prov_ref text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE x_sim_result (
-  id INTEGER PRIMARY KEY,
-  run_pk INTEGER NOT NULL REFERENCES x_run(id),
-  target TEXT NOT NULL,               -- 'golden' or 'fault:<x_fault.id>'
-  check_id INTEGER REFERENCES x_check(id),        -- NULL = whole-TB verdict
-  status TEXT NOT NULL,               -- pass | fail | not_tested | compile_error | timeout
-  message TEXT,                       -- e.g. "expected 0x00 got 0xFF"
-  log_artifact TEXT REFERENCES x_artifact(sha256)
+CREATE TABLE check_item (
+  id bigserial PRIMARY KEY,
+  testbench_id   bigint REFERENCES testbench(id),
+  tag            text NOT NULL,                  -- BDD:ALU-ADD-001/r3 | GEN:RF-R0
+  scenario_id    bigint REFERENCES scenario(id),
+  example_row_id bigint REFERENCES example_row(id),
+  strength       text NOT NULL DEFAULT 'normal'  -- normal | weak
 );
 
--- ---------- explanations ----------
-CREATE TABLE x_explanation (
-  id INTEGER PRIMARY KEY,
-  subject_type TEXT NOT NULL,         -- sim_result | requirement | fault | scenario
-  subject_id INTEGER NOT NULL,
-  question TEXT NOT NULL,             -- why_fail | why_pass | coverage | why_not | what_if
-  text TEXT NOT NULL,
-  evidence_json TEXT NOT NULL,        -- ids of checks / results / log lines used
-  generator TEXT NOT NULL,            -- rule:<rule_id> | llm:<model>
-  prompt_version TEXT, llm_call_id INTEGER,       -- -> llm_calls.id
-  validation TEXT,                    -- NULL | consistent | inconsistent (auto-check vs evidence)
-  created_at TEXT NOT NULL
+CREATE TABLE sim_run (
+  id bigserial PRIMARY KEY,
+  testbench_id bigint REFERENCES testbench(id),
+  dut_artifact char(64) REFERENCES artifact(sha256),
+  target       text NOT NULL,                    -- golden | generated_duv | mutant:<file>
+  simulator    text NOT NULL,                    -- 'iverilog 12.0'
+  status       text NOT NULL,                    -- ok | compile_error | timeout
+  log_artifact char(64) REFERENCES artifact(sha256),
+  created_at   timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE check_result (
+  sim_run_id bigint REFERENCES sim_run(id),
+  check_id   bigint REFERENCES check_item(id),
+  status     text NOT NULL,                      -- pass | fail | not_tested
+  expected   jsonb, observed jsonb,              -- {"result": "15"} / {"result": "14"}
+  sim_time   bigint, message text,
+  PRIMARY KEY (sim_run_id, check_id)
+);
+
+CREATE TABLE trace_event (                       -- key events only, never full waveforms
+  sim_run_id bigint REFERENCES sim_run(id),
+  sim_time   bigint NOT NULL,
+  port       text NOT NULL,
+  value      text NOT NULL,
+  canonical_step_id bigint REFERENCES canonical_step(id)
+);
+
+-- ===== explanations =====
+CREATE TABLE explanation_target (                -- T = (P_T, Q_T)
+  id bigserial PRIMARY KEY,
+  entry        text NOT NULL,                    -- click | nl
+  question     text,                             -- NL text if entry = nl
+  subject_type text, subject_id bigint,          -- what was clicked
+  p_t          jsonb NOT NULL,                   -- [{canonical_step_id, params}]  ([] = global)
+  q_t          jsonb NOT NULL,
+  scope        text NOT NULL,                    -- global | local
+  mode         text NOT NULL DEFAULT 'complete', -- complete | counterfactual (v2)
+  mapping_llm_call bigint REFERENCES llm_call(id),  -- NL -> Σ, if any
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE explanation (
+  id bigserial PRIMARY KEY, uid uuid NOT NULL, rev int NOT NULL,
+  supersedes bigint REFERENCES explanation(id), is_current boolean NOT NULL,
+  target_id      bigint REFERENCES explanation_target(id),
+  algorithm      text NOT NULL,                  -- bdx_v1
+  selected       jsonb NOT NULL,                 -- S_T: [{scenario_id, example_row_id, overlap}]
+  text_rule      text NOT NULL,                  -- deterministic rendering
+  text_polished  text,                           -- optional LLM rephrasing
+  polish_llm_call bigint REFERENCES llm_call(id),
+  evidence       jsonb NOT NULL,                 -- check_result / trace_event ids
+  auto_checks    jsonb,                          -- {"faithful": true, "minimal": true, "no_added_facts": true}
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+-- ===== corrections and feedback =====
+CREATE TABLE feedback (
+  id bigserial PRIMARY KEY,
+  subject_type text NOT NULL, subject_id bigint NOT NULL,
+  kind         text NOT NULL,                    -- correction | error_report | rating | comment
+  body         text,
+  proposed     jsonb,                            -- proposed change, if any
+  status       text NOT NULL DEFAULT 'open',     -- open | applied | rejected
+  result_ref   text,                             -- new revision id once applied
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- ===== v2 =====
+-- fault(design_id, file, taxonomy, difficulty, description, artifact)
+-- fault_violates(fault_id, requirement_id, prov_kind, prov_ref)
+-- embedding(subject_type, subject_id, model, dim, vec vector(N))  -- separate table:
+--   changing the embedding model never touches the core tables
 ```
 
-Size estimate: 9 LLMs × 20 designs × 5 reps × ~20 scenarios ≈ 18k
-scenarios, ~10⁵ sim results — trivial for SQLite.
+Indexes (sketch): partial unique `(uid) WHERE is_current` on each revisioned
+table; `(scenario_id)` on `check_item`, `step_mapping`; `(sim_run_id)` on
+`check_result`, `trace_event`; GIN on `example_row.vals`.
 
 ---
 
-## 5. Ingesting what already exists
+## 6. Explanation algorithm v1 (sketch)
 
-| Source | Target |
-|--------|--------|
-| `benchmark/*/spec.md` FP list | `x_requirement` (origin `spec_fp`, prov `import`) |
-| `benchmark/*/manifest.json` bugs | `x_fault` |
-| `output/requirements/*` (Step 0) | `x_requirement` (origin `req_step`) |
-| `*_tb.scenarios.json` + sim log (web) | `x_scenario`, `x_check`, `x_sim_result` |
-| `llm_calls` (bdd_generation) | `x_scenario.prov_ref` (benchmark scenarios need a parser) |
-| `benchmark_results` | `x_run` (aggregate scores stay where they are) |
+Global target `T = (∅, Q_T)` — e.g. click "why?" on outcome step
+"overflow flag = True":
 
----
-
-## 6. Example queries
-
-CQ1 — scenarios covering a requirement, with golden verdict:
 ```sql
-SELECT s.scenario_key, c.method, r2.status
-FROM x_requirement q
-JOIN x_scenario_covers c ON c.requirement_id = q.id
-JOIN x_scenario s        ON s.id = c.scenario_id
-LEFT JOIN x_check k      ON k.scenario_id = s.id
-LEFT JOIN x_sim_result r2 ON r2.check_id = k.id AND r2.target = 'golden'
-WHERE q.req_key = 'FP-4' AND q.design_id = :design;
+-- scenarios whose Then-steps contain every canonical step in Q_T (relational division)
+SELECT m.scenario_id
+FROM step_mapping m JOIN scenario_step s USING (scenario_id, position)
+JOIN scenario sc ON sc.id = m.scenario_id AND sc.is_current
+WHERE s.role = 'Q' AND m.method = 'rule'
+  AND m.canonical_step_id = ANY(:q_t_ids)
+GROUP BY m.scenario_id
+HAVING count(DISTINCT m.canonical_step_id) = cardinality(:q_t_ids);
 ```
 
-CQ2 — detected fault → check → scenario → requirement:
-```sql
-SELECT f.file, k.tag, s.scenario_key, q.req_key
-FROM x_sim_result r
-JOIN x_fault f    ON r.target = 'fault:' || f.id
-JOIN x_check k    ON k.id = r.check_id
-LEFT JOIN x_scenario s        ON s.id = k.scenario_id
-LEFT JOIN x_scenario_covers c ON c.scenario_id = s.id
-LEFT JOIN x_requirement q     ON q.id = c.requirement_id
-WHERE r.status = 'fail' AND r.run_pk = :run;
-```
-
-CQ8 — requirements no fault violates:
-```sql
-SELECT q.req_key FROM x_requirement q
-WHERE q.design_id = :design AND q.origin = 'spec_fp'
-  AND NOT EXISTS (SELECT 1 FROM x_fault_violates v WHERE v.requirement_id = q.id);
-```
-
-Deterministic explanation coverage (CQ6), definition:
-requirement R is *explained* in run X iff some scenario S with
-`(S, R) ∈ x_scenario_covers` has a check that **passes on golden** and
-**fails on a fault F with `(F, R) ∈ x_fault_violates`**.
-`EC(X) = |explained R| / |R violated by at least one fault|`.
+Local target (click on a failing check of row r): `P_T` = canonical P-steps of
+row r instantiated with `example_row.vals`, `Q_T` = the outcome step of the
+check with the **observed** value. Candidates as above, ranked by
+`|P_T ∩ P_s|` (same canonical step **and** same parameter values), ties broken
+by fewer extra steps, then `scenario_key`. `X` = Given/When steps of `S_T`
+rendered with the row's values, plus expected vs. observed from
+`check_result`.
 
 ---
 
-## 7. ChromaDB: role and limits
+## 7. Evaluating explanations
 
-ChromaDB is an embedded vector database (local, Python, no server). It
-answers "what is *semantically similar* to this text", not exact relations.
-
-**Use it for (derived index, rebuilt from SQLite):**
-- Website search (CQ10): user types "why does overflow go high after load?"
-  → retrieve the nearest scenarios / requirements / explanations, then show
-  their exact linked data from SQLite.
-- Duplicate detection among LLM-generated scenarios (quality metric).
-- Retrieval of similar past scenarios as few-shot examples for the Phase-2
-  feedback loop.
-
-**Do not use it for:**
-- Coverage or explanation metrics — similarity is approximate and depends on
-  the embedding model; metrics must stay exact and deterministic.
-- Storing anything that exists only there.
-
-**Collections:** `scenarios`, `requirements`, `explanations`. Each Chroma id
-equals the SQLite primary key (`scenario:123`); metadata holds `design`,
-`run_id`, `llm`. The embedding model name and version are recorded so the
-index is reproducible. Rebuild command: one script that reads SQLite and
-re-embeds.
-
-**Trade-off:** adds a dependency (`chromadb` + an embedding model). It is
-optional — the platform works without it; only CQ10 needs it. Recommended to
-add after the SQLite core is stable.
+| Criterion | Meaning | Measurement |
+|-----------|---------|-------------|
+| Faithfulness | every statement agrees with spec and observed run | automatic: re-check stated conditions against `check_result` / `trace_event` |
+| Relevance (precision) | selected scenarios are relevant | gold `S_T` for a labelled question set |
+| Completeness (recall) | no relevant scenario missing (global) | same gold set |
+| Minimality | removing any step breaks the explanation | automatic, per step |
+| No added facts | an LLM rephrasing adds nothing absent from the evidence | automatic diff of facts vs. `text_rule` + LLM judge, reported separately |
+| Usefulness | helps a person find the problem | task study: participants localise injected faults (existing mutants) with vs. without explanations; time and accuracy |
 
 ---
 
-## 8. Feasibility and open issues
+## 8. Deployment
 
-| Item | Effort | Risk / note |
-|------|--------|-------------|
-| Schema + import of static data (designs, FP, faults) | low | — |
-| Web-workflow ingestion (tags already exist) | low | — |
-| `x_fault_violates` labels for 64 mutants | low–medium (manual, ~1–2 days) | Some FPs may have no mutant → add mutants (CQ8 finds them) |
-| Scenario IDs + `[BDD:]` tags in **benchmark** TBs | medium | TBs are LLM-written; tagging must be requested in the prompt and verified by parser; untagged checks fall back to whole-TB verdict |
-| `x_scenario_covers` (scenario → requirement) | medium | Who decides? Options: human (gold, small subset), judge LLM (scalable, stored with method + confidence), rule (keyword/signal match). Keep all, compare. |
-| Deterministic "why-fail" explanations from Given/When/Then + log | low | Template-based; validation = recompute from evidence |
-| Counterfactual (why-not / what-if) | high | Needs a solver (SymbiYosys); later phase |
-| Explanation quality evaluation | high (research question) | Proposed formal criteria: consistency with trace, sufficiency, minimality |
-| ChromaDB search | low–medium | Optional, after core |
+- **Database:** Neon, region AWS Frankfurt (`aws-eu-central-1`, fixed at
+  project creation). Free plan per Neon's docs (verify before relying on it):
+  0.5 GB storage per project, scale-to-zero after 5 min idle (first request
+  afterwards is slower), pgvector included. Size estimate for v1: KB-sized
+  artifacts and text, no waveforms → well below 0.5 GB.
+- **Connection:** `DATABASE_URL` environment variable (Neon pooled
+  connection string, SSL required); never committed.
+- **App:** stays on Render (`render.yaml`), Frankfurt region to sit next to
+  the DB.
+- **Access:** reading is public; LLM-calling operations require the access
+  password and are rate-limited (D7).
+- **Privacy (GDPR):** no accounts, no IP addresses or other personal data
+  stored; a short privacy note on the site says that submitted content is
+  public.
+- **Local development:** PostgreSQL on the developer machine (Postgres.app or
+  Homebrew), same schema. Schema changes via Alembic migrations; access via
+  SQLAlchemy.
+- **Existing SQLite** (`output/experiments/experiments.db`): untouched for
+  now; a one-off import script moves `llm_calls` and run artifacts later.
 
 ---
 
-## 9. Proposed phases
+## 9. Phases
 
-1. **This document** reviewed (competency questions + schema).
-2. `src/xdb.py`: schema, import of benchmark static data, web ingestion; tests.
-3. Fault → requirement labels; EC metric; deterministic why-fail explanations.
-4. Website: explanation panel per failing check, requirement coverage view.
-5. Benchmark TB tagging; ChromaDB search; formal layer.
+1. Review this document.
+2. Schema + migrations; ingestion of the web workflow (Steps 0–4) on a local
+   Postgres; tests.
+3. Canonical steps + rule-based mapping for each design type; unmapped report.
+4. Explanation algorithm v1 (global + local), stored with evidence and
+   automatic checks.
+5. Website: "why?" buttons on scenarios / rows / checks / requirements;
+   correction form; revision history view.
+6. Neon deployment.
+7. v2: NL questions via LLM mapping, pgvector search, benchmark workflow
+   (faults), counterfactual explanations.
+
+---
+
+## 10. Open issues
+
+- Canonical-step coverage of the CPU design (instruction-level steps are
+  richer than port assignments).
+- How much of the counter's multi-cycle behaviour fits into single-cycle
+  predicates (needs `cycle` offsets).
+- Who reviews and applies corrections on a public site without accounts
+  (moderation).
+- Neon free-plan limits must be re-checked on the official pricing page at
+  setup time.
