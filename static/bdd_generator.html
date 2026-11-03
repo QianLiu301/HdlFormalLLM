@@ -1024,6 +1024,7 @@
                 <!-- 分析结果：可编辑的需求列表 + 需要拍板的问题 -->
                 <div class="card" id="req-review" style="display:none;">
                     <div class="card-title">✅ Requirements <span class="req-count" id="req-count"></span></div>
+                    <p class="req-hint" id="req-repair-note" style="display:none; color:#b45309;"></p>
                     <div id="req-list"></div>
                     <span class="example-chip" onclick="addRequirement()">+ Add requirement</span>
 
@@ -3284,6 +3285,12 @@
                 + `<button class="req-del" title="Remove" onclick="removeRequirement(${i})">×</button></div>`
             ).join('') || '<p class="req-hint">No requirements. Add one below.</p>';
             document.getElementById('req-count').textContent = `(${reqDraft.requirements.length})`;
+            const note = document.getElementById('req-repair-note');
+            note.textContent = reqDraft.json_repaired
+                ? "⚠ The model's reply had a JSON syntax error and was repaired automatically. "
+                  + "Please check the requirements and questions below before confirming."
+                : (reqDraft.retried ? 'The first reply could not be read; this is the model\'s second answer.' : '');
+            note.style.display = note.textContent ? '' : 'none';
 
             const qs = reqDraft.questions;
             document.getElementById('req-q-count').textContent = `(${qs.length})`;

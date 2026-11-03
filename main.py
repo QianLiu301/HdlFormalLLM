@@ -2578,9 +2578,26 @@ def analyze_requirements():
                         'error': meta.get('api_error') or 'The model call failed '
                                  '(empty or fallback response).'}), 502
     analysis, err = requirements_store.parse_analysis(text)
+    retried = False
+    if err and 'JSON' in err:
+        # One retry with the parser's message. Repair (in parse_analysis) has
+        # already failed, so the reply was not JSON-shaped enough to fix.
+        retried = True
+        fix_prompt = (f"{user_prompt}\n\nYour previous reply could not be parsed ({err}). "
+                      f"Reply again with the same content as ONE valid JSON object, "
+                      f"no prose, no code fences.")
+        try:
+            with call_context(**_ctx):
+                text = llm._call_api(fix_prompt, max_tokens=6000, system_prompt=sys_prompt)
+            analysis, err = requirements_store.parse_analysis(text)
+        except Exception as e:
+            err = f'{type(e).__name__}: {e}'
     if err:
-        return jsonify({'success': False, 'run_id': run_id, 'error': err,
+        hint = (' The model did not return valid JSON, even after one retry. Click "Analyze '
+                'requirements" again, or choose another LLM for the analysis.' if retried else '')
+        return jsonify({'success': False, 'run_id': run_id, 'error': err + hint,
                         'raw': (text or '')[:2000]}), 502
+    analysis['retried'] = retried
     # 工具固定要问的问题（如 ALU 的 overflow 含义），设计和场景必须用同一个答案
     analysis = requirements_store.add_fixed_questions(analysis, module_type)
     return jsonify({'success': True, 'run_id': run_id, 'llm': llm_name, 'model': model,

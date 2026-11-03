@@ -72,10 +72,21 @@ def parse_analysis(text: str) -> Tuple[Optional[Dict], Optional[str]]:
     start, end = s.find('{'), s.rfind('}')
     if start < 0 or end <= start:
         return None, 'no JSON object found in the model response'
+    repaired = False
     try:
         raw = json.loads(s[start:end + 1])
     except ValueError as e:
-        return None, f'model returned invalid JSON: {e}'
+        # Models without a JSON mode sometimes drop a comma or leave a quote
+        # unescaped. Repair the syntax; the user reviews every requirement and
+        # answer before saving, and the page says the reply was repaired.
+        try:
+            import json_repair
+            raw = json_repair.loads(s[start:end + 1])
+        except Exception:
+            raw = None
+        if not isinstance(raw, dict) or not raw:
+            return None, f'model returned invalid JSON: {e}'
+        repaired = True
     if not isinstance(raw, dict):
         return None, 'model returned JSON that is not an object'
 
@@ -103,7 +114,8 @@ def parse_analysis(text: str) -> Tuple[Optional[Dict], Optional[str]]:
 
     if not reqs and not qs:
         return None, 'the model returned no requirements and no questions'
-    return {'requirements': reqs[:MAX_REQUIREMENTS], 'questions': qs[:MAX_QUESTIONS]}, None
+    return {'requirements': reqs[:MAX_REQUIREMENTS], 'questions': qs[:MAX_QUESTIONS],
+            'json_repaired': repaired}, None
 
 
 def build_record(payload: Dict) -> Tuple[Optional[Dict], Optional[str]]:
