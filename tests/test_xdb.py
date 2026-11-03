@@ -580,4 +580,7 @@ def test_global_explanation_detects_carry_meaning_of_overflow(run, db):
     assert (rc['judged'], rc['contradicting']) == (5, 5)
     assert rc['alternative']['name'] == 'unsigned carry/borrow'
     assert [(m['scenario_key'], m['row_no']) for m in rc['missed']] == [('ALU-ADD-001', 5)]
+    # 32767 + 1 has no carry, so the omission fits the same alternative meaning
+    assert (rc['alternative']['explains_missed'], rc['alternative']['missed_total']) == (1, 1)
+    assert 'and so does the one row it omits' in g['text']
     assert 'seems to use "overflow" in that sense' in g['text']
