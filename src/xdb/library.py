@@ -27,7 +27,7 @@ _VAL = r'(?P<{n}><[^>]+>|[-+]?\w+)'
 
 
 def _p(rx: str) -> re.Pattern:
-    for n in ('A', 'B', 'R', 'Z', 'V', 'N', 'C', 'W', 'OP', 'CODE', 'ADDR', 'DATA'):
+    for n in ('A', 'B', 'R', 'Z', 'V', 'N', 'C', 'W', 'OP', 'CODE', 'ADDR', 'DATA', 'REG', 'T'):
         rx = rx.replace('{' + n + '}', _VAL.format(n=n))
     return re.compile(rx, re.I)
 
@@ -204,12 +204,212 @@ def regfile_replay(events: List[Dict], width: int) -> Dict[str, Dict]:
     return out
 
 
+# ----------------------------------------------------------------- RV32I CPU
+# The web testbench runs each Examples row as its own short program: ADDI loads
+# the operand registers named in the rs1/rs2 columns, the instruction runs, SW
+# stores the register named in the rd column to a result slot (a branch skips
+# a store of a marker instead). cpu_reference judges a row the way the CPU
+# executes that program, and says when the row cannot mean what it says.
+
+_M32 = 0xFFFFFFFF
+
+
+def _s32(x: int) -> int:
+    return x - (1 << 32) if x >> 31 else x
+
+
+CPU_STEPS: List[Dict] = [
+    {'key': 'CPU.P.CONFIG', 'role': 'context', 'template': '<N>-stage pipeline RV32I processor',
+     'patterns': [_p(r'^the CPU is an? {N}-stage pipeline(?:d)? RV32I processor$')], 'port': None, 'expr': None},
+    {'key': 'CPU.P.INIT', 'role': 'context', 'template': 'all registers are 0',
+     'patterns': [_p(r'^all registers are initiali[sz]ed to (?:0|zero)$')], 'port': None, 'expr': None},
+    {'key': 'CPU.P.ADDR', 'role': 'context', 'template': 'x<REG> = address <V>',
+     'patterns': [_p(r'^register x{REG} (?:contains|holds) (?:the )?address {V}$')],
+     'port': 'regs', 'value': 'V', 'expr': 'x{REG} == {V}'},
+    {'key': 'CPU.P.REG', 'role': 'context', 'template': 'x<REG> = <V>',
+     'patterns': [_p(r'^register x{REG} (?:contains|holds|is|=|equals) {V}$')],
+     'port': 'regs', 'value': 'V', 'expr': 'x{REG} == {V}'},
+    {'key': 'CPU.P.MEM', 'role': 'context', 'template': 'memory at the address = <V>',
+     'patterns': [_p(r'^(?:the )?memory at (?:that address|address {ADDR}) (?:contains|holds) {V}$')],
+     'port': 'dmem', 'value': 'V', 'expr': 'dmem[addr] == {V}'},
+    {'key': 'CPU.A.EXEC', 'role': 'action', 'template': 'execute <INST>',
+     'patterns': [re.compile(r'^I execute (?:the instruction )?(?P<INST><[^>]+>|.+)$', re.I)],
+     'port': 'imem', 'value': 'INST', 'expr': 'instruction == {INST}'},
+    {'key': 'CPU.Q.RD', 'role': 'outcome', 'template': 'x<REG> = <R>',
+     'patterns': [_p(r'^register x{REG} should (?:contain|hold|be|equal) {R}$')],
+     'port': 'rd', 'value': 'R', 'expr': 'x{REG} == {R}'},
+    {'key': 'CPU.Q.TAKEN', 'role': 'outcome', 'template': 'branch taken = <T>',
+     'patterns': [_p(r'^the branch is taken should be {T}$'),
+                  _p(r'^the branch (?:should be taken|taken) (?:should be|is) {T}$'),
+                  _p(r'^branch taken should be {T}$')],
+     'port': 'taken', 'value': 'T', 'expr': 'taken == {T}'},
+    {'key': 'CPU.Q.MEM', 'role': 'outcome', 'template': 'memory at <ADDR> = <R>',
+     'patterns': [_p(r'^(?:the )?memory at (?:address )?{ADDR} should (?:contain|hold|be) {R}$')],
+     'port': 'mem', 'value': 'R', 'expr': 'dmem[{ADDR}] == {R}'},
+]
+
+_CPU_VALUE_OPS = {
+    'ADD': ('rd = rs1 + rs2', 'ADD writes rs1 + rs2 (modulo 2^32) to rd', lambda a, b: (a + b) & _M32),
+    'SUB': ('rd = rs1 - rs2', 'SUB writes rs1 − rs2 (modulo 2^32) to rd', lambda a, b: (a - b) & _M32),
+    'AND': ('rd = rs1 & rs2', 'AND writes the bitwise AND of rs1 and rs2 to rd', lambda a, b: a & b),
+    'OR': ('rd = rs1 | rs2', 'OR writes the bitwise OR of rs1 and rs2 to rd', lambda a, b: a | b),
+    'XOR': ('rd = rs1 ^ rs2', 'XOR writes the bitwise XOR of rs1 and rs2 to rd', lambda a, b: a ^ b),
+    'SLT': ('rd = signed(rs1) < signed(rs2)', 'SLT writes 1 to rd if rs1 < rs2 as signed numbers, else 0',
+            lambda a, b: int(_s32(a) < _s32(b))),
+    'ADDI': ('rd = rs1 + imm', 'ADDI writes rs1 + imm (modulo 2^32) to rd; imm is sign-extended',
+             lambda a, b: (a + b) & _M32),
+    'ANDI': ('rd = rs1 & imm', 'ANDI writes the bitwise AND of rs1 and the sign-extended imm to rd',
+             lambda a, b: a & b),
+    'ORI': ('rd = rs1 | imm', 'ORI writes the bitwise OR of rs1 and the sign-extended imm to rd',
+            lambda a, b: a | b),
+    'XORI': ('rd = rs1 ^ imm', 'XORI writes the bitwise XOR of rs1 and the sign-extended imm to rd',
+             lambda a, b: a ^ b),
+    'SLTI': ('rd = signed(rs1) < signed(imm)', 'SLTI writes 1 to rd if rs1 < imm as signed numbers, else 0',
+             lambda a, b: int(_s32(a) < _s32(b))),
+}
+_CPU_BRANCH_OPS = {
+    'BEQ': ('taken = rs1 == rs2', 'BEQ is taken when rs1 equals rs2', lambda a, b: a == b),
+    'BNE': ('taken = rs1 != rs2', 'BNE is taken when rs1 differs from rs2', lambda a, b: a != b),
+    'BLT': ('taken = signed(rs1) < signed(rs2)', 'BLT is taken when rs1 < rs2 as signed numbers',
+            lambda a, b: _s32(a) < _s32(b)),
+    'BGE': ('taken = signed(rs1) >= signed(rs2)', 'BGE is taken when rs1 ≥ rs2 as signed numbers',
+            lambda a, b: _s32(a) >= _s32(b)),
+}
+CPU_RULES: Dict[str, Dict] = {op: {'op': op, 'expr': e, 'text': tx, 'fn': None, 'cfn': f}
+                              for op, (e, tx, f) in {**_CPU_VALUE_OPS, **_CPU_BRANCH_OPS}.items()}
+CPU_RULES['LW'] = {'op': 'LW', 'expr': 'rd = dmem[rs1 + offset]', 'fn': None,
+                   'text': 'LW writes the word at address rs1 + offset to rd'}
+CPU_RULES['SW'] = {'op': 'SW', 'expr': 'dmem[rs1 + offset] = rs2', 'fn': None,
+                   'text': 'SW stores rs2 at address rs1 + offset'}
+
+_CPU_MEM_RX = re.compile(r'^\s*(-?(?:0x)?[0-9a-f]+)\s*\(\s*x(\d+)\s*\)\s*$', re.I)
+CPU_RESERVED = (29, 30)          # the testbench keeps the marker and the result address there
+
+
+def _imm(v: str) -> Optional[int]:
+    try:
+        return int(v, 0)
+    except ValueError:
+        return None
+
+
+def cpu_operands(text: str) -> Optional[Dict]:
+    """Registers and immediate of one RV32I instruction as the CPU decodes it."""
+    s = re.sub(r'[#;].*', '', text or '').strip().lower()
+    m = re.match(r'^([a-z]+)\s+(.*)$', s)
+    if not m:
+        return None
+    op, args = m.group(1).upper(), [a.strip() for a in m.group(2).split(',') if a.strip()]
+    reg = lambda a: int(a[1:]) if re.fullmatch(r'x\d+', a) and int(a[1:]) < 32 else None
+    out = {'op': op, 'rd': None, 'rs1': None, 'rs2': None, 'imm': None, 'offset': None}
+    if op in ('ADD', 'SUB', 'AND', 'OR', 'XOR', 'SLT') and len(args) == 3:
+        out.update(kind='R', rd=reg(args[0]), rs1=reg(args[1]), rs2=reg(args[2]))
+    elif op in ('ADDI', 'ANDI', 'ORI', 'XORI', 'SLTI') and len(args) == 3:
+        out.update(kind='I', rd=reg(args[0]), rs1=reg(args[1]), imm=_imm(args[2]))
+    elif op in ('LW', 'SW') and len(args) == 2 and _CPU_MEM_RX.match(args[1]):
+        mm = _CPU_MEM_RX.match(args[1])
+        r = reg(args[0])
+        out.update(kind=op, rs1=int(mm.group(2)), offset=_imm(mm.group(1)),
+                   **({'rd': r} if op == 'LW' else {'rs2': r}))
+    elif op in _CPU_BRANCH_OPS and len(args) == 3:
+        out.update(kind='B', rs1=reg(args[0]), rs2=reg(args[1]), imm=_imm(args[2]))
+    else:
+        return None
+    need = {'R': ('rd', 'rs1', 'rs2'), 'I': ('rd', 'rs1', 'imm'), 'LW': ('rd', 'rs1', 'offset'),
+            'SW': ('rs1', 'rs2', 'offset'), 'B': ('rs1', 'rs2')}[out['kind']]
+    return None if any(out[k] is None for k in need) else out
+
+
+def cpu_reference(st: Dict) -> Dict:
+    """What the CPU must produce for one Examples row, executed as the testbench
+    runs it, and why a row may not mean what it says.
+
+    Returns {'op', 'port', 'value', 'operands', 'issues', 'notes'}. value is the
+    reference for the check (taken as 1/0 for a branch) or None when an issue
+    makes the check meaningless. Issues: {'kind', 'fault' (scenario | test),
+    'text'}; notes explain a value without invalidating it."""
+    st = st or {}
+    ops = cpu_operands(st.get('instruction') or '')
+    out = {'op': ops['op'] if ops else None, 'port': None, 'value': None, 'operands': {},
+           'issues': [], 'notes': []}
+    issue = lambda k, f, tx: out['issues'].append({'kind': k, 'fault': f, 'text': tx})
+    note = lambda k, tx: out['notes'].append({'kind': k, 'text': tx})
+    if ops is None:
+        issue('unparsable', 'test', 'the instruction could not be decoded')
+        return out
+    kind = ops['kind']
+    out['port'] = {'B': 'taken', 'SW': 'mem'}.get(kind, 'rd')
+    cols = {k: st.get(k) for k in ('rs1', 'rs2', 'rd')}
+    used = {ops[k] for k in ('rd', 'rs1', 'rs2') if ops.get(k) is not None}
+    if (used | {v for v in cols.values() if v is not None}) & set(CPU_RESERVED):
+        issue('reserved', 'test', 'it uses x29 or x30, which the testbench needs for itself')
+    preload: Dict[int, int] = {}
+    for reg, val in ((cols['rs1'], st.get('rs1_value')), (cols['rs2'], st.get('rs2_value'))):
+        if reg is None or val is None:
+            continue
+        val &= _M32
+        if reg == 0:
+            if val:
+                note('x0_value', f'the example sets x0 to {_s32(val)}, but x0 is always 0')
+            continue
+        if reg in preload and preload[reg] != val:
+            note('same_register', f'the example gives x{reg} two values, {_s32(preload[reg])} and '
+                                  f'{_s32(val)}; the second one is in effect')
+        preload[reg] = val
+
+    def value_of(r):
+        if r == 0:
+            return 0
+        if r in preload:
+            out['operands'][f'x{r}'] = preload[r]
+            return preload[r]
+        issue('unset_register', 'scenario', f'the instruction reads x{r}, which the example does not set')
+        return None
+
+    if kind in ('LW', 'SW') and ops['offset']:
+        issue('offset', 'test', f"the testbench ignores the offset {ops['offset']} of {ops['op']}")
+    if kind == 'SW' and st.get('path') == 'register':
+        issue('store_checked_as_register', 'test',
+              f"the testbench checks register x{cols['rd']} instead of the memory the store writes")
+    if kind in ('R', 'I', 'LW') and cols['rd'] is not None and cols['rd'] != ops['rd']:
+        issue('rd_mismatch', 'scenario',
+              f"the instruction writes x{ops['rd']}, but the example reads the result from x{cols['rd']}")
+
+    v = None
+    if kind in ('R', 'I'):
+        a = value_of(ops['rs1'])
+        b = value_of(ops['rs2']) if kind == 'R' else (ops['imm'] & _M32 if ops['imm'] is not None else None)
+        if a is not None and b is not None:
+            v = _CPU_VALUE_OPS[ops['op']][2](a, b)
+    elif kind == 'LW':
+        if value_of(ops['rs1']) is not None and st.get('mem_value') is not None:
+            v = st['mem_value'] & _M32
+    elif kind == 'SW':
+        if value_of(ops['rs1']) is not None:
+            v = value_of(ops['rs2'])
+    else:
+        a, b = value_of(ops['rs1']), value_of(ops['rs2'])
+        if a is not None and b is not None:
+            v = int(_CPU_BRANCH_OPS[ops['op']][2](a, b))
+    if kind in ('R', 'I', 'LW') and ops['rd'] == 0 and v is not None:
+        if v:
+            note('x0_dest', 'the instruction writes x0, which always stays 0')
+        v = 0
+    out['value'] = None if out['issues'] else v
+    return out
+
+
 LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES,
                      'outcome_key': 'ALU.Q.RESULT', 'outputs': ('result', 'zero', 'negative',
                                                                  'overflow', 'carry')},
              'regfile': {'steps': RF_STEPS, 'rules': RF_RULES, 'flags': {},
                          'outcome_key': 'RF.Q.RDATA', 'outputs': ('rdata1', 'rdata2'),
-                         'stateful': True}}
+                         'stateful': True},
+             'cpu': {'steps': CPU_STEPS, 'rules': CPU_RULES, 'flags': {},
+                     'outcome_key': 'CPU.Q.RD', 'outcome_keys': {'rd': 'CPU.Q.RD', 'mem': 'CPU.Q.RD',
+                                                                 'taken': 'CPU.Q.TAKEN'},
+                     'outputs': ('rd', 'mem', 'taken'), 'port_aliases': {'mem': ('rd',)},
+                     'reference': lambda st: cpu_reference(st)['value']}}
 LIBRARIES['alu_comb'] = LIBRARIES['alu']
 
 

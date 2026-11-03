@@ -140,10 +140,20 @@ checked". "Regenerate the design" is available for register files too.
 To try it without a model: `python tests/ui/stage_run.py regfile` writes a
 sample feature and a design with a register-0 bug under `output/`.
 
+### RISC-V CPUs (M5b)
+
+For CPU designs each example is judged the way the CPU executes it, and the
+card separates three kinds of problem: the design computes an instruction
+wrong (with a hint such as "seems to compare as unsigned numbers"), the
+scenario expects a wrong value or contradicts itself (one register given two
+values, a result expected in x0), and examples the testbench cannot check as
+written (load/store offsets, store rows that name an rd). Branches are shown
+as taken / not taken. `python tests/ui/stage_run.py cpu` stages a sample.
+
 Browser checks (developers; app running with `DATABASE_URL`, iverilog):
 
 ```bash
-mkdir -p /tmp/ui && python tests/ui/stage_run.py > /tmp/ui/state.json    # or: stage_run.py regfile
+mkdir -p /tmp/ui && python tests/ui/stage_run.py > /tmp/ui/state.json    # or: stage_run.py regfile|cpu
 ```
 
 ```bash

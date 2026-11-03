@@ -14,6 +14,7 @@ to the page (Step 3 / Step 4), so the browser check runs the real flow.
 
     python tests/ui/stage_run.py            # ALU
     python tests/ui/stage_run.py regfile    # register file (32 x 32 bit)
+    python tests/ui/stage_run.py cpu        # RV32I CPU (SLT compares unsigned)
 """
 import json
 import sys
@@ -23,7 +24,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests'))
 
-from test_xdb import ALU, RF_BUGGY, RF_FEATURE, RF_FIXED, RF_RECORD  # noqa: E402
+from test_xdb import (ALU, CPU_BUGGY, CPU_FEATURE, CPU_OK, CPU_RECORD, RF_BUGGY, RF_FEATURE,  # noqa: E402
+                      RF_FIXED, RF_RECORD)
 # ALU: SLTU compares signed. Register file: register 0 is not protected; the
 # feature reads R1 expecting 100 after a later row wrote 300.
 
@@ -44,6 +46,25 @@ def regfile():
         'requirements': {'filepath': 'output/requirements/xdb_ui_rf_req.json', 'module_type': 'regfile'},
         'fixed_design': {'filename': 'xdb_ui_rf_fixed.v', 'content': RF_FIXED},
         'fake_repair': {'failures': 2, 'operations': ['READ']},
+    }))
+
+
+def cpu():
+    out = ROOT / 'output'
+    for d in ('bdd/gemini', 'dut/gemini', 'requirements'):
+        (out / d).mkdir(parents=True, exist_ok=True)
+    (out / 'bdd/gemini/xdb_ui_cpu.feature').write_text(CPU_FEATURE, encoding='utf-8')
+    (out / 'dut/gemini/xdb_ui_cpu.v').write_text(CPU_BUGGY, encoding='utf-8')
+    (out / 'dut/gemini/xdb_ui_cpu_fixed.v').write_text(CPU_OK, encoding='utf-8')
+    (out / 'requirements/xdb_ui_cpu_req.json').write_text(json.dumps(CPU_RECORD), encoding='utf-8')
+    print(json.dumps({
+        'bdd': {'filename': 'xdb_ui_cpu.feature', 'filepath': 'output/bdd/gemini/xdb_ui_cpu.feature',
+                'llm': 'gemini'},
+        'dut': {'moduleType': 'cpu', 'moduleName': 'RISC-V CPU', 'bitwidth': 32, 'depth': 32,
+                'pipelineStages': 5, 'filename': 'xdb_ui_cpu.v', 'source': 'llm', 'llm': 'gemini'},
+        'requirements': {'filepath': 'output/requirements/xdb_ui_cpu_req.json', 'module_type': 'cpu'},
+        'fixed_design': {'filename': 'xdb_ui_cpu_fixed.v', 'content': CPU_OK},
+        'fake_repair': {'failures': 2, 'operations': ['SLT', 'SLTI']},
     }))
 
 
@@ -80,4 +101,4 @@ def main():
 
 
 if __name__ == '__main__':
-    regfile() if sys.argv[1:] == ['regfile'] else main()
+    {'regfile': regfile, 'cpu': cpu}.get((sys.argv[1:] or [''])[0], main)()

@@ -1475,8 +1475,8 @@ def generate_hardware():
         from src.xdb import repair as XR
         if module_type not in XR.DESIGN_REPAIR_TYPES:
             return jsonify({'success': False,
-                            'error': 'Regenerating a design from its failures is available for ALU and '
-                                     'register-file designs only'}), 400
+                            'error': 'Regenerating a design from its failures is available for ALU, '
+                                     'register-file and CPU designs only'}), 400
         if not xdb.enabled():
             return jsonify({'success': False,
                             'error': 'Regenerating a design from its failures needs the explainability database'}), 400
@@ -1594,6 +1594,9 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
+                if repair:
+                    generator.repair_feedback = repair['text']
+                    generator.repair_previous = repair.get('previous_verilog')
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
