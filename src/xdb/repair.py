@@ -56,8 +56,8 @@ def _column_of(s, scenario_id: int, key: str) -> Optional[str]:
                            M.CanonicalStep.params['key'].astext == key).limit(1)).first()
     if not row or not row[0]:
         return None
-    p = next(iter(row[0].values()), {})
-    return p.get('col')
+    vp = L.value_param(key, row[0].keys())
+    return (row[0].get(vp) or {}).get('col')
 
 
 def _fmt_result(R: int, old: str, w: int) -> str:
@@ -81,13 +81,18 @@ def _fmt_flag(v: int, old: str) -> str:
 def scenario_corrections(s, run_id: int) -> List[Dict]:
     from src.xdb.explain import _probe_results, _probe_run_id
     out: List[Dict] = []
+    run = s.get(M.SimRun, run_id)
+    sess = s.get(M.Session, s.get(M.Testbench, run.testbench_id).session_id)
+    design = s.get(M.Design, sess.design_id) if sess.design_id else None
+    outcome_key = (L.library_for(design.module_type if design else None) or {}).get('outcome_key',
+                                                                                    'ALU.Q.RESULT')
     for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
                             .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
                             .where(M.CheckResult.sim_run_id == run_id, M.CheckItem.seq == 1)):
         if cr.verdict not in _FIXABLE or ci.expected_ref is None or not ci.scenario_id:
             continue
         er = s.get(M.ExampleRow, ci.example_row_id) if ci.example_row_id else None
-        col = _column_of(s, ci.scenario_id, 'ALU.Q.RESULT')
+        col = _column_of(s, ci.scenario_id, outcome_key)
         if er is None or not col or col not in (er.vals or {}):
             continue
         old = er.vals[col]
@@ -95,9 +100,6 @@ def scenario_corrections(s, run_id: int) -> List[Dict]:
                     'port': ci.port or 'result', 'column': col, 'old': old,
                     'new': _fmt_result(int(ci.expected_ref), old, ci.width or 32), 'width': ci.width,
                     'operation': ci.operation, 'stimulus': ci.stimulus})
-    run = s.get(M.SimRun, run_id)
-    sess = s.get(M.Session, s.get(M.Testbench, run.testbench_id).session_id)
-    design = s.get(M.Design, sess.design_id) if sess.design_id else None
     for (tag, port), o in _probe_results(s, _probe_run_id(s, run_id)).items():
         if o['verdict'] not in _FIXABLE or o['stated'] is None or o['rule_value'] is None:
             continue
@@ -119,6 +121,10 @@ def _describe(c: Dict) -> str:
     """One plain line for the page: inputs, then old -> new cell value."""
     from src.xdb.explain import _pv
     st, w = c.get('stimulus') or {}, c.get('width')
+    if 'addr' in st:                       # register file: the read the value belongs to
+        from src.xdb.explain import _example
+        ex = _example('regfile', c.get('operation'), st, w)
+        return f"{ex[0].upper() + ex[1:]}: expected value {c['old']} → {c['new']}"
     inputs = ', '.join(f"{k.upper()} = {_pv(st[k], w)}" for k in ('a', 'b') if st.get(k) is not None)
     what = 'result' if c['port'] == 'result' else f"{c['port']} flag"
     return f"{c.get('operation') or 'Row ' + str(c['row_no'])}{' with ' + inputs if inputs else ''}: " \
@@ -267,11 +273,33 @@ def _spread(items: List[Tuple[str, str]], limit: int) -> List[str]:
     return out
 
 
+def _rf_item(ci, cr, h: Optional[Dict], w: int) -> str:
+    """One failing read of a register file, with the writes and resets it depends on."""
+    st = ci.stimulus or {}
+    a = st.get('addr')
+    got = str(int(cr.observed_value)) if cr.observed_value is not None else 'x (unknown)'
+    line = (f"- read of R{a} at step {ci.test_no} of the sequence: rdata1 must be "
+            f"{int(ci.expected_ref)}, the design gave {got}")
+    if not h:
+        return line
+    c = h['cause']
+    before = [w_ for w_ in h.get('earlier') or []]
+    if c['kind'] == 'write':
+        before.append(c)
+    ev = [f"step {x['test']} wrote {x['value']} to R{a}" + (' (must be ignored)' if x.get('ignored') else '')
+          for x in sorted(before, key=lambda x: x['test'])]
+    if c['kind'] == 'reset':
+        ev.append(f"step {c['test']} reset the register file")
+    if c['kind'] == 'x0':
+        ev.append('register 0 must always read 0')
+    return line + ('. Before it: ' + '; '.join(ev) if ev else '')
+
+
 def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tuple[Optional[Dict], Optional[str]]:
     """The design's failing checks as prompt text: inputs, correct value, the
     design's value, and the rules those checks follow; plus the Verilog that
     was simulated."""
-    from src.xdb.explain import _probe_results, _probe_run_id, _overflow_mode, _pv
+    from src.xdb.explain import _probe_results, _probe_run_id, _overflow_mode, _pv, _rf_history
     from src.xdb.ingest import artifact_text
     with xdb.session_scope(url) as s:
         hit = find_run(s, project_root, paths)
@@ -284,10 +312,21 @@ def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tup
         W = (design.bitwidth if design else None) or 32
         items: List[Tuple[str, str]] = []
         ops, main_bad, ports = set(), set(), set()
+        stateful = bool((L.library_for(mt) or {}).get('stateful'))
+        hist = _rf_history(s, tb.id, W) if stateful else {}
         for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
                                 .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
                                 .where(M.CheckResult.sim_run_id == run.id, M.CheckItem.seq == 1)
                                 .order_by(M.CheckItem.test_no)):
+            if ci.tag.startswith('GEN:') and cr.status == 'fail':
+                items.append(('', f"- the testbench's own check “{ci.label}” failed: {cr.message or ''}".rstrip()))
+                continue
+            if stateful and cr.verdict in _DESIGN_FAULT and ci.expected_ref is not None:
+                main_bad.add(ci.tag)
+                ops.add(ci.operation)
+                ports.add(ci.port)
+                items.append((ci.operation, _rf_item(ci, cr, hist.get(ci.tag), W)))
+                continue
             if cr.verdict in _DESIGN_FAULT and ci.expected_ref is not None:
                 st, w = ci.stimulus or {}, ci.width or W
                 main_bad.add(ci.tag)
@@ -312,7 +351,7 @@ def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tup
             return None, 'nothing to repair: no check shows a design error'
         lib = L.library_for(mt) or {}
         rules = [f"- {r['op']}: {r['text']}" for r in (lib.get('rules') or {}).values()
-                 if r.get('op') in ops]
+                 if r.get('op') in ops or (stateful and r.get('op') in ('WRITE', 'RESET'))]
         for port in ('zero', 'negative', 'overflow'):
             if port in ports:
                 fr = L.flag_rule(mt, port, ov_mode)
@@ -356,7 +395,7 @@ def close_feedback(fb_id: int, status: str, result_ref: Optional[str] = None, ur
 
 
 # Module types whose design Step 1 can regenerate with feedback (main.py).
-DESIGN_REPAIR_TYPES = ('alu',)
+DESIGN_REPAIR_TYPES = ('alu', 'regfile')
 
 
 def available(s, run_id: int, module_type: Optional[str]) -> Dict:
@@ -370,12 +409,17 @@ def available(s, run_id: int, module_type: Optional[str]) -> Dict:
                M.CheckItem.expected_ref.is_not(None))) if verdict in _DESIGN_FAULT}
     probe_bad = {tag for (tag, _), o in _probe_results(s, _probe_run_id(s, run_id)).items()
                  if o['verdict'] in _DESIGN_FAULT}
+    # checks the testbench adds by itself (not from a scenario) can only fail on the design
+    gen_bad = set(s.scalars(select(M.CheckItem.tag)
+                            .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+                            .where(M.CheckResult.sim_run_id == run_id, M.CheckItem.tag.like('GEN:%'),
+                                   M.CheckResult.status == 'fail')))
     run = s.get(M.SimRun, run_id)
     tb = s.get(M.Testbench, run.testbench_id)
     feat = s.get(M.Feature, tb.feature_id) if tb.feature_id else None
     duv = s.get(M.Duv, run.duv_id) if run.duv_id else None
     return {'scenario_values': len(scenario_corrections(s, run_id)),
-            'design_failures': len(main_bad | probe_bad),
+            'design_failures': len(main_bad | probe_bad | gen_bad),
             'design_regeneration': (module_type or '') in DESIGN_REPAIR_TYPES,
             'feature_reason': feat.reason if feat else None,
             'duv_reason': duv.reason if duv else None}

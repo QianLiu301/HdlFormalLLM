@@ -4,7 +4,7 @@
 //   2. "Regenerate the design"  (the model call is replaced by a staged fixed
 //      design via request interception; the rerun after it is real)
 // Needs: the app on localhost:5000 with DATABASE_URL set, iverilog, and
-//   python tests/ui/stage_run.py > <dir>/state.json
+//   python tests/ui/stage_run.py [regfile] > <dir>/state.json
 //   NODE_PATH=$(npm root -g) node tests/ui/repair_flow.js <dir>
 const fs = require('fs');
 const { chromium } = require('playwright');
@@ -66,9 +66,9 @@ const { chromium } = require('playwright');
     console.log('\nrequest to Step 1:', JSON.stringify({ llm: req.llm, module_type: req.module_type,
       run_id: req.run_id === await page.evaluate(() => currentRunId), repair_of: req.repair_of }));
     await route.fulfill({ json: { success: true, filename: state.fixed_design.filename,
-      full_content: state.fixed_design.content, llm: 'gemini', bitwidth: 32, module_type: 'alu',
+      full_content: state.fixed_design.content, llm: 'gemini', bitwidth: 32, module_type: state.dut.moduleType,
       run_id: req.run_id, duv_compile: { ok: true, error: null },
-      repair: { feedback_id: 0, failures: 3, operations: ['SLTU'] } } });
+      repair: { feedback_id: 0, ...state.fake_repair } } });
   });
   await page.getByRole('button', { name: /Regenerate the design with GEMINI/ }).click();
   await page.waitForFunction(() => repairNotice && repairNotice.html.includes('Design regenerated')

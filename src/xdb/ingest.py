@@ -47,9 +47,10 @@ except ImportError:                                                  # pragma: n
 _STATUS = {'pass': 'pass', 'fail': 'fail', 'setup': 'setup',
            'skipped': 'not_tested', 'missing': 'not_tested'}
 _EXP_RE = re.compile(r'Expected\s+([^,\s]+),?\s+Got\s+(\S+)', re.I)
-# "✗ Test 14: FAIL - Expected 4294967245, Got 4294967246 [BDD:ALU-SUB-001/r7]"
-_TEST_RE = re.compile(r'Test\s+(\d+)\s*:\s*(PASS|FAIL)\b(?:.*?Expected\s+([^,\s]+),?\s+Got\s+(\S+))?'
-                      r'.*?\[BDD:([^\]\s]+)\]')
+# "✗ Test 14: FAIL - Expected 4294967245, Got 4294967246 [BDD:ALU-SUB-001/r7]"   (ALU)
+# "✗ row 5: FAIL - R1 expected 100, got 300 [BDD:RF-READ-001/r1]"                  (register file)
+_TEST_RE = re.compile(r'(?:Test|row)\s+(\d+)\s*:\s*(PASS|FAIL)\b(?:.*?Expected\s+([^,\s]+),?\s+Got\s+(\S+))?'
+                      r'.*?\[BDD:([^\]\s]+)\]', re.I)
 _TASK = {'duv': 'web_duv_generation', 'bdd': 'web_bdd_generation'}
 
 
@@ -410,6 +411,17 @@ def _log_by_test(log: str) -> Dict[int, Dict]:
     return out
 
 
+def _verdict(status: str, o, c: M.CheckItem) -> Optional[str]:
+    """Verdict of one executed assertion. When the scenario states no value and
+    the testbench compared against the reference model (oracle 'spec'), only
+    the design can be wrong, as for a flag the scenario does not mention."""
+    if status not in ('pass', 'fail'):
+        return None
+    if c.expected_bdd is None and c.oracle == 'spec' and c.expected_ref is not None and o is not None:
+        return 'pass' if int(o) == int(c.expected_ref) else 'design_wrong'
+    return classify(o, c.expected_bdd, c.expected_ref, c.width)
+
+
 def _parent_rows(s, feature: M.Feature, scenario_key: str) -> Dict[int, Dict]:
     """row_no -> vals of the same scenario in the version this feature repairs."""
     if not feature.parent_id or not (feature.reason or '').startswith('feedback:'):
@@ -604,8 +616,7 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                 mm = _EXP_RE.search(msg or '')
                 exp_txt, got = (mm.group(1), mm.group(2)) if mm else (None, None)
             o = observed_value(status, got, c.expected_used, c.width)
-            v = (classify(o, c.expected_bdd, c.expected_ref, c.width)
-                 if status in ('pass', 'fail') else None)
+            v = _verdict(status, o, c)
             if v:
                 verdicts[v] = verdicts.get(v, 0) + 1
             s.add(M.CheckResult(sim_run_id=run.id, check_id=c.id, status=status, message=msg,
@@ -647,6 +658,8 @@ def _flag_probe(s, sess, tb, run, duv, design, files, tb_text, checks, width_hin
     mt = design.module_type
     if not L.library_for(mt):
         return {'status': 'no_rule_library'}
+    if not L.library_for(mt).get('flags'):
+        return {'status': 'not_applicable'}        # the probe observes ALU flags only
     res = P.run_probe(tb_text, files['duv'])
     if res['status'] == 'not_applicable':
         return {'status': 'not_applicable'}

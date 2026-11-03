@@ -136,8 +136,12 @@ no model; "Regenerate the design" re-calls Step 1 for ALU with the failing
 checks + rules + previous Verilog (`repair_of` in /api/generate-hardware,
 `prompt_store.repair_feedback_block`); both store a `feedback` row and the
 new file as version `feedback:<id>`, then rerun Step 3+4; browser check
-`tests/ui/repair_flow.js` with `tests/ui/stage_run.py`). M5 next (regfile,
-CPU) … M6 in the design doc. Product output (explanations, UI text,
+`tests/ui/repair_flow.js` with `tests/ui/stage_run.py`). M5a done (D27,
+register file: rows run in order with state carried across scenarios; index
+records writes/resets as setup rows; `library.regfile_replay` gives each
+read's value and cause; explanations name the write/reset behind a value;
+subject port rdata1; repair works for regfile; `stage_run.py regfile`).
+M5b next (CPU) … M6 in the design doc. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.
