@@ -550,9 +550,14 @@ the requirement they leave untested, and requirements no scenario covers.
 `summarize_run` returns it with an overview; `/api/explain/*` return
 `plain` next to `text`.
 
-Known limitation found while testing: the testbench generator's operation
-detection falls back to words in the scenario title, so a title such as
-"Compare signed and unsigned …" is tested as AND.
+Found while testing and fixed since (commit 3ab7993, merged): the testbench
+generator's operation detection fell back to plain words in the scenario
+title, so a title such as "Compare signed and unsigned …" was tested as AND.
+It now reads only the title and the When step, in an operation-like context,
+and leaves ambiguous scenarios unmapped (reported as "not tested"). Rows it
+drops because their Operation cell names no known operation are listed as
+skipped in the results (`rows_unmapped` in the scenario index), so such a
+scenario reads "partly tested".
 
 ## 6d. Repair (M4, D26)
 

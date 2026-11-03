@@ -888,6 +888,10 @@ _PLAIN_REASON = {
     'tag maps to no known register-file operation':
         'the tool could not tell which register-file operation it tests, so it made no tests from it',
     'no Examples rows': 'it has no Examples table, so there was nothing to test',
+    'rows name no known ALU operation':
+        'the operation its examples name is not one the tool knows, so it made no tests from them',
+    'row names no known ALU operation':
+        'the operation its examples name is not one the tool knows, so it made no tests from them',
     'rows malformed (column count differs from header)':
         'its Examples rows do not match the table header, so they could not be read',
     'plain Scenario without an Examples table':

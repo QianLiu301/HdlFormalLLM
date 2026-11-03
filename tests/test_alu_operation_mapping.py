@@ -276,3 +276,25 @@ def test_operation_column_with_no_recognisable_row_is_unmapped(tmp_path):
     spec = _parse(_feature(tmp_path, outline))
     assert spec['scenarios'] == []
     assert spec['parse_stats']['scenarios_unmapped'] == 1
+
+
+def test_dropped_rows_are_reported_not_hidden(tmp_path):
+    """A row dropped because its Operation cell is unrecognised must appear in
+    the scenario results as skipped (with its reason), so the scenario reads
+    'partly tested' rather than fully tested; a scenario all of whose rows are
+    dropped says why, instead of 'no Examples rows'."""
+    from src import scenario_results as SR
+    out = _generate(_feature(tmp_path, ROWS_OUTLINE), tmp_path / 'tb')
+    index = SR.load_index(out['filepath'])
+    sc = SR.summarize(index, '')['scenarios'][0]
+    rows = {r['id'].rsplit('/r', 1)[1]: r for r in sc['rows']}
+    assert rows['3'] == {'id': rows['3']['id'], 'status': 'skipped',
+                         'reason': 'row names no known ALU operation'}
+    assert sc['rows_total'] == 3
+
+    outline = ROWS_OUTLINE.replace('| SLT       |', '| LT        |').replace(
+        '| SLTU      |', '| LTU       |')
+    path = _feature(tmp_path, ADD_OUTLINE, outline, name='none.feature')
+    out = _generate(path, tmp_path / 'tb2')
+    entry = SR.load_index(out['filepath'])['catalog'][1]
+    assert (entry['status'], entry['reason']) == ('unmapped', 'tag maps to no known ALU operation')

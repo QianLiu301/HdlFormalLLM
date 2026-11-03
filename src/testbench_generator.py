@@ -634,7 +634,7 @@ class FeatureParser:
                          'tags': [t.lstrip('@') for t in raw_tags.split()],
                          'requirements': req_ids, 'span': span,
                          'operation': key, 'status': status, 'reason': reason,
-                         'rows': [], 'rows_malformed': []}
+                         'rows': [], 'rows_malformed': [], 'rows_unmapped': []}
                 self.catalog.append(entry)
                 return entry
 
@@ -740,6 +740,8 @@ class FeatureParser:
                         # 这一行又没写出可识别的操作：没有 opcode 可用，丢弃，
                         # 不替它挑一个。
                         self.stats['rows_unmapped'] += 1
+                        # 结果页要能指出这一行没测、为什么没测
+                        entry['rows_unmapped'].append(row_no)
                         continue
                     elif self.module_type == 'counter':
                         scenario['mode'] = opcode
@@ -764,7 +766,9 @@ class FeatureParser:
             if not entry['rows']:
                 entry['status'] = 'no_examples'
                 entry['reason'] = ('rows malformed (column count differs from header)'
-                                   if entry['rows_malformed'] else 'no Examples rows')
+                                   if entry['rows_malformed'] else
+                                   'rows name no known ALU operation' if entry['rows_unmapped']
+                                   else 'no Examples rows')
 
         # 普通 Scenario（非 Outline）没有 Examples 表，解析器读不了。也编进目录，
         # 否则它们在结果页上像从没写过一样。
@@ -781,7 +785,7 @@ class FeatureParser:
                 'span': [m.start(), m.end() + nxt.start() if nxt else len(content)],
                 'operation': None, 'status': 'no_examples',
                 'reason': 'plain Scenario without an Examples table',
-                'rows': [], 'rows_malformed': []})
+                'rows': [], 'rows_malformed': [], 'rows_unmapped': []})
 
     def _get_alu_operation(self, tag: str, block_content: str) -> Tuple[str, str]:
         """Get ALU operation name and opcode from tag"""
