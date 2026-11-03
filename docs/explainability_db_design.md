@@ -40,7 +40,7 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D16 | Versions are kept **per file**: a regenerated or corrected feature / Verilog is a new row with `parent_id` and `reason`. Scenarios and rows are views of one file version, so every displayed state can be simulated | 2026-11-03 |
 | D17 | Every generated file is stored when it is saved (Step 1, Step 2), including versions later discarded; Step-0 requirements and decisions are stored when a step uses them. Render's disk is wiped on deploy, so waiting for Step 4 would lose them | 2026-11-03 |
 | D18 | Files are stored uncompressed for now; `artifact.encoding` allows switching to gzip later without a schema change. `python -m src.xdb stats` shows usage against the 512 MB plan limit | 2026-11-03 |
-| D19 | Rules (operation semantics) come from a rule library written by us (provenance `human`, checked against the reference model); canonical-step predicates are expressions (SVA-compatible). Explanations are stored as structured data and rendered at display time (English / Chinese) | 2026-11-03 |
+| D19 | Rules (operation semantics) come from a rule library written by us (provenance `human`, checked against the reference model); canonical-step predicates are expressions (SVA-compatible). Explanations are stored as structured data and rendered at display time, **in English only** (product output contains no Chinese; decided 2026-11-03) | 2026-11-03 |
 | D20 | v1 explanation modes: complete and **contrastive** (another observed row of the same scenario that behaved differently, as X₁,C in the BDX paper); solver-based counterfactuals later | 2026-11-03 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
@@ -478,7 +478,7 @@ rendered with the row's values, plus expected vs. observed from
 - `src/xdb/library.py` — ALU library v1, hand-written: 9 canonical steps
   (width, operand A, operand B incl. "shift amount B", operation/opcode,
   result, zero / overflow / negative / carry flags) with regex patterns and
-  port predicates; 10 operation rules (expression + EN/ZH sentence + an
+  port predicates; 10 operation rules (expression + English sentence + an
   independent implementation) and 3 flag rules. Rules are tested against
   `TestbenchGenerator._reference_result` on random inputs (8/16/32 bit).
 - `src/xdb/mapping.py` — every stored step is mapped at ingestion
@@ -493,8 +493,7 @@ rendered with the row's values, plus expected vs. observed from
   `explain_global` (BDX global, P_T = ∅: every row whose instantiated Q
   contains port = value, grouped by operation, plus the general rule);
   `explain_requirement`. Results are stored in `explanation_target` /
-  `explanation` (structure + English rendering) and reused; text is rendered
-  in English or Chinese on request.
+  `explanation` (structure + English rendering) and reused.
 - CLI: `python -m src.xdb runs | remap | explain ...`.
 
 ---
@@ -540,7 +539,7 @@ rendered with the row's values, plus expected vs. observed from
 
 Milestones (2026-11-03): **M1** verdicts + schema v2 + step-by-step storage (done) ·
 **M2** ALU canonical-step and rule library, explanation engine (local, global,
-contrastive) (done, see §6a) · **M3** Step-4 UI: verdict summary and "why?" panel, EN/ZH ·
+contrastive) (done, see §6a) · **M3** Step-4 UI: verdict summary and "why?" panel (English) ·
 **M4** repair: apply reference value (new feature version) / regenerate design ·
 **M5** regfile, CPU; counter reference model · **M6** free-text questions.
 

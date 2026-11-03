@@ -91,26 +91,26 @@ python -m src.xdb runs
 lists recent simulations with their verdict counts.
 
 ```bash
-python -m src.xdb explain --failures --lang zh
+python -m src.xdb explain --failures
 ```
 
 explains every failing check of the latest simulation (`--run N` for another).
 
 ```bash
-python -m src.xdb explain ALU-SUB-001/r7 --lang zh
+python -m src.xdb explain ALU-SUB-001/r7
 ```
 
 explains one check (any row, passing or failing).
 
 ```bash
-python -m src.xdb explain --global overflow=True --lang zh
+python -m src.xdb explain --global overflow=True
 ```
 
 answers "when does the specification say overflow = 1?" for the latest
 feature (`--feature N` for another).
 
 ```bash
-python -m src.xdb explain --requirement REQ-2 --lang zh
+python -m src.xdb explain --requirement REQ-2
 ```
 
 summarises one Step-0 requirement.

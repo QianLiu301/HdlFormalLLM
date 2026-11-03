@@ -14,7 +14,7 @@ A parameter written as <Col> in the step refers to an Examples column; the
 mapping stores it as {"col": "Col"}, a literal as {"lit": "5"}.
 
 Rules give the operation semantics the explanations quote ("SUB computes
-A - B modulo 2^W"). `fn` is an independent implementation checked against
+A - B modulo 2^W"). All text is English. `fn` is an independent implementation checked against
 TestbenchGenerator._reference_result in the tests.
 """
 
@@ -68,52 +68,39 @@ def _signed(x: int, w: int) -> int:
     return x - (1 << w) if x >> (w - 1) else x
 
 
-def _rule(op, expr, en, zh, fn):
-    return {'op': op, 'expr': expr, 'en': en, 'zh': zh, 'fn': fn}
+def _rule(op, expr, text, fn):
+    return {'op': op, 'expr': expr, 'text': text, 'fn': fn}
 
 
 # fn(a, b, w) with a, b already masked to w bits; result masked to w bits
 ALU_RULES: Dict[str, Dict] = {r['op']: r for r in [
-    _rule('ADD', 'result == (a + b) % 2**W', 'ADD computes A + B modulo 2^W',
-          'ADD 计算 A + B（对 2^W 取模）', lambda a, b, w: (a + b) % (1 << w)),
-    _rule('SUB', 'result == (a - b) % 2**W', 'SUB computes A − B modulo 2^W',
-          'SUB 计算 A − B（对 2^W 取模）', lambda a, b, w: (a - b) % (1 << w)),
-    _rule('AND', 'result == a & b', 'AND computes the bitwise AND of A and B',
-          'AND 计算 A 与 B 的按位与', lambda a, b, w: a & b),
-    _rule('OR', 'result == a | b', 'OR computes the bitwise OR of A and B',
-          'OR 计算 A 与 B 的按位或', lambda a, b, w: a | b),
-    _rule('XOR', 'result == a ^ b', 'XOR computes the bitwise XOR of A and B',
-          'XOR 计算 A 与 B 的按位异或', lambda a, b, w: a ^ b),
+    _rule('ADD', 'result == (a + b) % 2**W', 'ADD computes A + B modulo 2^W', lambda a, b, w: (a + b) % (1 << w)),
+    _rule('SUB', 'result == (a - b) % 2**W', 'SUB computes A − B modulo 2^W', lambda a, b, w: (a - b) % (1 << w)),
+    _rule('AND', 'result == a & b', 'AND computes the bitwise AND of A and B', lambda a, b, w: a & b),
+    _rule('OR', 'result == a | b', 'OR computes the bitwise OR of A and B', lambda a, b, w: a | b),
+    _rule('XOR', 'result == a ^ b', 'XOR computes the bitwise XOR of A and B', lambda a, b, w: a ^ b),
     _rule('SLL', 'result == (a << b[log2 W-1:0]) % 2**W',
           'SLL shifts A left by the low log2(W) bits of B',
-          'SLL 将 A 左移 B 的低 log2(W) 位所表示的位数',
           lambda a, b, w: (a << (b & (w - 1))) % (1 << w)),
     _rule('SRL', 'result == a >> b[log2 W-1:0]',
           'SRL shifts A right by the low log2(W) bits of B, filling with zeros',
-          'SRL 将 A 逻辑右移（高位补 0），位数为 B 的低 log2(W) 位',
           lambda a, b, w: a >> (b & (w - 1))),
     _rule('SRA', 'result == $signed(a) >>> b[log2 W-1:0]',
           'SRA shifts A right by the low log2(W) bits of B, copying the sign bit',
-          'SRA 将 A 算术右移（高位复制符号位），位数为 B 的低 log2(W) 位',
           lambda a, b, w: (_signed(a, w) >> (b & (w - 1))) % (1 << w)),
     _rule('SLT', 'result == ($signed(a) < $signed(b))',
           'SLT is 1 when A < B as signed numbers, else 0',
-          'SLT：按有符号数比较，A < B 时为 1，否则为 0',
           lambda a, b, w: int(_signed(a, w) < _signed(b, w))),
     _rule('SLTU', 'result == (a < b)',
           'SLTU is 1 when A < B as unsigned numbers, else 0',
-          'SLTU：按无符号数比较，A < B 时为 1，否则为 0',
           lambda a, b, w: int(a < b)),
 ]}
 
 FLAG_RULES = {
-    'zero': {'expr': 'zero == (result == 0)', 'en': 'the zero flag is 1 exactly when the result is 0',
-             'zh': '结果为 0 时零标志为 1，否则为 0'},
-    'negative': {'expr': 'negative == result[W-1]', 'en': 'the negative flag is the top bit of the result',
-                 'zh': '负标志等于结果的最高位'},
+    'zero': {'expr': 'zero == (result == 0)', 'text': 'the zero flag is 1 exactly when the result is 0'},
+    'negative': {'expr': 'negative == result[W-1]', 'text': 'the negative flag is the top bit of the result'},
     'overflow': {'expr': 'overflow == signed overflow of ADD/SUB',
-                 'en': 'the overflow flag is 1 when ADD or SUB overflows as a signed operation',
-                 'zh': 'ADD 或 SUB 发生有符号溢出时，溢出标志为 1'},
+                 'text': 'the overflow flag is 1 when ADD or SUB overflows as a signed operation'},
 }
 
 LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES}}

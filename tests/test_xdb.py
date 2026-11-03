@@ -432,9 +432,7 @@ def test_local_explanation_scenario_wrong(run, db):
     assert st['contrast'] and st['contrast']['status'] == 'pass'
     assert {u['port'] for u in st['unverified']} == {'zero', 'overflow', 'negative'}
     assert 'The scenario is wrong, not the design.' in out['text']
-    assert '50 − 100 = 4294967246' in out['text']
-    zh = explain_check('ALU-SUB-001/r7', sim_run_id=_run1(), lang='zh', url=db)['text']
-    assert '错的是场景，不是设计' in zh and '与规则一致' in zh
+    assert '50 − 100 = 4294967246' in out['text'] and 'agrees with the rule' in out['text']
 
 
 def test_local_explanation_design_wrong(run, db):
@@ -477,8 +475,8 @@ def test_explanations_are_stored_once(run, db):
     from sqlalchemy import create_engine, text
     from src.xdb.explain import explain_check
     a = explain_check('ALU-SRA-001/r5', sim_run_id=_run1(), url=db)
-    b = explain_check('ALU-SRA-001/r5', sim_run_id=_run1(), lang='zh', url=db)
-    assert a['explanation_id'] == b['explanation_id'] and a['text'] != b['text']
+    b = explain_check('ALU-SRA-001/r5', sim_run_id=_run1(), url=db)
+    assert a['explanation_id'] == b['explanation_id'] and a['text'] == b['text']
     with create_engine(db).connect() as c:
         row = c.execute(text("SELECT e.structure->>'verdict', e.text_rule, t.scope, t.sim_run_id "
                              "FROM explanation e JOIN explanation_target t ON t.id = e.target_id "

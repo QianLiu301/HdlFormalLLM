@@ -8,10 +8,10 @@ CLI for the explainability database.
                              [--bdd ...] [--duv ...] [--requirements ...] [--run-id ...]
     python -m src.xdb remap                map steps of stored scenarios to canonical steps
     python -m src.xdb runs                 recent simulations (ids for --run)
-    python -m src.xdb explain ALU-SUB-001/r7 [--run N] [--lang zh]       local: one check
-    python -m src.xdb explain --failures [--run N] [--lang zh]           local: every failing check
-    python -m src.xdb explain --global overflow=True [--feature N] [--lang zh]
-    python -m src.xdb explain --requirement REQ-2 [--session N] [--lang zh]
+    python -m src.xdb explain ALU-SUB-001/r7 [--run N]       local: one check
+    python -m src.xdb explain --failures [--run N]           local: every failing check
+    python -m src.xdb explain --global overflow=True [--feature N]
+    python -m src.xdb explain --requirement REQ-2 [--session N]
 """
 import argparse
 import sys
@@ -53,7 +53,6 @@ def main(argv=None):
     ex.add_argument('--global', dest='global_', metavar='PORT=VALUE')
     ex.add_argument('--requirement')
     ex.add_argument('--failures', action='store_true')
-    ex.add_argument('--lang', default='en', choices=['en', 'zh'])
     ing = sub.add_parser('ingest')
     for k in ('testbench', 'log', 'bdd', 'duv', 'requirements', 'run-id'):
         ing.add_argument(f'--{k}')
@@ -107,7 +106,7 @@ def _explain(a):
             with xdb.session_scope() as s:
                 feature = s.scalar(select(M.Testbench.feature_id).join(M.SimRun)
                                    .order_by(M.SimRun.id.desc()).limit(1))
-        print(E.explain_global(feature, port.strip(), value.strip(), lang=a.lang)['text'])
+        print(E.explain_global(feature, port.strip(), value.strip())['text'])
     elif a.requirement:
         with xdb.session_scope() as s:
             q = select(M.Requirement.id).where(M.Requirement.req_key == a.requirement,
@@ -117,7 +116,7 @@ def _explain(a):
             rid = s.scalar(q.order_by(M.Requirement.id.desc()).limit(1))
         if rid is None:
             sys.exit(f'requirement {a.requirement} not found')
-        print(E.explain_requirement(rid, sim_run_id=a.run, lang=a.lang)['text'])
+        print(E.explain_requirement(rid, sim_run_id=a.run)['text'])
     elif a.failures:
         with xdb.session_scope() as s:
             run = a.run or s.scalar(select(M.SimRun.id).order_by(M.SimRun.id.desc()).limit(1))
@@ -127,9 +126,9 @@ def _explain(a):
         if not tags:
             print(f'simulation #{run}: no failing checks')
         for tg in tags:
-            print(E.explain_check(tg, sim_run_id=run, lang=a.lang)['text'], end='\n\n')
+            print(E.explain_check(tg, sim_run_id=run)['text'], end='\n\n')
     elif a.tag:
-        out = E.explain_check(a.tag, sim_run_id=a.run, session_id=a.session, lang=a.lang)
+        out = E.explain_check(a.tag, sim_run_id=a.run, session_id=a.session)
         print(out['text'] if out else f'no simulated check {a.tag} found')
     else:
         sys.exit('give a check tag, --failures, --global PORT=VALUE or --requirement REQ-n')

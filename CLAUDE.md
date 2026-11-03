@@ -120,7 +120,8 @@ from the `*_tb.scenarios.json` index v2 (ALU only so far). Scope on this branch:
 web Steps 0–4 (+explain, repair); benchmark/golden/mutants set aside.
 Milestones M1, M2 done (M2: `src/xdb/library.py` ALU canonical steps + rules,
 `mapping.py`, `explain.py`; CLI `python -m src.xdb runs|remap|explain`), M3 next
-(Step-4 UI panel) … M6 in the design doc. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
+(Step-4 UI panel) … M6 in the design doc. Product output (explanations, UI text,
+stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.
 
