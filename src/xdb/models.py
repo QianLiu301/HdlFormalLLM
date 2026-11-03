@@ -295,7 +295,7 @@ class Testbench(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey('session.id'), nullable=False)
     feature_id: Mapped[int | None] = mapped_column(ForeignKey('feature.id'))
     artifact: Mapped[str] = mapped_column(ForeignKey('artifact.sha256'), nullable=False)
-    generator: Mapped[str] = mapped_column(String(16), nullable=False)    # template | llm
+    generator: Mapped[str] = mapped_column(String(16), nullable=False)    # template | llm | probe
     oracle_source: Mapped[str | None] = mapped_column(String(8))         # bdd | spec
     prov_kind: Mapped[str] = mapped_column(String(8), nullable=False)
     prov_ref: Mapped[str | None] = mapped_column(Text)
@@ -333,6 +333,8 @@ class SimRun(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     testbench_id: Mapped[int] = mapped_column(ForeignKey('testbench.id'), nullable=False)
     duv_id: Mapped[int | None] = mapped_column(ForeignKey('duv.id'))
+    # set on a flag-probe run (src/xdb/probe.py): the main simulation it observes
+    probe_of: Mapped[int | None] = mapped_column(ForeignKey('sim_run.id'))
     dut_artifact: Mapped[str | None] = mapped_column(ForeignKey('artifact.sha256'))
     target: Mapped[str] = mapped_column(String(64), nullable=False)   # generated_duv | golden | mutant:<file>
     simulator: Mapped[str | None] = mapped_column(String(64))

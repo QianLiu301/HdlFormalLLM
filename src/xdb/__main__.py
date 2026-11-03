@@ -105,6 +105,7 @@ def _explain(a):
         if feature is None:
             with xdb.session_scope() as s:
                 feature = s.scalar(select(M.Testbench.feature_id).join(M.SimRun)
+                                   .where(M.SimRun.probe_of.is_(None))
                                    .order_by(M.SimRun.id.desc()).limit(1))
         print(E.explain_global(feature, port.strip(), value.strip())['text'])
     elif a.requirement:
@@ -119,7 +120,8 @@ def _explain(a):
         print(E.explain_requirement(rid, sim_run_id=a.run)['text'])
     elif a.failures:
         with xdb.session_scope() as s:
-            run = a.run or s.scalar(select(M.SimRun.id).order_by(M.SimRun.id.desc()).limit(1))
+            run = a.run or s.scalar(select(M.SimRun.id).where(M.SimRun.probe_of.is_(None))
+                                    .order_by(M.SimRun.id.desc()).limit(1))
             tags = s.scalars(select(M.CheckItem.tag).join(M.CheckResult)
                              .where(M.CheckResult.sim_run_id == run, M.CheckResult.status == 'fail')
                              .order_by(M.CheckItem.test_no)).all()

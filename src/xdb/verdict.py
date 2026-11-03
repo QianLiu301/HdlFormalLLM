@@ -52,6 +52,16 @@ def classify(observed: Value, bdd: Value, ref: Value, width: Optional[int] = Non
     return 'both_wrong'
 
 
+def classify_flag(observed, stated, rule) -> str:
+    """Verdict of a flag observed by the probe. When the scenario states nothing
+    about the flag, only the design can be wrong."""
+    if observed is None or (isinstance(observed, str) and observed not in ('0', '1')):
+        return 'design_wrong'                     # x / z on a flag output
+    if stated is None:
+        return 'pass' if int(observed) == rule else 'design_wrong'
+    return classify(observed, stated, rule, 1)
+
+
 def observed_value(status: str, got: Value, expected_used: Value, width: Optional[int] = None):
     """O: the log prints the observed value only on FAIL; on PASS it equals what
     the testbench compared against."""

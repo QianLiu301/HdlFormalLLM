@@ -15,7 +15,7 @@ const { chromium } = require('playwright');
     requirements_filepath: 'output/xdb_ui/requirements/req.json',
     bdd_filepath: 'output/xdb_ui/bdd/alu.feature',
     duv_filepath: 'output/xdb_ui/dut/alu_32bit.v',
-    testbench_path: 'output/xdb_ui/testbench/default/alu_tb.v',
+    testbench_path: 'output/testbench/default/xdb_ui_alu_tb.v',
     log_file: 'output/xdb_ui/simulation/alu.log',
     run_id: 'web_ui_test', workflow_mode: 'implementation'
   };
@@ -33,16 +33,23 @@ const { chromium } = require('playwright');
   }, paths);
   console.log('run-report ->', JSON.stringify(state));
   await page.waitForSelector('#sim-explain', { state: 'visible', timeout: 30000 });
-  await page.waitForSelector('.xp-slot .why-btn', { timeout: 10000 });
+  await page.waitForSelector('.xp-slot .why-btn', { state: 'attached', timeout: 10000 });
   const explain = await page.$('#sim-explain');
   await explain.scrollIntoViewIfNeeded();
   await explain.screenshot({ path: `${out}/m3_summary.png` });
   console.log('headline:', await page.textContent('#xp-headline'));
+  console.log('probe line:', await page.textContent('#xp-probe'));
+  await page.waitForSelector('#sim-cov-list .xp-why .why-btn', { timeout: 10000 });
+  console.log('coverage summary:', await page.textContent('#sim-cov-summary'));
+  console.log('coverage rows:', (await page.$$eval('#sim-cov-list tbody tr', rs => rs.map(r => r.cells[0].textContent + ' ' + r.cells[3].textContent.replace(/\s+/g, ' ').trim()))).join(' | '));
+  await page.locator('#sim-coverage').screenshot({ path: `${out}/p_coverage.png` });
   console.log('chips:', (await page.$$eval('#xp-verdicts .xp-chip', e => e.map(x => x.textContent))).join(' | '));
   console.log('spec:', (await page.$$eval('.xp-spec-item', e => e.map(x => x.textContent.trim()))).join(' || '));
   // the failing SUB scenario is open by default; its row 7 has a verdict chip and a Why? button
   const subRow = page.locator('.xp-slot[data-tag="BDD:ALU-SUB-001/r7"]');
   console.log('SUB r7 slot:', await subRow.textContent());
+  console.log('ADD r7 slot:', await page.locator('.xp-slot[data-tag="BDD:ALU-ADD-001/r7"]').textContent());
+  console.log('SLTU r4 slot:', await page.locator('.xp-slot[data-tag="BDD:ALU-SLTU-001/r4"]').textContent());
   const scn = page.locator('details.scn', { hasText: 'ALU-SUB-001' });
   await scn.screenshot({ path: `${out}/m3_rows.png` });
   await subRow.locator('.why-btn').click();
@@ -55,9 +62,10 @@ const { chromium } = require('playwright');
   await page.locator('.xp-dialog').screenshot({ path: `${out}/m3_why_global.png` });
   console.log('global:', (await page.textContent('#xp-text')).split('\n').filter(l => l.startsWith('Check')).join(''));
   await page.keyboard.press('Escape');
-  const reqBtn = page.locator('.xp-slot[data-req="REQ-2"] .why-btn');
+  const reqBtn = page.locator('#sim-cov-list tr', { hasText: 'REQ-4' }).locator('.why-btn');
   await reqBtn.click();
   await page.waitForFunction(() => !document.getElementById('xp-text').textContent.startsWith('Loading'));
+  await page.locator('.xp-dialog').screenshot({ path: `${out}/p_why_req.png` });
   console.log('requirement:', (await page.textContent('#xp-text')).split('\n').slice(0, 3).join(' / '));
   await page.keyboard.press('Escape');
   // mobile width: no horizontal scroll

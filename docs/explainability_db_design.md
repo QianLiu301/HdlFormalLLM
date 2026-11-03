@@ -43,6 +43,8 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D19 | Rules (operation semantics) come from a rule library written by us (provenance `human`, checked against the reference model); canonical-step predicates are expressions (SVA-compatible). Explanations are stored as structured data and rendered at display time, **in English only** (product output contains no Chinese; decided 2026-11-03) | 2026-11-03 |
 | D20 | v1 explanation modes: complete and **contrastive** (another observed row of the same scenario that behaved differently, as X₁,C in the BDX paper); solver-based counterfactuals later | 2026-11-03 |
 | D22 | Step 0 always asks, for ALU designs, what "overflow" means (signed overflow — the design template's definition, recommended — or unsigned carry/borrow). The answer goes into both prompts like every decision, and the rule library uses it as the overflow rule; without an answer the template's definition applies. Reason: the first field observation (DeepSeek, §6a) | 2026-11-03 |
+| D23 | **Flag probe.** Outputs the testbench does not compare (ALU zero / negative / overflow) are observed by a second simulation: a copy of the generated testbench with one `$display` per test after its settling delay — same DUT instance, clock and stimulus. Stored as its own testbench + sim_run (`probe_of` = the main run), judged per flag with O (probe), B (scenario, when stated) and R (flag rule); never part of the pass rate. The original testbench file is not touched. Rule values and verdicts are recomputed with the session's current overflow definition | 2026-11-03 |
+| D24 | **Requirement status by subject port.** A requirement is judged on the output it is about — the first output port its text names (rule, reproducible). Statuses: verified (testbench checks of that port all pass), verified_by_probe, fail, stated_only (nothing simulated the port), not_tested, not_covered. Replaces "all checks of the linked scenarios passed", which marked requirements about uncompared flags as verified | 2026-11-03 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -436,6 +438,7 @@ table; `(scenario_id)` on `check_item`, `step_mapping`; `(sim_run_id)` on
 | `sim_run` + duv_id | exact feature ↔ Verilog pair that was simulated |
 | `explanation_target` + feature_id, sim_run_id; `explanation` + structure | context of an explanation; structured storage (D19) |
 | `artifact` + encoding | compression later (D18) |
+| `sim_run` + probe_of (migration 0004) | links a flag-probe run to the main simulation it observes (D23) |
 | `duv` + compile_error (migration 0003) | first iverilog error of the Step-1 check; the only explanation when a design cannot be simulated |
 
 Values B, R, O are stored as exact unsigned integers masked to the port width
@@ -521,9 +524,13 @@ rendered with the row's values, plus expected vs. observed from
 - `explain.check_specification(feature)`: for each flag the scenarios state,
   every row against the rule, with the alternative meaning when all
   contradictions share one.
-- Step 4 page: section "Who Is Wrong? — Explanations" (headline, verdict
-  chips, specification check with Why?), a verdict chip and Why? on every
-  scenario row and requirement, explanation in a modal. English only.
+- Step 4 page: section "Who Is Wrong? — Explanations" (headline naming the
+  compared ports, verdict chips, the flag probe's result, specification check
+  with Why?), a verdict chip, flag-probe findings and Why? on every scenario
+  row, explanation in a modal. The requirements table takes its status from
+  D24 (with the subject port and the evidence: simulation or flag probe),
+  has its own Why? column, and shows "not compared" only for the requirement
+  it concerns. English only.
   Verified in headless Chromium (`tests/ui/explain_panel.js`), including a
   390 px wide viewport.
 

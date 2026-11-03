@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.4'   # v1.4: overflow rule follows the Step-0 decision
+ALGORITHM = 'bdx_v1.5'   # v1.5: flag probe results, requirement status by subject port
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -81,6 +81,124 @@ def _width_from_steps(s, feature_id: int, module_type: str) -> Optional[int]:
                     .where(M.Scenario.feature_id == feature_id,
                            M.CanonicalStep.params['key'].astext == 'ALU.P.WIDTH').limit(1)).first()
     return L.to_int((row[0] or {}).get('W', {}).get('lit')) if row else None
+
+
+def _probe_run_id(s, main_run_id: Optional[int]) -> Optional[int]:
+    if not main_run_id:
+        return None
+    return s.scalar(select(M.SimRun.id).where(M.SimRun.probe_of == main_run_id)
+                    .order_by(M.SimRun.id.desc()).limit(1))
+
+
+def _probe_results(s, probe_run_id: Optional[int]) -> Dict[Tuple[str, str], Dict]:
+    """(row tag, flag port) -> observation of the flag probe (src/xdb/probe.py).
+
+    The observation is a fact of the simulation; the rule value and the verdict
+    depend on which overflow definition applies, so they are recomputed with the
+    session's current one (a Step-0 answer may be recorded after the probe ran)."""
+    from src.xdb.verdict import classify_flag
+    if not probe_run_id:
+        return {}
+    pr = s.get(M.SimRun, probe_run_id)
+    tb = s.get(M.Testbench, pr.testbench_id)
+    sess = s.get(M.Session, tb.session_id)
+    design = s.get(M.Design, sess.design_id) if sess.design_id else None
+    mt = design.module_type if design else None
+    ov_mode, _ = _overflow_mode(s, sess.id)
+    out = {}
+    for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
+                            .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+                            .where(M.CheckResult.sim_run_id == probe_run_id)):
+        stim = ci.stimulus or {}
+        w = (design.bitwidth if design else None) or 32
+        R = L.flag_value(mt, ci.port, ci.operation, stim.get('a'), stim.get('b'), w, ov_mode)
+        if R is None:
+            continue
+        O, B = _int(cr.observed_value), _int(ci.expected_bdd)
+        raw = (cr.observed or {}).get(ci.port)
+        out[(ci.tag, ci.port)] = {'observed': O, 'stated': B, 'rule_value': R,
+                                  'verdict': classify_flag(O if O is not None else raw, B, R),
+                                  'raw': raw, 'scenario_id': ci.scenario_id,
+                                  'example_row_id': ci.example_row_id}
+    return out
+
+
+_OUTPUT_WORDS = ('result', 'zero', 'negative', 'overflow', 'carry')
+
+
+def requirement_subject(text: str, outputs: Optional[List[str]] = None) -> Optional[str]:
+    """The output a requirement is about: the first output port its text names
+    (rule, reproducible). "The zero output is 1 when the result is 0" is about
+    zero; "When opcode is ADD, result = a + b" is about result."""
+    import re
+    names = [o for o in (outputs or _OUTPUT_WORDS)]
+    best = None
+    for n in names:
+        m = re.search(rf'\b{re.escape(n)}\b', text or '', flags=re.I)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), n)
+    return best[1] if best else None
+
+
+def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
+    """Status of one requirement from the evidence that exists for its subject port.
+
+    verified           every check of the subject port in the linked scenarios passed (testbench)
+    verified_by_probe  the testbench does not compare the port; the flag probe observed it
+                       in every linked row and the design agrees with the rule
+    fail               some check / probe observation of the subject port is not a pass
+    stated_only        the scenarios state the port, nothing simulated it
+    not_tested         linked scenarios, but no check ran
+    not_covered        no scenario claims the requirement
+    """
+    outputs = [p.name for p in s.scalars(select(M.Port).where(M.Port.design_id == q.design_id,
+                                                              M.Port.direction == 'output'))]
+    subject = requirement_subject(q.text, [o for o in outputs if o in _OUTPUT_WORDS] or None)
+    links = s.execute(select(M.ScenarioRequirement, M.Scenario)
+                      .join(M.Scenario, M.Scenario.id == M.ScenarioRequirement.scenario_id)
+                      .where(M.ScenarioRequirement.requirement_id == q.id, M.Scenario.is_current)).all()
+    probe = _probe_results(s, _probe_run_id(s, sim_run_id))
+    scen, failing = [], []
+    main_ports_checked, main_n, probe_n = set(), 0, 0
+    for link, sc in links:
+        counts: Dict[str, int] = {}
+        res = s.execute(select(M.CheckItem, M.CheckResult)
+                        .join(M.CheckResult, (M.CheckResult.check_id == M.CheckItem.id)
+                              & (M.CheckResult.sim_run_id == sim_run_id))
+                        .where(M.CheckItem.scenario_id == sc.id)).all() if sim_run_id else []
+        for ci, cr in res:
+            main_ports_checked.add(ci.port)
+            if subject and ci.port and ci.port != subject:
+                continue
+            main_n += 1
+            k = cr.verdict or cr.status
+            counts[k] = counts.get(k, 0) + 1
+            if cr.status == 'fail':
+                failing.append({'tag': ci.tag, 'port': ci.port, 'verdict': cr.verdict, 'via': 'testbench'})
+        if subject and subject not in main_ports_checked:
+            for (tag, port), o in probe.items():
+                if port == subject and o['scenario_id'] == sc.id:
+                    probe_n += 1
+                    counts[o['verdict']] = counts.get(o['verdict'], 0) + 1
+                    if o['verdict'] != 'pass':
+                        failing.append({'tag': tag, 'port': port, 'verdict': o['verdict'], 'via': 'flag probe'})
+        scen.append({'scenario_key': sc.scenario_key, 'title': sc.title, 'method': link.method,
+                     'counts': counts})
+    compared = bool(subject is None or subject in main_ports_checked)
+    if not scen:
+        status, evidence = 'not_covered', None
+    elif failing:
+        status, evidence = 'fail', ('testbench' if compared else 'flag probe')
+    elif compared and main_n:
+        status, evidence = 'verified', 'testbench'
+    elif not compared and probe_n:
+        status, evidence = 'verified_by_probe', 'flag probe'
+    elif not compared:
+        status, evidence = 'stated_only', None
+    else:
+        status, evidence = 'not_tested', None
+    return {'subject': subject, 'compared_by_testbench': compared, 'status': status,
+            'evidence': evidence, 'scenarios': scen, 'failing': failing}
 
 
 def _call_summary(s, prov_ref: Optional[str]) -> Optional[Dict]:
@@ -141,7 +259,7 @@ def _latest_run_with(s, tag: str, session_id: Optional[int]) -> Optional[Tuple[M
          .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
          .join(M.SimRun, M.SimRun.id == M.CheckResult.sim_run_id)
          .join(M.Testbench, M.Testbench.id == M.CheckItem.testbench_id)
-         .where(M.CheckItem.tag == tag))
+         .where(M.CheckItem.tag == tag, M.Testbench.generator != 'probe'))
     if session_id:
         q = q.where(M.Testbench.session_id == session_id)
     r = s.execute(q.order_by(M.SimRun.id.desc(), M.CheckItem.seq).limit(1)).first()
@@ -191,9 +309,16 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         # Then steps no check of this row compares (e.g. ALU flags)
         compared = {c.port for c in s.scalars(select(M.CheckItem).where(
             M.CheckItem.testbench_id == ci.testbench_id, M.CheckItem.tag == ci.tag))}
-        unverified = []
+        unverified, probed = [], []
         ov_mode, _ = _overflow_mode(s, sess.id)
+        probe = _probe_results(s, _probe_run_id(s, run.id))
         for st in steps:
+            if st['role'] == 'Q' and st['port'] and st['port'] not in compared \
+                    and (ci.tag, st['port']) in probe:
+                o = probe[(ci.tag, st['port'])]
+                probed.append({'port': st['port'], 'stated': st['value'], 'observed': o['observed'],
+                               'raw': o['raw'], 'rule_value': o['rule_value'], 'verdict': o['verdict']})
+                continue
             if st['role'] == 'Q' and st['port'] and st['port'] not in compared:
                 # not simulated, but the scenario can still contradict the rule library
                 expect = (L.flag_value(mt, st['port'], ci.operation, stim.get('a'), stim.get('b'), width,
@@ -243,7 +368,7 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
             'rule': ({'op': rule['op'], 'expr': rule['expr'], 'text': rule['text'],
                       'value': rule_val, 'source': f'rule library {L.LIBRARY_VERSION}, hand-written'}
                      if rule else None),
-            'unverified': unverified, 'contrast': contrast,
+            'unverified': unverified, 'probed': probed, 'contrast': contrast,
             'provenance': {'scenario': _call_summary(s, sc.prov_ref) if sc else None,
                            'design': _call_summary(s, duv.prov_ref) if duv else None,
                            'design_origin': duv.origin if duv else None,
@@ -318,9 +443,20 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
         for m in matches:
             by_op[m['operation'] or '?'] = by_op.get(m['operation'] or '?', 0) + 1
         verified = s.scalar(select(M.CheckItem.id).join(M.Testbench)
-                            .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port)
+                            .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port,
+                                   M.Testbench.generator != 'probe')
                             .limit(1)) is not None
         flag_rule = L.flag_rule(mt, port, ov_mode, ov_basis if port == 'overflow' else None)
+        main_run = s.scalar(select(M.SimRun.id).join(M.Testbench)
+                            .where(M.Testbench.feature_id == feature_id, M.SimRun.probe_of.is_(None))
+                            .order_by(M.SimRun.id.desc()).limit(1))
+        probe_stats: Optional[Dict] = None
+        pr = [o for (tag, p_), o in _probe_results(s, _probe_run_id(s, main_run)).items() if p_ == port]
+        if pr:
+            probe_stats = {'rows': len(pr), 'design_agrees': sum(o['observed'] == o['rule_value'] for o in pr),
+                           'verdicts': {}}
+            for o in pr:
+                probe_stats['verdicts'][o['verdict']] = probe_stats['verdicts'].get(o['verdict'], 0) + 1
         judged = [m for m in matches if m['consistent'] is not None]
         contra = [m for m in judged if not m['consistent']]
         alt_names = {n for m in contra for n in m['alternatives']}
@@ -339,6 +475,7 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
                                 'feature_title': feat.title},
                      'matches': matches, 'match_count': len(matches), 'rows_total': total_rows,
                      'by_operation': by_op, 'verified_by_testbench': verified, 'rule_check': rule_check,
+                     'probe': probe_stats,
                      'rule': ({**flag_rule, 'source': f'rule library {L.LIBRARY_VERSION}, hand-written'}
                               if flag_rule else None),
                      'provenance': {'scenario': _call_summary(s, feat.prov_ref)}}
@@ -358,43 +495,19 @@ def explain_requirement(requirement_id: int, sim_run_id: Optional[int] = None,
         q = s.get(M.Requirement, requirement_id)
         if q is None:
             return None
-        links = s.execute(select(M.ScenarioRequirement, M.Scenario)
-                          .join(M.Scenario, M.Scenario.id == M.ScenarioRequirement.scenario_id)
-                          .where(M.ScenarioRequirement.requirement_id == q.id,
-                                 M.Scenario.is_current)).all()
         if sim_run_id is None:
             sim_run_id = s.scalar(select(M.SimRun.id).join(M.Testbench)
-                                  .where(M.Testbench.session_id == q.session_id)
+                                  .where(M.Testbench.session_id == q.session_id,
+                                         M.SimRun.probe_of.is_(None))
                                   .order_by(M.SimRun.id.desc()).limit(1))
-        scen, failing = [], []
-        for link, sc in links:
-            counts: Dict[str, int] = {}
-            res = s.execute(select(M.CheckItem, M.CheckResult)
-                            .join(M.CheckResult, (M.CheckResult.check_id == M.CheckItem.id)
-                                  & (M.CheckResult.sim_run_id == sim_run_id))
-                            .where(M.CheckItem.scenario_id == sc.id)).all()
-            for ci, cr in res:
-                k = cr.verdict or cr.status
-                counts[k] = counts.get(k, 0) + 1
-                if cr.status == 'fail':
-                    failing.append({'tag': ci.tag, 'verdict': cr.verdict})
-            scen.append({'scenario_key': sc.scenario_key, 'title': sc.title, 'method': link.method,
-                         'counts': counts})
-        if not scen:
-            status = 'not_covered'
-        elif failing:
-            status = 'fail'
-        elif not any(x['counts'] for x in scen):
-            status = 'not_tested'
-        else:
-            status = 'pass'
-        structure = {'kind': 'requirement', 'version': 1,
+        st = _requirement_status(s, q, sim_run_id)
+        structure = {'kind': 'requirement', 'version': 2,
                      'target': {'req_key': q.req_key, 'text': q.text},
-                     'status': status, 'scenarios': scen, 'failing': failing,
+                     **st,
                      'link_source': 'tag written by the model that generated the scenarios (not reviewed)'}
         ex = _store(s, {'subject_type': 'requirement', 'subject_id': q.id, 'scope': 'global',
                         'sim_run_id': sim_run_id, 'p_t': [], 'q_t': [{'requirement': q.req_key}]},
-                    structure, selected=[{'scenario_key': x['scenario_key']} for x in scen],
+                    structure, selected=[{'scenario_key': x['scenario_key']} for x in st['scenarios']],
                     evidence={'sim_run_id': sim_run_id, 'requirement_id': q.id})
         return _out(ex)
 
@@ -415,6 +528,12 @@ _SHORT = {'pass': 'pass', 'scenario_wrong': 'scenario wrong', 'design_wrong': 'd
           'fail': 'fail', 'not_covered': 'not covered'}
 
 _R_LINK = 'tag written by the model that generated the scenarios (not reviewed)'
+
+_REQ_STATUS = {'verified': 'verified by simulation',
+               'verified_by_probe': 'verified by the flag probe (the testbench does not compare it)',
+               'fail': 'failing', 'stated_only': 'stated in the scenarios, not simulated',
+               'not_tested': 'not tested', 'not_covered': 'not covered by any scenario',
+               'pass': 'pass'}
 
 
 def _num(v, width=None) -> str:
@@ -465,6 +584,15 @@ def render(st: Dict) -> str:
         src = (f"; scenario written by {pv['provider']} {pv['model']} (prompt {pv.get('prompt_version') or '?'})"
                if pv else '')
         lines.append(f"🔎 Evidence: check [{tg.get('tag')}], simulation #{ev.get('sim_run_id')}{src}")
+        if st.get('probed'):
+            parts = []
+            for x in st['probed']:
+                ok = x['verdict'] == 'pass'
+                obs = x['observed'] if x['observed'] is not None else x['raw']
+                parts.append(f"{x['port']} = {obs} {'✓' if ok else '✗ ' + _SHORT.get(x['verdict'], x['verdict'])}"
+                             f" (scenario {x['stated'] if x['stated'] is not None else '—'}, rule {x['rule_value']})")
+            lines.append("🔬 Flags, observed by a separate probe simulation (not part of the pass rate): "
+                         + '; '.join(parts))
         if st.get('unverified'):
             lines.append("⚠ Not verified: " + ', '.join(x['text'] for x in st['unverified'])
                          + " — stated in the scenario, but the testbench does not compare these")
@@ -520,14 +648,26 @@ def render(st: Dict) -> str:
                              f"{alt['name']} ({alt['text']}){also}. The specification seems to use "
                              f"\"{tg['port']}\" in that sense, unlike the rule"
                              f"{' (' + st['rule']['basis'] + ')' if (st.get('rule') or {}).get('basis') else ''}.")
+        pb = st.get('probe')
+        if pb:
+            lines += ['', f"🔬 Design output, observed by the flag probe: {tg['port']} agrees with the rule in "
+                          f"{pb['design_agrees']} of {pb['rows']} rows"
+                          + (f"; {pb['rows'] - pb['design_agrees']} differ." if pb['rows'] != pb['design_agrees'] else '.')]
         if not st.get('verified_by_testbench'):
-            lines += ['', f"⚠ The testbench never compares {tg['port']}, so these rows are stated, not verified."]
+            lines += ['', f"⚠ The testbench never compares {tg['port']}"
+                          + (", so the rows above are stated, checked by the probe only." if pb
+                             else ", so these rows are stated, not verified.")]
         return '\n'.join(lines)
 
     if kind == 'requirement':
         tg = st['target']
         lines = [f"Requirement {tg['req_key']}: {tg['text']}", '',
-                 f"Status: {_SHORT.get(st['status'], st['status'])}"]
+                 f"Status: {_REQ_STATUS.get(st['status'], st['status'])}"]
+        if st.get('subject'):
+            how = ('compared by the testbench' if st.get('compared_by_testbench')
+                   else 'not compared by the testbench' + ('; observed by the flag probe'
+                                                           if st.get('evidence') == 'flag probe' else ''))
+            lines.append(f"About: {st['subject']} (the first output the requirement names) — {how}.")
         if not st['scenarios']:
             lines.append('No scenario claims to cover this requirement.')
         for x in st['scenarios']:
@@ -535,7 +675,9 @@ def render(st: Dict) -> str:
             lines.append(f"  • {x['scenario_key']} {x['title'] or ''}: {cnt}")
         if st['failing']:
             lines.append('Failing checks: ' + ', '.join(
-                f"{f['tag']} → {_SHORT.get(f['verdict'], f['verdict'])}" for f in st['failing']))
+                f"{f['tag']}{' (' + f['port'] + ', ' + f['via'] + ')' if f.get('via') == 'flag probe' else ''}"
+                f" → {_SHORT.get(f['verdict'], f['verdict'])}" for f in st['failing'][:20])
+                + (f" … (+{len(st['failing']) - 20})" if len(st['failing']) > 20 else ''))
         lines.append(f'Links: {_R_LINK}')
         return '\n'.join(lines)
     return ''
@@ -546,7 +688,7 @@ def render(st: Dict) -> str:
 FLAG_PORTS = ('zero', 'negative', 'overflow')
 
 
-def check_specification(feature_id: int, url=None) -> List[Dict]:
+def check_specification(feature_id: int, sim_run_id: Optional[int] = None, url=None) -> List[Dict]:
     """For every flag the scenarios state, compare each row with the rule.
 
     This is a check of the specification itself: flags are usually not
@@ -592,15 +734,24 @@ def check_specification(feature_id: int, url=None) -> List[Dict]:
                             p['examples'].append({'scenario_key': sc.scenario_key, 'row_no': er.row_no,
                                                   'operation': op, 'a': a, 'b': b, 'stated': x['value'],
                                                   'rule_value': rule_v})
+        if sim_run_id is None:
+            sim_run_id = s.scalar(select(M.SimRun.id).join(M.Testbench)
+                                  .where(M.Testbench.feature_id == feature_id, M.SimRun.probe_of.is_(None))
+                                  .order_by(M.SimRun.id.desc()).limit(1))
+        probe = _probe_results(s, _probe_run_id(s, sim_run_id))
         out = []
         for port, p in per.items():
             alts = p.pop('_alts')
+            pr = [o for (tag, p_), o in probe.items() if p_ == port]
+            p['probe'] = ({'rows': len(pr), 'design_agrees': sum(o['observed'] == o['rule_value'] for o in pr)}
+                          if pr else None)
             alternative = None
             for name in sorted({n for x in alts for n in x}):
                 if alts and all(name in x for x in alts):
                     alternative = {**L.alternative_by_name(name), 'explains': len(alts)}
             verified = s.scalar(select(M.CheckItem.id).join(M.Testbench)
-                                .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port)
+                                .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port,
+                                       M.Testbench.generator != 'probe')
                                 .limit(1)) is not None
             out.append({**p, 'alternative': alternative, 'verified_by_testbench': verified,
                         'rule': L.flag_rule(mt, port, ov_mode, ov_basis if port == 'overflow' else None)})
@@ -623,8 +774,12 @@ def render_spec_check(items: List[Dict]) -> List[str]:
             n = it['contradicting']
             lines.append(f"{head}; {n} of {it['judged']} contradict{'s' if n == 1 else ''} the rule"
                          + (f" — all of them match {alt['name']} ({alt['text']})" if alt else '') + '.')
-        if not it['verified_by_testbench']:
-            lines[-1] += ' Not compared by the testbench.'
+        pb = it.get('probe')
+        if not it['verified_by_testbench'] and pb:
+            lines[-1] += (f" Not compared by the testbench; the flag probe saw the design agree with the rule "
+                          f"in {pb['design_agrees']} of {pb['rows']} rows.")
+        elif not it['verified_by_testbench']:
+            lines[-1] += ' Not compared by the testbench, and not simulated.'
     return lines
 
 
@@ -658,16 +813,40 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
             verdicts[key] = verdicts.get(key, 0) + 1
             if ci.seq == 1:
                 checks[ci.tag] = {'verdict': cr.verdict, 'status': cr.status}
-        reqs = [{'req_key': q.req_key, 'requirement_id': q.id} for q in s.scalars(
-            select(M.Requirement).where(M.Requirement.session_id == sess.id, M.Requirement.is_current)
-            .order_by(M.Requirement.id))]
+        reqs = []
+        for q in s.scalars(select(M.Requirement).where(M.Requirement.session_id == sess.id,
+                                                       M.Requirement.is_current).order_by(M.Requirement.id)):
+            rs = _requirement_status(s, q, run.id)
+            reqs.append({'req_key': q.req_key, 'requirement_id': q.id, 'status': rs['status'],
+                         'subject': rs['subject'], 'compared_by_testbench': rs['compared_by_testbench'],
+                         'evidence': rs['evidence'],
+                         'failing_verdicts': sorted({f['verdict'] for f in rs['failing'] if f['verdict']})})
+        prid = _probe_run_id(s, run.id)
+        probe_info = None
+        if prid:
+            pr = s.get(M.SimRun, prid)
+            pv: Dict[str, int] = {}
+            issues: Dict[str, List[Dict]] = {}
+            per_port: Dict[str, Dict[str, int]] = {}
+            for (tag, port), o in _probe_results(s, prid).items():
+                pv[o['verdict']] = pv.get(o['verdict'], 0) + 1
+                pp = per_port.setdefault(port, {'rows': 0, 'design_agrees': 0})
+                pp['rows'] += 1
+                pp['design_agrees'] += int(o['observed'] == o['rule_value'])
+                if o['verdict'] != 'pass':
+                    issues.setdefault(tag, []).append({'port': port, 'verdict': o['verdict']})
+            probe_info = {'sim_run_id': prid, 'status': pr.status, 'verdicts': pv,
+                          'per_port': per_port, 'issues': issues}
+        compared_ports = sorted({c for c in s.scalars(select(M.CheckItem.port)
+                                                      .where(M.CheckItem.testbench_id == tbrow.id)) if c})
         feature_id, session_id, sim_run_id = tbrow.feature_id, sess.id, run.id
         mt = design.module_type if design else None
         design_name = design.name if design else None
-    spec = check_specification(feature_id, url=url) if feature_id else []
+    spec = check_specification(feature_id, sim_run_id=sim_run_id, url=url) if feature_id else []
     return {'sim_run_id': sim_run_id, 'session_id': session_id, 'feature_id': feature_id,
             'design': design_name, 'module_type': mt,
             'has_rule_library': L.library_for(mt) is not None,
             'verdicts': verdicts, 'checks': checks, 'requirements': reqs,
+            'compared_ports': compared_ports, 'probe': probe_info,
             'spec_check': spec, 'spec_check_text': render_spec_check(spec),
             'algorithm': ALGORITHM}
