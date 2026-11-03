@@ -436,6 +436,7 @@ class FeatureParser:
         self.stats = {
             'rows_dropped_malformed': 0,   # Examples 行的列数与表头不符
             'scenarios_unmapped': 0,       # tag 无法对应到任何已知操作
+            'rows_unmapped': 0,            # 块级操作不明，且该行 Operation 列也认不出
             'scenarios_plain': 0,          # 普通 Scenario（非 Outline），解析器读不了
             'outlines_total': 0,           # 文件里 Scenario Outline 的总数
             'examples_tables': 0,          # Examples: 表的总数
@@ -587,7 +588,7 @@ class FeatureParser:
             # 根据模块类型和 tag 确定操作
             if self.module_type in ALU_LIKE_TYPES:
                 operation, opcode = self._get_alu_operation(tag, block_content)
-                if operation is None:
+                if operation is None and not self._rows_name_alu_operation(block_content):
                     # 认不出来就跳过，不再伪造成 ADD。伪造出的测试因为期望值
                     # 也会被算成 ADD，在 golden 上必然通过，既抬高 test count
                     # 又用无意义的用例稀释 mutation score。
@@ -666,6 +667,12 @@ class FeatureParser:
                     elif self.module_type in ALU_LIKE_TYPES and operation:
                         scenario['operation'] = operation
                         scenario['opcode'] = opcode
+                    elif self.module_type in ALU_LIKE_TYPES:
+                        # 块级操作不明（只因各行自带 Operation 列才没被跳过），
+                        # 这一行又没写出可识别的操作：没有 opcode 可用，丢弃，
+                        # 不替它挑一个。
+                        self.stats['rows_unmapped'] += 1
+                        continue
                     elif self.module_type == 'counter':
                         scenario['mode'] = opcode
                     elif self.module_type == 'regfile':
@@ -732,22 +739,120 @@ class FeatureParser:
             if len(opcode) == 4 and all(c in '01' for c in opcode):
                 return (tag.upper(), opcode)
 
-        # tag 认不出来时退回场景正文。block_content 此前是收了不用的参数，
-        # 于是不带 tag 的 Scenario Outline（合法 Gherkin）必然解析失败。
-        # 先看标题行再看整段，都按名字从长到短匹配 —— 与上面同一套纪律，
-        # 否则 'or' 会先于 'xor' 命中、'slt' 先于 'sltu' 命中。
+        # tag 认不出来时退回场景正文（不带 tag 的 Scenario Outline 是合法
+        # Gherkin）。正文是英语，规则见 _alu_operation_from_prose。
         if block_content:
-            title = block_content.splitlines()[0].lower() if block_content.strip() else ''
-            for scope in (title, block_content.lower()):
-                if not scope:
-                    continue
-                for op_name in sorted(operation_map, key=len, reverse=True):
-                    if re.search(rf'(?<![a-z0-9]){op_name}(?![a-z0-9])', scope):
-                        return operation_map[op_name]
+            return self._alu_operation_from_prose(block_content, operation_map)
 
         # 认不出来就说认不出来。此前这里默默返回 ADD/0000，等于凭空造出
         # 一批测试，调用方无从知晓。
         return (None, None)
+
+    # ---- 从标题 / When 步骤推断操作 ---------------------------------------
+    # 正文是英语，16 个助记符里有 6 个同时是英语单词（add sub and or not nor）。
+    # 此前在标题和整段正文里按普通单词匹配，于是 "Compare signed and unsigned
+    # less-than" 被认成 AND；连 Gherkin 的步骤关键字 And 也会命中——一个只剩
+    # Examples 表的场景，每一行都变成 AND 测试。这类测试常常在 golden 上通过
+    # （期望列缺失时期望值按 0 算，x & 0 = 0），场景看起来测过了，其实什么也
+    # 没测，还抬高 test count、稀释 mutation score。
+    #
+    # 现在只在"操作语境"里认名字，分强弱两级：
+    #   强  "<name> operation(s)"，任意大小写："the add operation"、"Xor Operation"。
+    #       and/or/nor/not 是英语虚词（"reset and operation"），小写时须前接
+    #       the/a/an/bitwise/logical。
+    #   强  opcode 字面量："with opcode 1000"、"opcode 4'b1001"、"opcode 0x9"，
+    #       按标准映射表反查。
+    #   弱  大写助记符："Bitwise AND of all-ones"、"(SLT)"。NOT 除外：它常被
+    #       大写来表示强调（"must NOT overflow"），且不是 DUT 支持的操作。
+    # 只看标题和 When 步骤（含紧随其后的 And/But）：Gherkin 里被测动作写在
+    # When 中；Given/Then 描述操作数与观测结果，英语连接词都出现在那里。步骤
+    # 关键字本身不参与匹配。
+    #
+    # 判定：有强证据就只用强证据，否则用弱证据；恰好指向一个操作才采纳。指向
+    # 多个（"SLT against SLTU"、"ADD operation with opcode 0001"）属于有歧义，
+    # 返回 None——宁可 unmapped，也不替场景挑一个操作。
+    _FUNCTION_WORD_OPS = frozenset({'and', 'or', 'nor', 'not'})
+    _OP_QUALIFIERS = frozenset({'the', 'a', 'an', 'bitwise', 'logical'})
+    _STEP_RE = re.compile(r'(Given|When|Then|And|But|\*)(?:\s+|$)(.*)')
+    # 场景内容到此为止：Examples 表，或下一个场景级元素（block_content 会一直
+    # 延伸到下一个 Scenario Outline，中间可能夹着普通 Scenario）
+    _SCENARIO_END_RE = re.compile(
+        r'(?:Examples|Scenarios|Scenario|Scenario Outline|Example|Rule|'
+        r'Background|Feature)\s*:|@')
+    _OPCODE_LITERAL_RE = re.compile(
+        r"\bopcode\s*(?:[:=]|of|is)?\s*(?:4'b([01]{4})|([01]{4})|0x0*([0-9a-f]))\b",
+        re.IGNORECASE)
+
+    def _alu_operation_from_prose(self, block_content: str,
+                                  operation_map: Dict) -> Tuple:
+        lines = block_content.splitlines()
+        if not lines:
+            return (None, None)
+        scopes = [lines[0]]                    # 标题
+        in_when = False
+        for line in lines[1:]:
+            s = line.strip()
+            if not s or s.startswith('#'):
+                continue
+            if self._SCENARIO_END_RE.match(s):
+                break
+            m = self._STEP_RE.match(s)
+            if not m:
+                continue                       # 描述行、步骤表格、doc string
+            if m.group(1) in ('Given', 'When', 'Then'):
+                in_when = m.group(1) == 'When'
+            if in_when:
+                scopes.append(m.group(2))
+
+        by_opcode = {code: (name, code) for name, code in operation_map.values()}
+        strong, weak = set(), set()
+        for text in scopes:
+            for name in operation_map:
+                for m in re.finditer(rf'(?<![A-Za-z0-9]){name}\s+operations?\b',
+                                     text, re.IGNORECASE):
+                    word = m.group(0)[:len(name)]
+                    if name in self._FUNCTION_WORD_OPS and word != name.upper():
+                        before = re.findall(r'[A-Za-z]+', text[:m.start()])
+                        if not before or before[-1].lower() not in self._OP_QUALIFIERS:
+                            continue
+                    strong.add(name)
+                if name != 'not' and re.search(
+                        rf'(?<![A-Za-z0-9]){name.upper()}(?![A-Za-z0-9])', text):
+                    weak.add(name)
+            for m in self._OPCODE_LITERAL_RE.finditer(text):
+                bits = m.group(1) or m.group(2) or format(int(m.group(3), 16), '04b')
+                if bits in by_opcode:
+                    strong.add(by_opcode[bits][0].lower())
+
+        chosen = strong or weak
+        if len(chosen) == 1:
+            return operation_map[chosen.pop()]
+        return (None, None)
+
+    # 与 _extract_scenarios 里的 examples_pattern 相同
+    _EXAMPLES_RE = r'Examples?:\s*\n((?:\s*\|.*\n)+)'
+
+    def _rows_name_alu_operation(self, block_content: str) -> bool:
+        """Examples 表里是否至少有一行用 Operation 列写明了可识别的操作。
+
+        这种场景（prompt 模板里的「SLT 对比 SLTU」就是）每行自带操作，块级
+        操作只是兜底。块级操作认不出来时，它仍然可测：逐行用自己的操作，写
+        不出可识别操作的行丢弃。若因为标题认不出就整段跳过，这些本来映射
+        正确的行会一起丢掉。
+        """
+        for match in re.finditer(self._EXAMPLES_RE, block_content, re.MULTILINE):
+            rows = [row.strip() for row in match.group(1).strip().split('\n')]
+            if len(rows) < 2:
+                continue
+            header = [col.strip().lower() for col in rows[0].split('|') if col.strip()]
+            if 'operation' not in header:
+                continue
+            k = header.index('operation')
+            for row in rows[1:]:
+                cols = [col.strip() for col in row.split('|') if col.strip()]
+                if len(cols) == len(header) and self._get_alu_operation(cols[k], '')[0]:
+                    return True
+        return False
 
     def _get_counter_mode(self, tag: str) -> str:
         """Get counter mode from tag"""
@@ -927,9 +1032,11 @@ class TestbenchGenerator:
 
         if st.get('scenarios_unmapped', 0):
             return (head + f"All {st['scenarios_unmapped']} scenarios were skipped "
-                    f"because their tags/titles name no operation known for module "
-                    f"type '{spec.get('module_type')}'. Check that Step 3's module "
-                    "type matches what the BDD actually describes.")
+                    f"because their tags, titles and When steps name no single "
+                    f"operation known for module type '{spec.get('module_type')}'. "
+                    "Check that Step 3's module type matches what the BDD actually "
+                    "describes, and that each scenario is tagged with its operation "
+                    "(e.g. @sltu).")
 
         if st.get('rows_dropped_malformed', 0):
             return (head + f"Every Examples row was dropped: {st['rows_dropped_malformed']} "
