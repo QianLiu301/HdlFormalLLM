@@ -45,6 +45,7 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D22 | Step 0 always asks, for ALU designs, what "overflow" means (signed overflow — the design template's definition, recommended — or unsigned carry/borrow). The answer goes into both prompts like every decision, and the rule library uses it as the overflow rule; without an answer the template's definition applies. Reason: the first field observation (DeepSeek, §6a) | 2026-11-03 |
 | D23 | **Flag probe.** Outputs the testbench does not compare (ALU zero / negative / overflow) are observed by a second simulation: a copy of the generated testbench with one `$display` per test after its settling delay — same DUT instance, clock and stimulus. Stored as its own testbench + sim_run (`probe_of` = the main run), judged per flag with O (probe), B (scenario, when stated) and R (flag rule); never part of the pass rate. The original testbench file is not touched. Rule values and verdicts are recomputed with the session's current overflow definition | 2026-11-03 |
 | D24 | **Requirement status by subject port.** A requirement is judged on the output it is about — the first output port its text names (rule, reproducible). Statuses: verified (testbench checks of that port all pass), verified_by_probe, fail, stated_only (nothing simulated the port), not_tested, not_covered. Replaces "all checks of the linked scenarios passed", which marked requirements about uncompared flags as verified | 2026-11-03 |
+| D25 | **Plain-language first.** Step 4 opens with a Problems card: "No problems found" or "N problems found", one line per problem (grouped by operation, concrete inputs and values, who is at fault: design / scenario / not tested / coverage), a Details button, and one line "What was checked". No internal ids (scenario keys, check tags, REQ numbers) in it. The detailed sections fold into "Technical details". Explanations carry a plain rendering (`render_plain`) shown first; the technical text is behind a toggle. A requirement whose scenarios produced no tests is "not tested" (whether an output is compared is decided by the whole testbench) | 2026-11-03 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -533,6 +534,24 @@ rendered with the row's values, plus expected vs. observed from
   it concerns. English only.
   Verified in headless Chromium (`tests/ui/explain_panel.js`), including a
   390 px wide viewport.
+
+---
+
+## 6c. Plain-language view (D25)
+
+`explain.build_problems` turns one simulation into a list of problems,
+most severe first: design wrong (per operation, with one example and the
+count), scenario wrong (wrong expected result, wrong flag), the design
+repeating a scenario's mistake, flags wrong in the design (rows whose result
+is already wrong are folded into that problem as "a consequence"), scenarios
+the generator skipped (its reason translated, `plain_reason`) together with
+the requirement they leave untested, and requirements no scenario covers.
+`summarize_run` returns it with an overview; `/api/explain/*` return
+`plain` next to `text`.
+
+Known limitation found while testing: the testbench generator's operation
+detection falls back to words in the scenario title, so a title such as
+"Compare signed and unsigned …" is tested as AND.
 
 ---
 

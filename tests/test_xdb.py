@@ -754,3 +754,74 @@ def test_explain_api(run, db, monkeypatch):
     monkeypatch.delenv('DATABASE_URL')
     monkeypatch.setenv('XDB_DISABLE_DOTENV', '1')
     assert c.post('/api/explain/summary', json=body).get_json() == {'success': True, 'enabled': False}
+
+
+# ---------------------------------------------------------------- plain problems list
+
+def test_problems_list_in_plain_words(run, db):
+    from src.xdb.explain import summarize_run
+    proj, paths = run
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    probs = s['problems']
+    titles = [p['title'] for p in probs]
+    assert titles[0] == 'The design computes SLTU wrong'                  # most severe first
+    assert 'A scenario expects a wrong SUB result' in titles
+    assert 'A scenario expects a wrong SRA result' in titles
+    assert 'A scenario states a wrong zero flag for ADD' in titles
+    assert 'A requirement is not tested by any scenario' in titles         # REQ-3
+    assert s['overview']['ok'] is False and s['overview']['counts']['design'] == 1
+    # no internal ids in what the user reads first
+    for p in probs:
+        for field in (p['title'], p['detail']):
+            assert 'ALU-' not in field and 'BDD:' not in field and 'REQ-' not in field
+    sub = next(p for p in probs if 'SUB' in p['title'])
+    assert 'A = 50, B = 100' in sub['detail'] and 'The design is right' in sub['detail']
+
+
+def test_plain_explanation_has_no_ids(run, db):
+    from src.xdb.explain import explain_check
+    pl = explain_check('ALU-SUB-001/r7', sim_run_id=_run1(), url=db)['plain']
+    assert pl['title'] == 'SUB with A = 50, B = 100'
+    assert pl['lines'][0].startswith('The scenario is wrong, not the design.')
+    assert 'modulo 2^32' in ' '.join(pl['lines'])
+    assert not any('ALU-' in l or 'BDD:' in l or '#' in l for l in pl['lines'])
+
+
+def test_scenario_without_tests_makes_its_requirement_not_tested(run, db):
+    """A scenario the generator cannot turn into tests leaves its requirement
+    'not tested' -- not 'not compared by the testbench' (the testbench does
+    compare result, just not for this scenario)."""
+    import json as _json
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.explain import summarize_run
+    from src.xdb.ingest import ingest_run
+    proj, paths = run
+    out = proj / 'output'
+    feat = (out / 'bdd/alu.feature').read_text(encoding='utf-8') + (
+        '\n  @req_4\n  Scenario: Verify SLT against SLTU on the same operands\n'
+        '    Given I have operand A = 4294967295\n    When I perform the SLT operation with opcode 1000\n'
+        '    Then the result should be 1\n')
+    (out / 'bdd/alu_untested.feature').write_text(feat, encoding='utf-8')
+    rec = _json.loads((out / 'requirements/req.json').read_text(encoding='utf-8'))
+    rec['requirements'].append({'id': 'REQ-4', 'text': 'For SLT, result is 1 when A < B as signed values.',
+                                'source': 'llm'})
+    (out / 'requirements/req_untested.json').write_text(_json.dumps(rec), encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/alu_untested.feature'),
+        {'module_type': 'alu', 'module_name': 'alu_32bit', 'bitwidth': 32}, output_filename='untested_tb.v')
+    vvp = proj / 'untested.vvp'
+    subprocess.run(['iverilog', '-g2012', '-o', str(vvp), tb['filepath'], str(out / 'dut/alu_32bit.v')],
+                   check=True, cwd=proj)
+    log = subprocess.run(['vvp', str(vvp)], capture_output=True, text=True, cwd=proj,
+                         encoding='utf-8', errors='replace').stdout
+    (out / 'simulation/untested.log').write_text(log, encoding='utf-8')
+    p2 = {'requirements': 'output/requirements/req_untested.json', 'bdd': 'output/bdd/alu_untested.feature',
+          'duv': paths['duv'], 'testbench': str(Path(tb['filepath']).relative_to(proj)),
+          'log': 'output/simulation/untested.log'}
+    assert ingest_run(proj, p2, run_id='web_untested', url=db)['new']
+    s = summarize_run(proj, {'testbench_path': p2['testbench'], 'log_file': p2['log']}, url=db)
+    req4 = next(r for r in s['requirements'] if r['req_key'] == 'REQ-4')
+    assert (req4['status'], req4['compared_by_testbench']) == ('not_tested', True)
+    nt = next(p for p in s['problems'] if p['who'] == 'test')
+    assert nt['title'] == 'Not tested: “Verify SLT against SLTU on the same operands”'
+    assert 'without an Examples table' in nt['detail'] and 'For SLT, result is 1' in nt['detail']

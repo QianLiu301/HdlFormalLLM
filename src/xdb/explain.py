@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.5'   # v1.5: flag probe results, requirement status by subject port
+ALGORITHM = 'bdx_v1.6'   # v1.6: requirement 'compared' decided by the whole testbench
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -119,7 +119,8 @@ def _probe_results(s, probe_run_id: Optional[int]) -> Dict[Tuple[str, str], Dict
         out[(ci.tag, ci.port)] = {'observed': O, 'stated': B, 'rule_value': R,
                                   'verdict': classify_flag(O if O is not None else raw, B, R),
                                   'raw': raw, 'scenario_id': ci.scenario_id,
-                                  'example_row_id': ci.example_row_id}
+                                  'example_row_id': ci.example_row_id,
+                                  'operation': ci.operation, 'stimulus': stim}
     return out
 
 
@@ -158,8 +159,13 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
                       .join(M.Scenario, M.Scenario.id == M.ScenarioRequirement.scenario_id)
                       .where(M.ScenarioRequirement.requirement_id == q.id, M.Scenario.is_current)).all()
     probe = _probe_results(s, _probe_run_id(s, sim_run_id))
-    scen, failing = [], []
-    main_ports_checked, main_n, probe_n = set(), 0, 0
+    run = s.get(M.SimRun, sim_run_id) if sim_run_id else None
+    # Which outputs the testbench compares is a property of the whole testbench: a
+    # scenario that produced no checks does not make "result" uncompared.
+    tb_ports = ({c for c in s.scalars(select(M.CheckItem.port).where(M.CheckItem.testbench_id == run.testbench_id))
+                 if c} if run else set())
+    scen, failing, untested = [], [], []
+    main_ports_checked, main_n, probe_n = set(tb_ports), 0, 0
     for link, sc in links:
         counts: Dict[str, int] = {}
         res = s.execute(select(M.CheckItem, M.CheckResult)
@@ -184,11 +190,15 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
                         failing.append({'tag': tag, 'port': port, 'verdict': o['verdict'], 'via': 'flag probe'})
         scen.append({'scenario_key': sc.scenario_key, 'title': sc.title, 'method': link.method,
                      'counts': counts})
+        if not counts:
+            untested.append({'scenario_key': sc.scenario_key, 'title': sc.title})
     compared = bool(subject is None or subject in main_ports_checked)
     if not scen:
         status, evidence = 'not_covered', None
     elif failing:
         status, evidence = 'fail', ('testbench' if compared else 'flag probe')
+    elif untested and len(untested) == len(scen):
+        status, evidence = 'not_tested', None
     elif compared and main_n:
         status, evidence = 'verified', 'testbench'
     elif not compared and probe_n:
@@ -198,6 +208,7 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
     else:
         status, evidence = 'not_tested', None
     return {'subject': subject, 'compared_by_testbench': compared, 'status': status,
+            'untested_scenarios': untested,
             'evidence': evidence, 'scenarios': scen, 'failing': failing}
 
 
@@ -249,7 +260,8 @@ def _store(s, target: Dict, structure: Dict, selected: List, evidence: Dict,
 
 
 def _out(ex: M.Explanation) -> Dict:
-    return {'explanation_id': ex.id, 'structure': ex.structure, 'text': render(ex.structure)}
+    return {'explanation_id': ex.id, 'structure': ex.structure, 'text': render(ex.structure),
+            'plain': render_plain(ex.structure)}
 
 
 # ----------------------------------------------------------------- local
@@ -818,6 +830,7 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
                                                        M.Requirement.is_current).order_by(M.Requirement.id)):
             rs = _requirement_status(s, q, run.id)
             reqs.append({'req_key': q.req_key, 'requirement_id': q.id, 'status': rs['status'],
+                         'text': q.text, 'untested_scenarios': rs.get('untested_scenarios') or [],
                          'subject': rs['subject'], 'compared_by_testbench': rs['compared_by_testbench'],
                          'evidence': rs['evidence'],
                          'failing_verdicts': sorted({f['verdict'] for f in rs['failing'] if f['verdict']})})
@@ -843,10 +856,334 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
         mt = design.module_type if design else None
         design_name = design.name if design else None
     spec = check_specification(feature_id, sim_run_id=sim_run_id, url=url) if feature_id else []
+    from src import scenario_results as _sr
+    try:
+        sr = _sr.summarize_for_testbench(tb, log.read_text(encoding='utf-8', errors='replace'))
+    except Exception:
+        sr = None
+    with xdb.session_scope(url) as s:
+        problems, overview = build_problems(s, sim_run_id, sr, reqs, spec)
     return {'sim_run_id': sim_run_id, 'session_id': session_id, 'feature_id': feature_id,
             'design': design_name, 'module_type': mt,
             'has_rule_library': L.library_for(mt) is not None,
             'verdicts': verdicts, 'checks': checks, 'requirements': reqs,
             'compared_ports': compared_ports, 'probe': probe_info,
             'spec_check': spec, 'spec_check_text': render_spec_check(spec),
+            'problems': problems, 'overview': overview,
             'algorithm': ALGORITHM}
+
+
+
+# ----------------------------------------------------------------- plain language
+# What a user sees first: no internal ids (scenario keys, check tags, run
+# numbers), one short sentence per point. The technical rendering above stays
+# available behind "Technical details".
+
+_PLAIN_REASON = {
+    'tag maps to no known ALU operation':
+        'the tool could not tell which single operation it tests, so it made no tests from it',
+    'tag maps to no known register-file operation':
+        'the tool could not tell which register-file operation it tests, so it made no tests from it',
+    'no Examples rows': 'it has no Examples table, so there was nothing to test',
+    'rows malformed (column count differs from header)':
+        'its Examples rows do not match the table header, so they could not be read',
+    'plain Scenario without an Examples table':
+        'it is a plain scenario without an Examples table; only Scenario Outlines are turned into tests',
+    'no assertion was generated': 'no test could be generated from its rows',
+}
+
+
+def plain_reason(reason: Optional[str]) -> str:
+    if not reason:
+        return 'no test could be generated from it'
+    for k, v in _PLAIN_REASON.items():
+        if reason.startswith(k):
+            return v
+    return reason
+
+
+def _pv(v, w=None) -> str:
+    """A value as a user reads it: decimal, plus hex when it is wide."""
+    if v is None:
+        return '—'
+    if isinstance(v, str):
+        return v
+    if w and w > 8 and v >= 1 << 8:
+        return f'{v} (0x{v:0{(w + 3) // 4}X})'
+    return str(v)
+
+
+def _with_width(text: str, w: Optional[int]) -> str:
+    if not w:
+        return text
+    return text.replace('2^W', f'2^{w}').replace('log2(W)', str((w - 1).bit_length()))
+
+
+def _inputs(op, stim, w) -> str:
+    stim = stim or {}
+    return f"{op or 'operation'} with A = {_pv(stim.get('a'), w)}, B = {_pv(stim.get('b'), w)}"
+
+
+_FLAG_WORD = {'zero': 'zero flag', 'negative': 'negative flag', 'overflow': 'overflow flag'}
+
+
+def plain_local(st: Dict) -> Dict:
+    v, vals, w = st.get('verdict'), st['values'], st['values'].get('width')
+    O, B, R = vals.get('observed'), vals.get('expected_bdd'), vals.get('expected_ref')
+    title = _inputs(st.get('operation'), st.get('stimulus'), w)
+    port = st['target'].get('port') or 'result'
+    lines = []
+    if v == 'pass':
+        lines.append(f'Correct: the design gives {port} = {_pv(O, w)}, as the scenario expects.')
+    elif v == 'scenario_wrong':
+        lines.append(f'The scenario is wrong, not the design. The scenario expects {_pv(B, w)}, '
+                     f'but the correct {port} is {_pv(R, w)} — and that is what the design gives.')
+    elif v == 'design_wrong':
+        lines.append(f'The design is wrong. It gives {port} = {_pv(O, w)}; the correct value is '
+                     f'{_pv(R, w)}, as the scenario expects.')
+    elif v == 'both_wrong':
+        lines.append(f'Both are wrong: the scenario expects {_pv(B, w)}, the design gives {_pv(O, w)}, '
+                     f'the correct value is {_pv(R, w)}.')
+    elif v == 'consistent_wrong':
+        lines.append(f'The test passed, but scenario and design are wrong in the same way: both say '
+                     f'{_pv(O, w)}, the correct value is {_pv(R, w)}.')
+    elif v == 'undecided':
+        lines.append(f'There is no reference rule for this design type. Expected {_pv(B, w)}, '
+                     f'the design gave {_pv(O, w)}.')
+    else:
+        lines.append('This check was not executed.')
+    r = st.get('rule')
+    if r and v not in ('pass', None):
+        lines.append(f"Why {_pv(R, w)}: {_with_width(r['text'], w)}.")
+    c = st.get('contrast')
+    if c and v not in ('pass', None):
+        lines.append(f"For comparison, {_inputs(st.get('operation'), c.get('stimulus'), w)} "
+                     f"{'passed' if c['status'] == 'pass' else 'failed'}.")
+    flags = st.get('probed') or []
+    bad = [x for x in flags if x['verdict'] != 'pass']
+    if flags and not bad:
+        lines.append('Flags (' + ', '.join(_FLAG_WORD.get(x['port'], x['port']) for x in flags)
+                     + ') are correct.')
+    for x in bad:
+        word = _FLAG_WORD.get(x['port'], x['port'])
+        obs = x['observed'] if x['observed'] is not None else x['raw']
+        if x['verdict'] == 'scenario_wrong':
+            lines.append(f"The scenario states the {word} as {x['stated']}, but it should be "
+                         f"{x['rule_value']} — the design gives {obs}, which is correct.")
+        elif x['verdict'] == 'design_wrong':
+            lines.append(f"The design's {word} is {obs}, but it should be {x['rule_value']}"
+                         + (' — a consequence of the wrong result.' if v in ('design_wrong', 'both_wrong') else '.'))
+        else:
+            lines.append(f"The {word}: scenario {x['stated']}, design {obs}, correct {x['rule_value']}.")
+    unv = st.get('unverified') or []
+    if unv:
+        lines.append('Not checked: ' + ', '.join(x['text'] for x in unv) + '.')
+    return {'title': title, 'verdict': v, 'lines': lines}
+
+
+def plain_global(st: Dict) -> Dict:
+    tg = st['target']
+    word = _FLAG_WORD.get(tg['port'], tg['port'])
+    title = f"When is the {word} {1 if str(tg['value']).lower() in ('1', 'true') else 0}?"
+    lines = []
+    if st.get('rule'):
+        lines.append(f"Rule: {st['rule']['text']}.")
+    rc = st.get('rule_check') or {}
+    n = st.get('match_count', 0)
+    if not n:
+        lines.append('No example in the scenarios states this.')
+    elif rc.get('judged'):
+        bad = rc.get('contradicting', 0)
+        lines.append(f'The scenarios state it in {n} examples; '
+                     + ('all of them agree with the rule.' if not bad
+                        else f'{bad} of them contradict the rule.'))
+    for m in [m for m in st.get('matches', []) if m.get('consistent') is False][:3]:
+        lines.append(f"Wrong: {m['operation']} — {'; '.join(m['P'])}.")
+    if rc.get('missed_count'):
+        lines.append(f"{rc['missed_count']} more examples should state it but do not.")
+    alt = rc.get('alternative')
+    if alt:
+        lines.append(f"The scenarios seem to use “{tg['port']}” to mean {alt['name']} ({alt['text']}).")
+    pb = st.get('probe')
+    if pb:
+        lines.append(f"In simulation, the design's {word} was right in {pb['design_agrees']} of {pb['rows']} examples.")
+    elif not st.get('verified_by_testbench'):
+        lines.append(f'The {word} was not simulated.')
+    return {'title': title, 'verdict': None, 'lines': lines}
+
+
+def plain_requirement(st: Dict) -> Dict:
+    title = st['target']['text']
+    s_ = st.get('status')
+    subj = st.get('subject') or 'its output'
+    lines = []
+    if s_ == 'verified':
+        lines.append(f'Verified: every simulated example of {subj} passed.')
+    elif s_ == 'verified_by_probe':
+        lines.append(f"Verified: the {_FLAG_WORD.get(subj, subj)} was right in every example "
+                     f"(checked by an extra simulation).")
+    elif s_ == 'fail':
+        kinds = sorted({f['verdict'] for f in st.get('failing', []) if f.get('verdict')})
+        who = {'design_wrong': 'the design', 'scenario_wrong': 'the scenario', 'both_wrong': 'both',
+               'consistent_wrong': 'both (in the same way)'}
+        lines.append(f"Failing in {len(st.get('failing', []))} examples; wrong: "
+                     + ', '.join(who.get(k, k) for k in kinds) + '.')
+    elif s_ == 'not_tested':
+        sc = st.get('untested_scenarios') or []
+        lines.append('Not tested: ' + (f"the scenario “{sc[0]['title']}” could not be turned into tests."
+                                      if sc else 'no test ran for it.'))
+    elif s_ == 'stated_only':
+        lines.append(f'Stated in the scenarios, but {subj} was not simulated.')
+    elif s_ == 'not_covered':
+        lines.append('Not covered: no scenario tests this requirement.')
+    lines.append('Which scenario covers which requirement was suggested by the model that wrote the scenarios.')
+    return {'title': title, 'verdict': s_, 'lines': lines}
+
+
+def render_plain(st: Dict) -> Dict:
+    return {'local': plain_local, 'global': plain_global,
+            'requirement': plain_requirement}.get(st.get('kind'), lambda _: {'title': '', 'lines': []})(st)
+
+
+# ----------------------------------------------------------------- problems list
+
+_WHO = {'design_wrong': 'design', 'both_wrong': 'design', 'scenario_wrong': 'scenario',
+        'consistent_wrong': 'design'}
+
+
+def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[Dict],
+                   spec: List[Dict]) -> Tuple[List[Dict], Dict]:
+    """Everything that is wrong or untested in one simulation, in plain words,
+    most severe first. Each item: severity (error | warning), who (design |
+    scenario | test | coverage), title, detail, and what Details opens."""
+    run = s.get(M.SimRun, run_id)
+    main = s.execute(select(M.CheckItem, M.CheckResult)
+                     .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+                     .where(M.CheckResult.sim_run_id == run_id)).all()
+    width = next((ci.width for ci, _ in main if ci.width), None)
+    by_op: Dict[Tuple[str, str], List] = {}
+    total_op: Dict[str, int] = {}
+    main_bad_tags = set()
+    for ci, cr in main:
+        if not ci.tag.startswith('BDD:') or cr.status not in ('pass', 'fail'):
+            continue
+        total_op[ci.operation or '?'] = total_op.get(ci.operation or '?', 0) + 1
+        if cr.verdict in _WHO:
+            by_op.setdefault((cr.verdict, ci.operation or '?'), []).append((ci, cr))
+            main_bad_tags.add(ci.tag)
+    probs: List[Dict] = []
+
+    order = ['design_wrong', 'both_wrong', 'consistent_wrong', 'scenario_wrong']
+    for (v, op), items in sorted(by_op.items(), key=lambda kv: (order.index(kv[0][0]), kv[0][1])):
+        ci, cr = items[0]
+        n, m = len(items), total_op.get(op, len(items))
+        B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
+        ex = _inputs(op, ci.stimulus, width)
+        if v == 'design_wrong':
+            title = f'The design computes {op} wrong'
+            detail = f'{n} of {m} {op} examples give a wrong result. E.g. {ex}: the design gives {_pv(O, width)}, correct is {_pv(R, width)}.'
+        elif v == 'both_wrong':
+            title = f'{op}: both the design and the scenario are wrong'
+            detail = f'{n} of {m} {op} examples. E.g. {ex}: scenario {_pv(B, width)}, design {_pv(O, width)}, correct {_pv(R, width)}.'
+        elif v == 'consistent_wrong':
+            title = f'{op}: the design repeats a mistake of the scenario'
+            detail = (f'{n} of {m} {op} examples pass the test, but both give the wrong value. '
+                      f'E.g. {ex}: both say {_pv(O, width)}, correct is {_pv(R, width)}.')
+        else:
+            title = f'A scenario expects a wrong {op} result' if n == 1 else f'{n} scenario examples expect a wrong {op} result'
+            detail = f'E.g. {ex}: the scenario expects {_pv(B, width)}, correct is {_pv(R, width)}. The design is right.'
+        probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
+                      'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
+
+    # flags seen by the probe (rows whose result is already wrong are covered above)
+    probe = _probe_results(s, _probe_run_id(s, run_id))
+    fl: Dict[Tuple[str, str, str], List] = {}
+    consequences = 0
+    for (tag, port), o in probe.items():
+        if o['verdict'] == 'pass':
+            continue
+        if tag in main_bad_tags:
+            consequences += 1
+            continue
+        fl.setdefault((o['verdict'], port, o.get('operation') or '?'), []).append((tag, o))
+    for (v, port, op), items in sorted(fl.items(), key=lambda kv: (order.index(kv[0][0]) if kv[0][0] in order else 9, kv[0][1], kv[0][2])):
+        tag, o = items[0]
+        word = _FLAG_WORD.get(port, port)
+        ex = _inputs(op, o.get('stimulus'), width)
+        obs = o['observed'] if o['observed'] is not None else o['raw']
+        if v == 'scenario_wrong':
+            title = f'A scenario states a wrong {word} for {op}' if len(items) == 1 else \
+                f'{len(items)} scenario examples state a wrong {word} for {op}'
+            detail = (f"E.g. {ex}: the scenario says the {word} is {o['stated']}, but it should be "
+                      f"{o['rule_value']}. The design is right.")
+        else:
+            title = f"The design's {word} is wrong for {op}"
+            detail = (f"{len(items)} examples. E.g. {ex}: the design's {word} is {obs}, but it should be "
+                      f"{o['rule_value']}.")
+        probs.append({'severity': 'error' if _WHO.get(v) == 'design' else 'warning', 'who': _WHO.get(v, 'design'),
+                      'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': tag}})
+    for it in spec:
+        alt = it.get('alternative')
+        if alt and it['port'] == 'overflow':
+            for pr in probs:
+                if pr['who'] == 'scenario' and 'overflow flag' in pr['title']:
+                    pr['detail'] += f" The scenarios seem to use “overflow” to mean {alt['name']}."
+                    pr['explain'] = {'kind': 'global', 'port': 'overflow'}
+                    break
+        # no probe: contradictions in what the scenarios state, unsimulated
+        if not probe and it.get('contradicting'):
+            ex = (it.get('examples') or [{}])[0]
+            probs.append({'severity': 'warning', 'who': 'scenario',
+                          'title': f"Scenarios state the {_FLAG_WORD.get(it['port'], it['port'])} wrongly",
+                          'detail': f"{it['contradicting']} of {it['judged']} examples contradict the rule"
+                                    + (f"; they seem to mean {alt['name']}" if alt else '') + '.',
+                          'explain': {'kind': 'global', 'port': it['port']}})
+
+    # scenarios that produced no tests, and the requirements left untested by them
+    req_by_scn: Dict[str, List[str]] = {}
+    for r in reqs:
+        for u in r.get('untested_scenarios') or []:
+            req_by_scn.setdefault(u['scenario_key'], []).append(r['text'])
+    for sc in (scenario_results or {}).get('scenarios') or []:
+        if sc['status'] in ('not_run', 'no_check', 'no_examples'):
+            affected = req_by_scn.get(sc['id'], [])
+            probs.append({'severity': 'warning', 'who': 'test',
+                          'title': f"Not tested: “{sc.get('title') or sc['id']}”",
+                          'detail': f"This scenario was skipped: {plain_reason(sc.get('reason'))}."
+                                    + (f" Requirement left untested: “{affected[0].rstrip('.')}”." if affected else ''),
+                          'explain': None})
+        elif sc['status'] == 'partial':
+            n_skip = sum(1 for r in sc.get('rows') or [] if r['status'] == 'skipped')
+            probs.append({'severity': 'warning', 'who': 'test',
+                          'title': f"Partly tested: “{sc.get('title') or sc['id']}”",
+                          'detail': f'{n_skip} of its examples could not be turned into tests.', 'explain': None})
+    for r in reqs:
+        if r['status'] == 'not_covered':
+            probs.append({'severity': 'warning', 'who': 'coverage', 'title': 'A requirement is not tested by any scenario',
+                          'detail': f"“{r['text'].rstrip('.')}”", 'explain': {'kind': 'requirement', 'id': r['requirement_id']}})
+        elif r['status'] == 'stated_only':
+            probs.append({'severity': 'warning', 'who': 'coverage', 'title': 'A requirement was not simulated',
+                          'detail': f"“{r['text']}” — the scenarios state it, but nothing simulated "
+                                    f"{r.get('subject') or 'it'}.",
+                          'explain': {'kind': 'requirement', 'id': r['requirement_id']}})
+    if consequences:
+        for pr in probs:
+            if pr['who'] == 'design' and pr['explain'] and pr['explain'].get('kind') == 'check':
+                pr['detail'] += ' The flags of these examples are wrong too, as a consequence.'
+                break
+
+    counts = {'design': 0, 'scenario': 0, 'test': 0, 'coverage': 0}
+    for pr in probs:
+        counts[pr['who']] = counts.get(pr['who'], 0) + 1
+    n_checks = sum(total_op.values())
+    checked = [f'{n_checks} examples were simulated and compared with a reference model.']
+    if probe:
+        flags = sorted({port for (_, port) in probe}, key=lambda x: FLAG_PORTS.index(x) if x in FLAG_PORTS else 9)
+        checked.append('The flags (' + ', '.join(flags) + ') were checked in an extra simulation.')
+    elif spec:
+        checked.append('The flags were not simulated; only what the scenarios state about them was checked.')
+    if reqs:
+        ok = sum(1 for r in reqs if r['status'] in ('verified', 'verified_by_probe'))
+        checked.append(f'{ok} of {len(reqs)} requirements are verified.')
+    overview = {'ok': not probs, 'counts': counts, 'checked': checked}
+    return probs, overview

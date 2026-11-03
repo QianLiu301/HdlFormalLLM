@@ -260,6 +260,38 @@
         .xp-spec-item > span:nth-child(2) { flex: 1 1 auto; min-width: 0; }
         .why-btn { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary, #fff); color: var(--text-secondary); cursor: pointer; flex: 0 0 auto; }
         .why-btn:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+        /* Problems: the first thing Step 4 shows when explanations are available */
+        #sim-problems { margin: 4px 0 18px; }
+        .pb-banner { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; font-size: 15px; font-weight: 700; }
+        .pb-banner.ok { background: rgba(0, 168, 132, 0.10); color: var(--accent); }
+        .pb-banner.bad { background: rgba(220, 38, 38, 0.08); color: var(--error); }
+        .pb-banner .pb-counts { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-left: auto; text-align: right; }
+        .pb-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+        .pb-item { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border-color); border-left-width: 4px; border-radius: 8px; background: var(--bg-primary, #fff); }
+        .pb-item.who-design { border-left-color: var(--error); }
+        .pb-item.who-scenario { border-left-color: #f59e0b; }
+        .pb-item.who-test, .pb-item.who-coverage { border-left-color: #94a3b8; }
+        .pb-tag { flex: 0 0 auto; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; margin-top: 2px; }
+        .who-design .pb-tag { color: var(--error); background: rgba(220, 38, 38, 0.10); }
+        .who-scenario .pb-tag { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+        .who-test .pb-tag, .who-coverage .pb-tag { color: #475569; background: rgba(148, 163, 184, 0.18); }
+        .pb-text { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.5; }
+        .pb-title { font-weight: 600; color: var(--text-primary); }
+        .pb-detail { color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; }
+        .pb-checked { margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+        details.sim-tech { margin-top: 8px; border-top: 1px solid var(--border-color); padding-top: 6px; }
+        details.sim-tech > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-secondary); padding: 6px 0; list-style: none; }
+        details.sim-tech > summary::-webkit-details-marker { display: none; }
+        details.sim-tech > summary::before { content: '▸ '; }
+        details.sim-tech[open] > summary::before { content: '▾ '; }
+        .xp-body { overflow: auto; padding: 14px 16px; }
+        .xp-plain-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; color: var(--text-primary); overflow-wrap: anywhere; }
+        .xp-plain p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; color: var(--text-primary); }
+        .xp-plain p.lead { font-weight: 600; }
+        .xp-body details { margin-top: 10px; }
+        .xp-body details > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+        .xp-body .xp-text { padding: 10px 0 0; }
+        @media (max-width: 640px) { .pb-item { flex-direction: column; gap: 6px; } .pb-banner { flex-wrap: wrap; } .pb-banner .pb-counts { margin-left: 0; text-align: left; } }
         #sim-cov-list td.xp-why { width: 56px; text-align: right; }
         .cov-note { font-size: 10px; color: var(--text-secondary); margin-top: 3px; white-space: normal; font-family: inherit; line-height: 1.4; }
         .cov-note.warn { color: #b45309; }
@@ -2041,6 +2073,29 @@
                     <div class="badge" id="sim-result-badge">SIM</div>
                 </div>
 
+                <!-- Problems: what is wrong and who is at fault, in plain words. Shown only
+                     when the explainability database is configured; the detailed sections
+                     below then fold into "Technical details". -->
+                <div id="sim-problems" style="display: none;">
+                    <div class="pb-banner" id="pb-banner"></div>
+                    <div class="pb-list" id="pb-list"></div>
+                    <div class="pb-checked" id="pb-checked"></div>
+                </div>
+                <div class="xp-modal" id="xp-modal" style="display: none;"
+                     onclick="if (event.target === this) closeExplanation()">
+                    <div class="xp-dialog" role="dialog" aria-modal="true" aria-labelledby="xp-title">
+                        <div class="xp-head">
+                            <span id="xp-title">Explanation</span>
+                            <button class="btn btn-secondary btn-sm" onclick="closeExplanation()">Close</button>
+                        </div>
+                        <div class="xp-body">
+                            <div class="xp-plain" id="xp-plain"></div>
+                            <details id="xp-tech"><summary>Technical details</summary>
+                                <pre class="xp-text" id="xp-text"></pre></details>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Statistics -->
                 <div class="detected-info" id="sim-stats">
                     <div class="detected-info-row">
@@ -2074,6 +2129,8 @@
                     </div>
                 </div>
 
+                <details class="sim-tech" id="sim-tech" open>
+                <summary>Technical details — waveform, results by scenario and requirement, log</summary>
                 <!-- Waveform Preview -->
                 <div id="sim-waveform-container" style="display: none;">
                     <div class="preview-label">📊 Waveform Preview</div>
@@ -2100,16 +2157,6 @@
                         expects, and what the tool's reference model computes. Use <strong>Why?</strong>
                         on any scenario row or requirement below for the full explanation.
                     </p>
-                </div>
-                <div class="xp-modal" id="xp-modal" style="display: none;"
-                     onclick="if (event.target === this) closeExplanation()">
-                    <div class="xp-dialog" role="dialog" aria-modal="true" aria-labelledby="xp-title">
-                        <div class="xp-head">
-                            <span id="xp-title">Explanation</span>
-                            <button class="btn btn-secondary btn-sm" onclick="closeExplanation()">Close</button>
-                        </div>
-                        <pre class="xp-text" id="xp-text"></pre>
-                    </div>
                 </div>
 
                 <!-- 需求覆盖：Step 0 确认过需求时才显示。链接来自 BDD 生成器在场景上
@@ -2151,6 +2198,8 @@
                 <!-- Log Preview -->
                 <div class="preview-label">📋 Simulation Log</div>
                 <div class="preview-box" id="sim-log-preview" style="max-height: 200px;"></div>
+
+                </details>
 
                 <div class="action-buttons">
                     <button class="btn btn-secondary btn-sm" id="sim-download-vcd" onclick="downloadSimVcd()"
@@ -5977,6 +6026,8 @@
             const box = document.getElementById('sim-coverage');
             box.style.display = 'none';
             document.getElementById('sim-explain').style.display = 'none';
+            document.getElementById('sim-problems').style.display = 'none';
+            document.getElementById('sim-tech').open = true;
             explainState = null;
             lastTraceability = null;
             if (!currentSimResult || !currentSimResult.paths) return;
@@ -6043,6 +6094,44 @@
             return `<span class="${cls}" title="${escapeHtml(VERDICT_HELP[v] || '')}">${num}${escapeHtml(VERDICT_LABEL[v] || v)}</span>`;
         }
 
+        const WHO_LABEL = { design: 'Design', scenario: 'Scenario', test: 'Not tested', coverage: 'Coverage' };
+
+        function renderProblems(j) {
+            const box = document.getElementById('sim-problems');
+            const ov = j.overview, probs = j.problems || [];
+            if (!ov) { box.style.display = 'none'; return; }
+            const c = ov.counts || {};
+            const parts = [];
+            if (c.design) parts.push(`${c.design} in the design`);
+            if (c.scenario) parts.push(`${c.scenario} in the scenarios`);
+            if (c.test || c.coverage) parts.push(`${(c.test || 0) + (c.coverage || 0)} not tested`);
+            const banner = document.getElementById('pb-banner');
+            banner.className = 'pb-banner ' + (ov.ok ? 'ok' : 'bad');
+            banner.innerHTML = ov.ok
+                ? '✓ No problems found'
+                : `✗ ${probs.length} problem${probs.length > 1 ? 's' : ''} found`
+                  + `<span class="pb-counts">${escapeHtml(parts.join(' · '))}</span>`;
+            document.getElementById('pb-list').innerHTML = probs.map((p, i) =>
+                `<div class="pb-item who-${escapeHtml(p.who)}">`
+                + `<span class="pb-tag">${escapeHtml(WHO_LABEL[p.who] || p.who)}</span>`
+                + `<div class="pb-text"><div class="pb-title">${escapeHtml(p.title)}</div>`
+                + `<div class="pb-detail">${escapeHtml(p.detail)}</div></div>`
+                + (p.explain ? `<button class="why-btn" onclick="openProblem(${i})">Details</button>` : '')
+                + `</div>`).join('');
+            document.getElementById('pb-checked').innerHTML =
+                `<strong>What was checked:</strong> ${escapeHtml((ov.checked || []).join(' '))}`;
+            box.style.display = 'block';
+        }
+
+        function openProblem(i) {
+            const p = ((explainState || {}).problems || [])[i];
+            if (!p || !p.explain) return;
+            const e = p.explain;
+            if (e.kind === 'check') openExplanation('check', e.tag);
+            else if (e.kind === 'global') openExplanation('global', e.port);
+            else if (e.kind === 'requirement') openExplanation('requirement', e.id);
+        }
+
         function renderExplainSummary(j) {
             const box = document.getElementById('sim-explain');
             const v = j.verdicts || {};
@@ -6107,6 +6196,9 @@
             box.style.display = 'block';
             applyExplainSlots();
             if (lastTraceability) renderCoverage(lastTraceability);
+            renderProblems(j);
+            // the plain list is the main view now; details stay one click away
+            if (j.overview) document.getElementById('sim-tech').open = false;
         }
 
         /** Fill the verdict / "Why?" slots in the scenario rows and the requirement table. */
@@ -6135,24 +6227,35 @@
             let url, body;
             if (kind === 'check') {
                 url = '/api/explain/check'; body = { tag: arg, sim_run_id: j.sim_run_id };
-                title.textContent = `Explanation — ${arg.replace(/^BDD:/, '')}`;
+                title.textContent = 'Explanation';
             } else if (kind === 'global') {
                 url = '/api/explain/global'; body = { feature_id: j.feature_id, port: arg, value: 'True' };
-                title.textContent = `Specification — when is ${arg} = 1?`;
+                title.textContent = 'Specification';
             } else {
                 url = '/api/explain/requirement'; body = { requirement_id: arg, sim_run_id: j.sim_run_id };
                 title.textContent = 'Requirement';
             }
+            const plain = document.getElementById('xp-plain');
+            plain.innerHTML = '<p>Loading…</p>';
             text.textContent = 'Loading…';
+            document.getElementById('xp-tech').open = false;
             modal.style.display = 'flex';
             try {
                 const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                              body: JSON.stringify(body) });
                 const e = await r.json();
-                text.textContent = e.success && e.ready !== false ? e.text
-                    : (e.error || 'No explanation is available for this item.');
+                if (e.success && e.ready !== false) {
+                    const pl = e.plain || { title: '', lines: [] };
+                    if (pl.title) title.textContent = pl.title;
+                    plain.innerHTML = (pl.lines || []).map((l, k) =>
+                        `<p${k === 0 ? ' class="lead"' : ''}>${escapeHtml(l)}</p>`).join('');
+                    text.textContent = e.text;
+                } else {
+                    plain.innerHTML = `<p>${escapeHtml(e.error || 'No explanation is available for this item.')}</p>`;
+                    text.textContent = '';
+                }
             } catch (err) {
-                text.textContent = `Could not load the explanation: ${err}`;
+                plain.innerHTML = `<p>Could not load the explanation: ${escapeHtml(String(err))}</p>`;
             }
         }
 
@@ -6568,6 +6671,8 @@
         document.getElementById('vcd-tip').style.display = 'none';
         document.getElementById('sim-coverage').style.display = 'none';
         document.getElementById('sim-explain').style.display = 'none';
+        document.getElementById('sim-problems').style.display = 'none';
+        document.getElementById('sim-tech').open = true;
         explainState = null;
         currentSimResult = null;
         updateStepStatus(4, 'pending');
