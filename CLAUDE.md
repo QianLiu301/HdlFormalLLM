@@ -92,7 +92,10 @@ download CSV/ZIP from the dashboard after important runs.
 ## Conventions
 
 - Development branch pattern: `claude/*` feature branches, merged to `master`.
-- User (钱柳/QianLiu301) works locally on Windows/PowerShell, tests in browser.
+- User (钱柳/QianLiu301) now works on **macOS (zsh, Terminal)**; project at
+  `~/PycharmProjects/HdlFormalLLM`. Give Mac commands only (bash/zsh syntax,
+  Homebrew, `open`, Cmd shortcuts) — no PowerShell. Earlier work was on Windows,
+  so keep the UTF-8 gotchas below. Tests in browser.
 - Explain things in Chinese to the user; code/comments/docs in the repo mostly
   English (some Chinese comments in experiment tooling are fine).
 
