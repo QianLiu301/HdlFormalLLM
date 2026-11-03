@@ -91,7 +91,16 @@ database in the background first):
   overflow), how many rows contradict the rule — flags are not compared by the
   testbench, so this is the only place such errors show up;
 - a **Why?** button on every scenario row, every requirement and every flag
-  line, opening the explanation.
+  line, opening the explanation;
+- the flag probe: the testbench compares only `result`, so a second short
+  simulation (same stimulus, same design) records the flags and checks them
+  against the rules. It never changes the pass rate;
+- requirement status by the output a requirement is about: a requirement on
+  the zero flag is verified only if the probe saw the design's zero flag
+  right, not because the result checks passed.
+
+Migration 0004 is needed for the probe: run `python -m src.xdb upgrade` after
+pulling.
 
 For ALU designs, Step 0 now always asks what "overflow" means; the answer is
 used by both generators and by the rule library.

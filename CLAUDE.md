@@ -124,7 +124,11 @@ Milestones M1, M2 done (M2: `src/xdb/library.py` ALU canonical steps + rules,
 check `tests/ui/explain_panel.js`; the app sits behind the access-password
 screen, `#main-app` must be shown in automated tests). Step 0 always asks
 what ALU "overflow" means (`requirements_store.FIXED_QUESTIONS`); the rule
-library follows the answer. M4 next (repair) … M6 in the design doc. Product output (explanations, UI text,
+library follows the answer. Flag probe (`src/xdb/probe.py`, D23): a copy of
+the testbench with one $display per test observes zero/negative/overflow, stored
+as a separate sim_run with `probe_of`; main-run queries must exclude it
+(`probe_of IS NULL` / testbench.generator != 'probe'). Requirement status by
+subject port (D24, `explain.requirement_subject`). M4 next (repair) … M6 in the design doc. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.

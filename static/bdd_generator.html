@@ -260,6 +260,12 @@
         .xp-spec-item > span:nth-child(2) { flex: 1 1 auto; min-width: 0; }
         .why-btn { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary, #fff); color: var(--text-secondary); cursor: pointer; flex: 0 0 auto; }
         .why-btn:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+        #sim-cov-list td.xp-why { width: 56px; text-align: right; }
+        .cov-note { font-size: 10px; color: var(--text-secondary); margin-top: 3px; white-space: normal; font-family: inherit; line-height: 1.4; }
+        .cov-note.warn { color: #b45309; }
+        .cov-note .xp-chip { font-size: 10px; padding: 0 6px; margin: 2px 2px 0 0; display: inline-block; }
+        .xp-sub { font-size: 11px; color: var(--text-secondary); margin: -2px 0 8px; line-height: 1.5; }
+        .xp-sub code { font-size: 11px; }
         .xp-slot { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; }
         .xp-slot .xp-chip { font-size: 10px; padding: 0 6px; font-weight: 600; }
         .xp-modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
@@ -2086,6 +2092,7 @@
                     <div class="preview-label">🧭 Who Is Wrong? — Explanations</div>
                     <div class="xp-headline" id="xp-headline"></div>
                     <div class="xp-verdicts" id="xp-verdicts"></div>
+                    <div class="xp-sub" id="xp-probe"></div>
                     <div class="xp-spec" id="xp-spec" style="display: none;"></div>
                     <p class="sim-failure-hint" id="xp-hint">
                         Each check compares three values: what the design produced, what the scenario
@@ -5964,6 +5971,7 @@
             box.style.display = 'none';
             document.getElementById('sim-explain').style.display = 'none';
             explainState = null;
+            lastTraceability = null;
             if (!currentSimResult || !currentSimResult.paths) return;
             try {
                 const r = await fetch('/api/run-report', {
@@ -6036,20 +6044,42 @@
                 .map(k => verdictChip(k, v[k])).join('');
 
             const wrongScn = v.scenario_wrong || 0, wrongDes = (v.design_wrong || 0) + (v.both_wrong || 0);
+            const ports = (j.compared_ports || []).map(p => `<code>${escapeHtml(p)}</code>`).join(', ') || 'the main output';
             let head;
             if (!j.has_rule_library) {
                 head = `No reference model for ${escapeHtml(j.module_type || 'this design')} yet, so failures `
                      + `cannot be attributed to the design or the scenario.`;
             } else if (!wrongScn && !wrongDes && !v.consistent_wrong) {
-                head = `All ${total} checks agree with the reference model.`;
+                head = `All ${total} checks of ${ports} agree with the reference model.`;
             } else {
                 const parts = [];
                 if (wrongDes) parts.push(`<strong>${wrongDes}</strong> failure${wrongDes > 1 ? 's are' : ' is'} caused by the design`);
                 if (wrongScn) parts.push(`<strong>${wrongScn}</strong> by a wrong expected value in the scenario`);
                 if (v.consistent_wrong) parts.push(`<strong>${v.consistent_wrong}</strong> passing check${v.consistent_wrong > 1 ? 's' : ''} share a mistake between design and scenario`);
-                head = parts.join('; ') + '.';
+                head = parts.join('; ') + ` (checks of ${ports}).`;
             }
             document.getElementById('xp-headline').innerHTML = head;
+
+            // Flags: what the probe observed, or that nothing simulated them
+            const pb = j.probe, probeBox = document.getElementById('xp-probe');
+            const flagPorts = (j.spec_check || []).map(it => it.port);
+            if (pb && pb.status === 'ok' && pb.per_port) {
+                const FLAG_ORDER = ['zero', 'negative', 'overflow'];
+                const per = Object.entries(pb.per_port)
+                    .sort((a, b) => FLAG_ORDER.indexOf(a[0]) - FLAG_ORDER.indexOf(b[0]))
+                    .map(([p, x]) => `<code>${escapeHtml(p)}</code> ${x.design_agrees}/${x.rows}`).join(', ');
+                const bad = VERDICT_ORDER.filter(k => k !== 'pass' && (pb.verdicts || {})[k])
+                    .map(k => verdictChip(k, pb.verdicts[k])).join(' ');
+                probeBox.innerHTML = `Flags are not compared by the testbench. A separate probe simulation `
+                    + `(not part of the pass rate) observed them; the design agrees with the rule in ${per} rows.`
+                    + (bad ? `<div class="xp-verdicts" style="margin-top:6px">${bad}</div>` : '');
+            } else if (flagPorts.length) {
+                probeBox.innerHTML = `Flags (${flagPorts.map(p => `<code>${escapeHtml(p)}</code>`).join(', ')}) `
+                    + `are stated in the scenarios but neither compared by the testbench nor simulated`
+                    + (pb && pb.status ? ` (flag probe: ${escapeHtml(pb.status)})` : '') + '.';
+            } else {
+                probeBox.innerHTML = '';
+            }
 
             const spec = j.spec_check || [];
             const specBox = document.getElementById('xp-spec');
@@ -6069,6 +6099,7 @@
             }
             box.style.display = 'block';
             applyExplainSlots();
+            if (lastTraceability) renderCoverage(lastTraceability);
         }
 
         /** Fill the verdict / "Why?" slots in the scenario rows and the requirement table. */
@@ -6080,13 +6111,11 @@
                 const c = (j.checks || {})[tag];
                 if (!c) { el.innerHTML = ''; return; }
                 const chip = c.verdict && c.verdict !== 'pass' ? verdictChip(c.verdict) : '';
-                el.innerHTML = chip + `<button class="why-btn" data-tag="${escapeHtml(tag)}" `
+                const flagChips = (((j.probe || {}).issues || {})[tag] || [])
+                    .map(f => `<span class="xp-chip xv-${f.verdict}" title="${escapeHtml(VERDICT_HELP[f.verdict] || '')} (flag probe)">`
+                            + `${escapeHtml(f.port)}: ${escapeHtml(VERDICT_LABEL[f.verdict] || f.verdict)}</span>`).join('');
+                el.innerHTML = chip + flagChips + `<button class="why-btn" data-tag="${escapeHtml(tag)}" `
                              + `onclick="event.stopPropagation(); openExplanation('check', this.dataset.tag)">Why?</button>`;
-            });
-            const reqs = Object.fromEntries((j.requirements || []).map(r => [r.req_key, r.requirement_id]));
-            document.querySelectorAll('.xp-slot[data-req]').forEach(el => {
-                const id = reqs[el.dataset.req];
-                el.innerHTML = id ? `<button class="why-btn" onclick="openExplanation('requirement', ${id})">Why?</button>` : '';
             });
         }
 
@@ -6125,46 +6154,103 @@
         }
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeExplanation(); });
 
+        let lastTraceability = null;
+        const REQ_LABEL = { verified: '✓ VERIFIED', verified_by_probe: '✓ VERIFIED', fail: '✗ FAIL',
+                            stated_only: '⚠ NOT SIMULATED', not_tested: '⚠ NOT TESTED',
+                            not_covered: '⚠ NOT COVERED' };
+        const REQ_CLASS = { verified: 'pass', verified_by_probe: 'pass', fail: 'fail', stated_only: 'weak',
+                            not_tested: 'not_run', not_covered: 'not_run' };
+
         function renderCoverage(tr) {
+            lastTraceability = tr;
             const reqs = tr.requirements || [];
             if (!reqs.length) return;
-            const by = tr.by_status || {};
+            // With the explainability database, a requirement's status comes from the output it is
+            // about (result, zero, ...), so a requirement about an uncompared flag is never shown as
+            // verified just because the result checks of its scenarios passed.
+            const xs = explainState && (explainState.requirements || []).length
+                ? Object.fromEntries(explainState.requirements.map(r => [r.req_key, r])) : null;
+
             const parts = [`<strong>${reqs.length}</strong> requirements`];
-            if (by.pass) parts.push(`${by.pass} verified`);
-            if (by.fail) parts.push(`<span style="color:var(--error)">${by.fail} failing</span>`);
-            if (by.unverified) parts.push(`<span class="scn-warn">${by.unverified} not fully verified</span>`);
-            if (by.not_covered) parts.push(`<span class="scn-warn">${by.not_covered} not covered by any scenario</span>`);
+            if (xs) {
+                const n = {};
+                reqs.forEach(r => { const k = (xs[r.id] || {}).status || 'not_tested'; n[k] = (n[k] || 0) + 1; });
+                if (n.verified) parts.push(`${n.verified} verified by simulation`);
+                if (n.verified_by_probe) parts.push(`${n.verified_by_probe} verified by the flag probe`);
+                if (n.fail) parts.push(`<span style="color:var(--error)">${n.fail} failing</span>`);
+                if (n.stated_only) parts.push(`<span class="scn-warn">${n.stated_only} stated but not simulated</span>`);
+                if (n.not_tested) parts.push(`<span class="scn-warn">${n.not_tested} not tested</span>`);
+                if (n.not_covered) parts.push(`<span class="scn-warn">${n.not_covered} not covered by any scenario</span>`);
+            } else {
+                const by = tr.by_status || {};
+                if (by.pass) parts.push(`${by.pass} verified`);
+                if (by.fail) parts.push(`<span style="color:var(--error)">${by.fail} failing</span>`);
+                if (by.unverified) parts.push(`<span class="scn-warn">${by.unverified} not fully verified</span>`);
+                if (by.not_covered) parts.push(`<span class="scn-warn">${by.not_covered} not covered by any scenario</span>`);
+            }
             document.getElementById('sim-cov-summary').innerHTML = parts.join(' · ');
 
+            const statusCell = r => {
+                if (!xs) {
+                    const unc = (r.unchecked_columns || []).length
+                        ? `<div class="cov-unc">not compared: ${escapeHtml(r.unchecked_columns.join(', '))}</div>` : '';
+                    return `<span class="scn-${COV_CLASS[r.status] || 'not_run'}">`
+                         + `<span class="scn-badge">${COV_LABEL[r.status] || r.status}</span></span>${unc}`;
+                }
+                const x = xs[r.id] || { status: 'not_tested' };
+                const subj = x.subject ? `<code>${escapeHtml(x.subject)}</code>` : 'its output';
+                let note = '';
+                if (x.status === 'verified')
+                    note = `<div class="cov-note">${x.subject ? subj + ', ' : ''}by simulation</div>`;
+                else if (x.status === 'verified_by_probe')
+                    note = `<div class="cov-note">${subj}, by the flag probe — the testbench does not compare it</div>`;
+                else if (x.status === 'stated_only')
+                    note = `<div class="cov-note warn">the testbench does not compare ${subj}</div>`;
+                else if (x.status === 'fail')
+                    note = `<div class="cov-note">${(x.failing_verdicts || []).map(v => verdictChip(v)).join('')}`
+                         + `${x.evidence === 'flag probe' ? ' seen by the flag probe' : ''}</div>`;
+                return `<span class="scn-${REQ_CLASS[x.status] || 'not_run'}">`
+                     + `<span class="scn-badge">${REQ_LABEL[x.status] || x.status}</span></span>${note}`;
+            };
+            const whyCell = r => {
+                if (!xs) return '';
+                const x = xs[r.id];
+                return `<td class="xp-why">${x ? `<button class="why-btn" onclick="openExplanation('requirement', ${x.requirement_id})">Why?</button>` : ''}</td>`;
+            };
+
             const rows = reqs.map(r => {
-                const chips = r.scenarios.map(s =>
-                    `<span class="cov-chip cov-${s.status}" title="${escapeHtml(s.title)}">${escapeHtml(s.id)}</span>`
+                // a scenario's colour is the result of its result checks: meaningless for a
+                // requirement about an output the testbench does not compare
+                const x = xs && xs[r.id];
+                const neutral = x && !x.compared_by_testbench;
+                const chips = r.scenarios.map(sc =>
+                    `<span class="cov-chip${neutral ? '' : ' cov-' + sc.status}" title="${escapeHtml(sc.title)}">${escapeHtml(sc.id)}</span>`
                 ).join(' ') || '<span class="scn-warn">—</span>';
-                const unc = (r.unchecked_columns || []).length
-                    ? `<div class="cov-unc">not compared: ${escapeHtml(r.unchecked_columns.join(', '))}</div>` : '';
                 return `<tr><td class="num">${escapeHtml(r.id)}</td>`
                      + `<td class="cov-text">${escapeHtml(r.text)}</td>`
-                     + `<td>${chips}</td>`
-                     + `<td><span class="scn-${COV_CLASS[r.status] || 'not_run'}">`
-                     + `<span class="scn-badge">${COV_LABEL[r.status] || r.status}</span></span>${unc}`
-                     + `<span class="xp-slot xp-req" data-req="${escapeHtml(r.id)}"></span></td></tr>`;
+                     + `<td>${chips}</td><td>${statusCell(r)}</td>${whyCell(r)}</tr>`;
             }).join('');
             const orphans = tr.orphan_scenarios || [];
             const orphanRow = orphans.length
                 ? `<tr><td class="num">—</td><td class="cov-text scn-warn">Scenarios not linked to any requirement</td>`
-                  + `<td>${orphans.map(s => `<span class="cov-chip">${escapeHtml(s.id)}</span>`).join(' ')}</td><td></td></tr>`
+                  + `<td>${orphans.map(o => `<span class="cov-chip">${escapeHtml(o.id)}</span>`).join(' ')}</td><td></td>`
+                  + `${xs ? '<td></td>' : ''}</tr>`
                 : '';
             document.getElementById('sim-cov-list').innerHTML =
-                `<table><thead><tr><th>Req</th><th>Requirement</th><th>Scenarios</th><th>Status</th></tr></thead>`
-                + `<tbody>${rows}${orphanRow}</tbody></table>`;
-            document.getElementById('sim-cov-hint').textContent =
-                `Which scenario covers which requirement was ${tr.link_source}. `
-                + `A requirement counts as verified only if every scenario linked to it passed. `
-                + `The testbench compares only the main output: columns listed as "not compared" `
-                + `(such as flags) are in the scenarios but never checked, so a requirement about `
-                + `them is not verified by a pass.`;
+                `<table><thead><tr><th>Req</th><th>Requirement</th><th>Scenarios</th><th>Status</th>`
+                + `${xs ? '<th></th>' : ''}</tr></thead><tbody>${rows}${orphanRow}</tbody></table>`;
+            document.getElementById('sim-cov-hint').textContent = xs
+                ? `A requirement is judged on the output it is about: the first output its text names `
+                  + `(result, zero, negative, overflow). It is verified by simulation when every check of that `
+                  + `output in the linked scenarios passed. The testbench compares only result; flags are `
+                  + `observed by a separate probe simulation, which does not count towards the pass rate. `
+                  + `Which scenario covers which requirement was ${tr.link_source}.`
+                : `Which scenario covers which requirement was ${tr.link_source}. `
+                  + `A requirement counts as verified only if every scenario linked to it passed. `
+                  + `The testbench compares only the main output: columns listed as "not compared" `
+                  + `(such as flags) are in the scenarios but never checked, so a requirement about `
+                  + `them is not verified by a pass.`;
             document.getElementById('sim-coverage').style.display = 'block';
-            applyExplainSlots();
         }
 
         async function downloadRunReport() {

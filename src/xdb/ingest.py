@@ -37,7 +37,7 @@ from src import xdb
 from src.xdb import gherkin
 from src.xdb import mapping
 from src.xdb import models as M
-from src.xdb.verdict import classify, observed_value
+from src.xdb.verdict import classify, classify_flag, observed_value
 
 try:
     from src import run_report, scenario_results, requirements_store
@@ -66,6 +66,14 @@ def _artifact(s, kind: str, path: Optional[Path]) -> Optional[str]:
     sha = _sha(data)
     s.execute(pg_insert(M.Artifact).values(sha256=sha, kind=kind, content=data,
                                            orig_name=path.name, encoding='identity')
+              .on_conflict_do_nothing(index_elements=['sha256']))
+    return sha
+
+
+def _artifact_data(s, kind: str, name: str, data: bytes) -> str:
+    sha = _sha(data)
+    s.execute(pg_insert(M.Artifact).values(sha256=sha, kind=kind, content=data, orig_name=name,
+                                           encoding='identity')
               .on_conflict_do_nothing(index_elements=['sha256']))
     return sha
 
@@ -579,10 +587,90 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                                     message=g.get('message')))
                 n_results += 1
 
+        probe = (_flag_probe(s, sess, tb, run, duv, design, files, tb_text, checks, width_hint=bitwidth)
+                 if files.get('duv') else {'status': 'no_design_file'})
+
         return {'ingested': True, 'new': True, 'session_id': sess.id, 'sim_run_id': run.id,
+                'probe': probe,
                 'design': design.name, 'duv_id': duv.id if duv else None,
                 'requirements': len(reqs), 'scenarios_new': n_new_scen, 'checks': len(checks),
                 'check_results': n_results, 'verdicts': verdicts, 'llm_calls': len(calls)}
+
+
+# ----------------------------------------------------------------- flag probe
+
+_PROBE_SEQ = {'zero': 1, 'negative': 2, 'overflow': 3}
+
+
+def _flag_probe(s, sess, tb, run, duv, design, files, tb_text, checks, width_hint=None) -> Dict:
+    """Observe the flags the testbench never compares (src/xdb/probe.py) and
+    judge each one like an assertion: O from the probe, B from the scenario
+    (when it states the flag), R from the flag rule. Stored as a separate
+    testbench + sim_run (probe_of = the main run), outside the pass rate."""
+    from src.xdb import library as L
+    from src.xdb import probe as P
+    from src.xdb.explain import _overflow_mode, _steps
+    mt = design.module_type
+    if not L.library_for(mt):
+        return {'status': 'no_rule_library'}
+    res = P.run_probe(tb_text, files['duv'])
+    if res['status'] == 'not_applicable':
+        return {'status': 'not_applicable'}
+    probe_sha = _artifact_data(s, 'testbench', 'probe_tb.v', (res['probe_text'] or '').encode('utf-8'))
+    ptb = s.scalar(select(M.Testbench).where(M.Testbench.session_id == sess.id,
+                                             M.Testbench.artifact == probe_sha))
+    if ptb is None:
+        ptb = M.Testbench(session_id=sess.id, feature_id=tb.feature_id, artifact=probe_sha,
+                          generator='probe', oracle_source='rule', prov_kind='rule',
+                          prov_ref='src/xdb/probe.py')
+        s.add(ptb)
+        s.flush()
+    log_sha = _artifact_data(s, 'sim_log', 'probe.log', (res['log'] or '').encode('utf-8'))
+    prun = M.SimRun(testbench_id=ptb.id, duv_id=run.duv_id, dut_artifact=run.dut_artifact,
+                    target=run.target, simulator='iverilog', log_artifact=log_sha,
+                    status='ok' if res['status'] == 'ok' else res['status'], probe_of=run.id)
+    s.add(prun)
+    s.flush()
+    if res['status'] != 'ok':
+        return {'status': res['status'], 'sim_run_id': prun.id}
+
+    ov_mode, _ = _overflow_mode(s, sess.id)
+    width = width_hint or design.bitwidth
+    counts: Dict[str, int] = {}
+    stated_cache: Dict[int, Dict[str, Optional[int]]] = {}
+    for (tag, seq), c in checks.items():
+        if not tag.startswith('BDD:') or seq != 1 or not c.test_no or c.test_no not in res['values']:
+            continue
+        stim = c.stimulus or {}
+        w = c.width or width
+        if c.example_row_id not in stated_cache:
+            er = s.get(M.ExampleRow, c.example_row_id) if c.example_row_id else None
+            steps = _steps(s, c.scenario_id, er.vals if er else None, mt, w) if c.scenario_id else []
+            stated_cache[c.example_row_id] = {x['port']: L.to_int(x['value'], 1) for x in steps
+                                              if x['role'] == 'Q' and x['port'] in _PROBE_SEQ}
+        stated = stated_cache[c.example_row_id]
+        obs = res['values'][c.test_no]
+        for port, seq_p in _PROBE_SEQ.items():
+            R = L.flag_value(mt, port, c.operation, stim.get('a'), stim.get('b'), w, ov_mode)
+            if R is None:              # the rule does not define this flag here (e.g. overflow of AND)
+                continue
+            raw = obs.get(port)
+            O = int(raw) if raw in ('0', '1') else None
+            B = stated.get(port)
+            v = classify_flag(O, B, R)
+            counts[v] = counts.get(v, 0) + 1
+            pc = M.CheckItem(testbench_id=ptb.id, tag=tag, seq=seq_p, label=f'flag probe: {port}',
+                             test_no=c.test_no, port=port, width=1, operation=c.operation,
+                             stimulus=stim, scenario_id=c.scenario_id, example_row_id=c.example_row_id,
+                             expected_bdd=B, expected_ref=R, expected_used=None, oracle='rule')
+            s.add(pc)
+            s.flush()
+            s.add(M.CheckResult(sim_run_id=prun.id, check_id=pc.id,
+                                status='pass' if O is not None and O == R else 'fail',
+                                observed={port: raw}, observed_value=O, verdict=v,
+                                message=f'[PROBE] test {c.test_no}: {port} = {raw}'))
+    s.flush()
+    return {'status': 'ok', 'sim_run_id': prun.id, 'verdicts': counts}
 
 
 # ----------------------------------------------------------------- website hooks

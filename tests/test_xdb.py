@@ -173,12 +173,17 @@ def test_ingest_matches_run_report(run, db):
     assert counts['design'] == 1 and counts['port'] == 9
     assert counts['decision'] == 1 and counts['duv'] == 1
     # every row the report lists becomes exactly one check_result
-    assert counts['check_result'] == sum(len(s['rows']) for s in sr['scenarios']) + len(sr['generated'])
+    from sqlalchemy import create_engine, text as _t
+    with create_engine(db).connect() as c:
+        main_results = c.execute(_t('SELECT count(*) FROM check_result cr JOIN sim_run r '
+                                    'ON r.id = cr.sim_run_id WHERE r.probe_of IS NULL')).scalar()
+    assert main_results == sum(len(s['rows']) for s in sr['scenarios']) + len(sr['generated'])
 
     from sqlalchemy import create_engine, text
     with create_engine(db).connect() as c:
-        fails = c.execute(text("SELECT count(*) FROM check_result WHERE status='fail'")).scalar()
-        passes = c.execute(text("SELECT count(*) FROM check_result WHERE status='pass'")).scalar()
+        main = 'JOIN sim_run r ON r.id = check_result.sim_run_id WHERE r.probe_of IS NULL AND '
+        fails = c.execute(text('SELECT count(*) FROM check_result ' + main + "check_result.status='fail'")).scalar()
+        passes = c.execute(text('SELECT count(*) FROM check_result ' + main + "check_result.status='pass'")).scalar()
     rep_fail = sum(1 for s in sr['scenarios'] for r in s['rows'] if r['status'] == 'fail')
     rep_pass = sum(1 for s in sr['scenarios'] for r in s['rows'] if r['status'] == 'pass')
     assert (fails, passes) == (rep_fail, rep_pass)
@@ -263,7 +268,9 @@ def _verdict_of(db, tag):
         return c.execute(text("""SELECT cr.verdict, cr.status, ci.expected_bdd, ci.expected_ref,
                                         cr.observed_value, ci.stimulus
                                  FROM check_result cr JOIN check_item ci ON ci.id = cr.check_id
-                                 WHERE ci.tag = :t ORDER BY cr.sim_run_id DESC LIMIT 1"""),
+                                 JOIN sim_run r ON r.id = cr.sim_run_id
+                                 WHERE ci.tag = :t AND r.probe_of IS NULL
+                                 ORDER BY cr.sim_run_id DESC LIMIT 1"""),
                          {'t': tag}).mappings().one()
 
 
@@ -285,8 +292,10 @@ def test_who_is_wrong_on_the_real_feature(run, db):
 def test_every_failure_gets_a_side(run, db):
     from sqlalchemy import create_engine, text
     with create_engine(db).connect() as c:
-        rows = c.execute(text("SELECT status, verdict, count(*) n FROM check_result "
-                              "WHERE verdict IS NOT NULL GROUP BY status, verdict")).all()
+        rows = c.execute(text('SELECT cr.status, cr.verdict, count(*) n FROM check_result cr '
+                              'JOIN sim_run r ON r.id = cr.sim_run_id '
+                              'WHERE cr.verdict IS NOT NULL AND r.probe_of IS NULL '
+                              'GROUP BY cr.status, cr.verdict')).all()
     by = {(s, v): n for s, v, n in rows}
     assert all(v != 'pass' for (s, v) in by if s == 'fail')
     assert all(v in ('pass', 'consistent_wrong') for (s, v) in by if s == 'pass')
@@ -430,7 +439,10 @@ def test_local_explanation_scenario_wrong(run, db):
     assert st['rule']['op'] == 'SUB' and st['rule']['value'] == st['values']['expected_ref'] == 4294967246
     assert st['values']['observed'] == 4294967246 and st['values']['expected_bdd'] == 4294967245
     assert st['contrast'] and st['contrast']['status'] == 'pass'
-    assert {u['port'] for u in st['unverified']} == {'zero', 'overflow', 'negative'}
+    # the testbench compares only result; the flags were observed by the probe instead
+    assert st['unverified'] == []
+    assert {(x['port'], x['verdict']) for x in st['probed']} == \
+        {('zero', 'pass'), ('overflow', 'pass'), ('negative', 'pass')}
     assert 'The scenario is wrong, not the design.' in out['text']
     assert '50 − 100 = 4294967246' in out['text'] and 'agrees with the rule' in out['text']
 
@@ -443,14 +455,83 @@ def test_local_explanation_design_wrong(run, db):
     assert out['structure']['provenance']['scenario']['model'] == 'gemini-2.5-flash-001'
 
 
-def test_unverified_flag_contradiction_is_reported(run, db):
+def test_flag_contradiction_is_caught_by_the_probe(run, db):
     from src.xdb.explain import explain_check
     out = explain_check('ALU-ADD-001/r7', sim_run_id=_run1(), url=db)
     st = out['structure']
     assert st['verdict'] == 'pass'                       # the compared result is right ...
-    zero = next(u for u in st['unverified'] if u['port'] == 'zero')
-    assert zero['consistent'] is False and zero['rule_value'] == 0   # ... the stated flag is not
-    assert 'contradicts the rule library' in out['text']
+    zero = next(x for x in st['probed'] if x['port'] == 'zero')
+    # ... the scenario states zero = 1 for 100 + 200; design and rule say 0
+    assert (zero['stated'], zero['observed'], zero['rule_value'], zero['verdict']) == ('True', 0, 0, 'scenario_wrong')
+    assert 'zero = 0 ✗ scenario wrong' in out['text']
+
+
+def test_probe_sees_wrong_flags_of_a_wrong_result(run, db):
+    """SLTU row 4: the buggy design returns 1, so its zero flag is 0, while the
+    correct result 0 needs zero = 1, which is what the scenario states."""
+    from src.xdb.explain import explain_check
+    st = explain_check('ALU-SLTU-001/r4', sim_run_id=_run1(), url=db)['structure']
+    zero = next(x for x in st['probed'] if x['port'] == 'zero')
+    assert (zero['observed'], zero['rule_value'], zero['verdict']) == (0, 1, 'design_wrong')
+    assert not any(x['port'] == 'overflow' for x in st['probed'])   # no overflow rule for SLTU
+
+
+def test_probe_run_is_kept_apart_from_the_testbench_run(run, db):
+    from sqlalchemy import create_engine, text
+    with create_engine(db).connect() as c:
+        r = c.execute(text("""SELECT r.probe_of, t.generator, r.status, count(cr.check_id)
+                              FROM sim_run r JOIN testbench t ON t.id = r.testbench_id
+                              LEFT JOIN check_result cr ON cr.sim_run_id = r.id
+                              WHERE r.probe_of = 1 GROUP BY 1, 2, 3""")).one()
+        # zero + negative for 67 rows, overflow only for the 14 ADD/SUB rows
+        assert tuple(r) == (1, 'probe', 'ok', 67 * 2 + 14)
+        # the testbench's own pass rate is untouched by the probe
+        n = c.execute(text("SELECT count(*) FROM check_result WHERE sim_run_id = 1")).scalar()
+        assert n == 67
+
+
+def test_requirement_subject():
+    from src.xdb.explain import requirement_subject
+    assert requirement_subject("When opcode is 4'b0000 (ADD), result = (a + b) modulo 2^32.") == 'result'
+    assert requirement_subject('The zero output is 1 exactly when the registered result is 0') == 'zero'
+    assert requirement_subject('The overflow output is 1 for ADD when the signed sum ...') == 'overflow'
+    assert requirement_subject('SLTU compares unsigned') is None
+
+
+def test_requirement_status_follows_its_subject(run, db):
+    from sqlalchemy import create_engine, text
+    from src.xdb.explain import explain_requirement
+    eng = create_engine(db)
+    with eng.begin() as c:
+        def add(key, txt, scenarios):
+            rid = c.execute(text("INSERT INTO requirement (uid, rev, is_current, design_id, session_id, "
+                                 "req_key, text, origin, prov_kind) VALUES (gen_random_uuid(), 1, true, 1, 1, "
+                                 ":k, :t, 'user', 'human') RETURNING id"), {'k': key, 't': txt}).scalar()
+            for sk in scenarios:
+                c.execute(text("INSERT INTO scenario_requirement (scenario_id, requirement_id, method) "
+                               "SELECT id, :r, 'human' FROM scenario WHERE scenario_key = :s AND feature_id = 1"),
+                          {'r': rid, 's': sk})
+            return rid
+        zero_all = add('REQ-Z1', 'The zero output is 1 exactly when the result is 0',
+                       ['ALU-ADD-001', 'ALU-SLTU-001'])
+        zero_sub = add('REQ-Z2', 'The zero output is 1 exactly when the result is 0', ['ALU-SUB-001'])
+        res_sub = add('REQ-R1', 'When opcode is SUB, result = (a - b) modulo 2^32', ['ALU-SUB-001'])
+    try:
+        z1 = explain_requirement(zero_all, sim_run_id=_run1(), url=db)['structure']
+        assert (z1['subject'], z1['compared_by_testbench'], z1['status']) == ('zero', False, 'fail')
+        assert {(f['via'], f['verdict']) for f in z1['failing']} == \
+            {('flag probe', 'scenario_wrong'), ('flag probe', 'design_wrong')}
+        z2 = explain_requirement(zero_sub, sim_run_id=_run1(), url=db)
+        assert z2['structure']['status'] == 'verified_by_probe'
+        assert 'not compared by the testbench; observed by the flag probe' in z2['text']
+        r1 = explain_requirement(res_sub, sim_run_id=_run1(), url=db)['structure']
+        assert (r1['subject'], r1['status']) == ('result', 'fail')   # SUB row 7: scenario wrong
+    finally:
+        with eng.begin() as c:
+            c.execute(text("DELETE FROM scenario_requirement WHERE requirement_id IN (:a, :b, :c)"),
+                      {'a': zero_all, 'b': zero_sub, 'c': res_sub})
+            c.execute(text("DELETE FROM requirement WHERE id IN (:a, :b, :c)"),
+                      {'a': zero_all, 'b': zero_sub, 'c': res_sub})
 
 
 def test_global_explanation_overflow(run, db):
@@ -623,7 +704,11 @@ def test_overflow_rule_follows_the_step0_answer(run, db):
     assert (rc['judged'], rc['contradicting'], rc['missed_count']) == (5, 0, 0)
     assert rc['alternative'] is None and 'decided in Step 0' in g['text']
     loc = explain_check('ALU-ADD-001/r2', session_id=sid, url=db)['structure']
-    assert next(u for u in loc['unverified'] if u['port'] == 'overflow')['consistent'] is True
+    # scenario and Step 0 agree (carry); the design computes signed overflow -> the design is wrong now
+    ov = next(x for x in loc['probed'] if x['port'] == 'overflow')
+    assert (ov['stated'], ov['observed'], ov['rule_value'], ov['verdict']) == ('True', 0, 1, 'design_wrong')
+    assert g['structure']['probe'] == {'rows': 8, 'design_agrees': 2,
+                                       'verdicts': {'pass': 2, 'design_wrong': 6}}
     with eng.begin() as c:     # leave the session as the earlier test found it
         c.execute(text("DELETE FROM decision WHERE session_id = :s"), {'s': sid})
 
@@ -645,6 +730,14 @@ def test_explain_api(run, db, monkeypatch):
     assert s['verdicts'] == {'pass': 62, 'design_wrong': 3, 'scenario_wrong': 2}
     assert s['checks']['BDD:ALU-SUB-001/r7']['verdict'] == 'scenario_wrong'
     assert any('zero flag' in x and 'contradicts' in x for x in s['spec_check_text'])
+    # P4/P5: what was compared, and what the flag probe saw
+    assert s['compared_ports'] == ['result']
+    assert s['probe']['status'] == 'ok'
+    assert s['probe']['per_port']['zero'] == {'rows': 67, 'design_agrees': 64}
+    assert s['probe']['issues']['BDD:ALU-ADD-001/r7'] == [{'port': 'zero', 'verdict': 'scenario_wrong'}]
+    # P1: status by subject port
+    st = {r['req_key']: (r['status'], r['subject']) for r in s['requirements']}
+    assert st == {'REQ-1': ('verified', None), 'REQ-2': ('fail', None), 'REQ-3': ('not_covered', None)}
     e = c.post('/api/explain/check', json={'tag': 'BDD:ALU-SLTU-001/r4',
                                            'sim_run_id': s['sim_run_id']}).get_json()
     assert 'The design is wrong' in e['text']

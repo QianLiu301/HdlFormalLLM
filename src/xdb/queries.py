@@ -44,7 +44,7 @@ def requirement_coverage(session_id: int, url=None) -> List[Dict]:
         WITH latest_run AS (
             SELECT DISTINCT ON (t.session_id) r.id, t.session_id
             FROM sim_run r JOIN testbench t ON t.id = r.testbench_id
-            WHERE t.session_id = :sid ORDER BY t.session_id, r.id DESC)
+            WHERE t.session_id = :sid AND r.probe_of IS NULL ORDER BY t.session_id, r.id DESC)
         SELECT q.req_key, q.text, sc.scenario_key, sr.method,
                count(cr.check_id)                                   AS checks,
                count(*) FILTER (WHERE cr.status = 'pass')            AS passed,
@@ -88,6 +88,7 @@ def scenario_checks(scenario_id: int, url=None) -> List[Dict]:
         SELECT ci.tag, ci.strength, er.row_no, er.vals, cr.status, cr.expected,
                cr.observed, cr.message
         FROM check_item ci
+        JOIN testbench t ON t.id = ci.testbench_id AND t.generator <> 'probe'
         LEFT JOIN example_row er ON er.id = ci.example_row_id
         LEFT JOIN LATERAL (SELECT * FROM check_result c WHERE c.check_id = ci.id
                            ORDER BY c.sim_run_id DESC LIMIT 1) cr ON true
@@ -140,6 +141,7 @@ def recent_runs(limit: int = 10, url=None) -> List[Dict]:
                 FROM check_result WHERE sim_run_id = r.id GROUP BY 1) x) AS verdicts
         FROM sim_run r JOIN testbench t ON t.id = r.testbench_id
         JOIN session se ON se.id = t.session_id LEFT JOIN design d ON d.id = se.design_id
+        WHERE r.probe_of IS NULL
         ORDER BY r.id DESC LIMIT :n""")
     with xdb.session_scope(url) as s:
         return [dict(r) for r in s.execute(sql, {'n': limit}).mappings()]
