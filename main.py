@@ -1467,6 +1467,8 @@ def generate_hardware():
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
                             new_run=_chain_start(data, 'duv'), model_used=True)
     _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
+    # 解释里要说明场景/设计是用哪版 prompt 生成的
+    _ctx['extra']['prompt_version'] = prompt_version
     if _ctx['extra']['model_override_ignored']:
         print(f"⚠️  model '{_ctx['extra']['model_requested']}' ignored for "
               f"provider '{llm_name}' (override wired only for "
@@ -1658,6 +1660,8 @@ def generate_hardware_stream():
     if dec_error:
         return jsonify({'success': False, 'error': dec_error}), 400
     _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
+    # 解释里要说明场景/设计是用哪版 prompt 生成的
+    _ctx['extra']['prompt_version'] = prompt_version
 
     def _prep(gen):
         """把 Prompt 面板的选择交给生成器——_create_*_prompt 从这些属性上取。
@@ -1848,7 +1852,7 @@ def generate_hardware_stream():
                           meta={'llm': llm_name, 'module_type': module_type,
                                 'bitwidth': bitwidth, 'streaming': True,
                                 'compiles': (duv_compile or {}).get('ok'),
-                            'compile_error': (duv_compile or {}).get('error')})
+                                'compile_error': (duv_compile or {}).get('error')})
 
             # 到这里流式生成器已耗尽，其 finally 已写入 llm_calls，可安全回读
             yield make_sse_message("complete", filename=filename, filepath=str(hw_path),
@@ -2074,6 +2078,8 @@ def generate_bdd_stream():
     if dec_error:
         return jsonify({'success': False, 'error': dec_error}), 400
     _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
+    # 解释里要说明场景/设计是用哪版 prompt 生成的
+    _ctx['extra']['prompt_version'] = prompt_version
 
     def _generate_inner():
         try:
@@ -2220,6 +2226,8 @@ def generate_bdd():
         if dec_error:
             return jsonify({'success': False, 'error': dec_error}), 400
         _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
+        # 解释里要说明场景/设计是用哪版 prompt 生成的
+        _ctx['extra']['prompt_version'] = prompt_version
 
         generator = FeatureGeneratorLLM(
             llm_provider=llm_name,

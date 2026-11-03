@@ -497,3 +497,87 @@ def test_remap_restores_mappings(run, db):
     with eng.connect() as c:
         assert c.execute(text('SELECT count(*) FROM step_mapping')).scalar() == before
     assert out['mapped'] > 0
+
+
+CARRY_FEATURE = """Feature: 16-bit ALU Verification
+  As a hardware verification engineer
+  I want to verify the ALU implementation
+  So that I can ensure correct operation
+
+  Background:
+    Given the ALU is initialized with 16-bit operands
+
+  @add @arithmetic
+  Scenario Outline: Verify ADD operation
+    Given I have operand A = <A>
+    And I have operand B = <B>
+    When I perform the ADD operation with opcode 0000
+    Then the result should be <Expected_Result>
+    And the zero flag should be <Zero_Flag>
+    And the overflow flag should be <Overflow>
+    And the negative flag should be <Negative_Flag>
+
+    Examples:
+      | A     | B     | Expected_Result | Zero_Flag | Overflow | Negative_Flag |
+      | 0     | 0     | 0               | True      | False    | False         |
+      | 65535 | 65535 | 65534           | False     | True     | True          |
+      | 65535 | 1     | 0               | True      | True     | False         |
+      | 40000 | 30000 | 4464            | False     | True     | False         |
+      | 32767 | 1     | 32768           | False     | False    | True          |
+
+  @sub @arithmetic
+  Scenario Outline: Verify SUB operation
+    Given I have operand A = <A>
+    And I have operand B = <B>
+    When I perform the SUB operation with opcode 0001
+    Then the result should be <Expected_Result>
+    And the zero flag should be <Zero_Flag>
+    And the overflow flag should be <Overflow>
+    And the negative flag should be <Negative_Flag>
+
+    Examples:
+      | A | B | Expected_Result | Zero_Flag | Overflow | Negative_Flag |
+      | 5 | 3 | 2               | False     | False    | False         |
+      | 0 | 1 | 65535           | False     | True     | True          |
+      | 1 | 2 | 65535           | False     | True     | True          |
+"""
+
+
+def test_global_explanation_detects_carry_meaning_of_overflow(run, db):
+    """Reproduces a DeepSeek run: the scenarios use "overflow" for unsigned
+    carry/borrow, the design template means signed overflow, and the
+    testbench never compares the flag, so the simulation passes."""
+    from sqlalchemy import create_engine, text
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.explain import explain_global
+    from src.xdb.ingest import ingest_run
+    proj, _ = run
+    out = proj / 'output'
+    (out / 'bdd/carry.feature').write_text(CARRY_FEATURE, encoding='utf-8')
+    (out / 'dut/alu_16bit.v').write_text(
+        ALU.replace('alu_32bit', 'alu_16bit').replace('WIDTH = 32', 'WIDTH = 16'), encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/carry.feature'),
+        {'module_type': 'alu', 'module_name': 'alu_16bit', 'bitwidth': 16},
+        output_filename='carry_tb.v')
+    assert tb['success'], tb
+    vvp = proj / 'carry.vvp'
+    subprocess.run(['iverilog', '-g2012', '-o', str(vvp), tb['filepath'], str(out / 'dut/alu_16bit.v')],
+                   check=True, cwd=proj)
+    log = subprocess.run(['vvp', str(vvp)], capture_output=True, text=True, cwd=proj,
+                         encoding='utf-8', errors='replace').stdout
+    (out / 'simulation/carry.log').write_text(log, encoding='utf-8')
+    res = ingest_run(proj, {'bdd': 'output/bdd/carry.feature', 'duv': 'output/dut/alu_16bit.v',
+                            'testbench': str(Path(tb['filepath']).relative_to(proj)),
+                            'log': 'output/simulation/carry.log'},
+                     run_id='web_carry', url=db, data={'module_type': 'alu', 'bitwidth': 16})
+    assert res['verdicts'] == {'pass': 8}                       # the simulation sees nothing wrong
+    with create_engine(db).connect() as c:
+        fid = c.execute(text("SELECT f.id FROM feature f JOIN session s ON s.id = f.session_id "
+                             "WHERE s.run_key = 'web_carry'")).scalar()
+    g = explain_global(fid, 'overflow', 'True', url=db)
+    rc = g['structure']['rule_check']
+    assert (rc['judged'], rc['contradicting']) == (5, 5)
+    assert rc['alternative']['name'] == 'unsigned carry/borrow'
+    assert [(m['scenario_key'], m['row_no']) for m in rc['missed']] == [('ALU-ADD-001', 5)]
+    assert 'seems to use "overflow" in that sense' in g['text']
