@@ -2413,6 +2413,11 @@ class TestbenchGenerator:
             v2 = _int(sc.get('rs2_value'))
             rd = _int(sc.get('rd'))
             slot = (RESULT_BASE + len(checks) * 4)
+            # 索引用（不进 testbench 文本）：这一行实际怎么被测的。解释层据此
+            # 判断场景本身是否自洽、testbench 是否真的观测到了指令的结果
+            stim = {'instruction': text.strip(), 'rs1': rs1, 'rs1_value': v1, 'rs2': rs2,
+                    'rs2_value': v2, 'rd': rd, 'mem_value': _int(sc.get('mem_value'))}
+            b_exp = _int(sc.get('expected'))
 
             # 预置寄存器只能用 ADDI（无 LUI），装不下的值整行跳过并计数，
             # 不硬凑——凑出来的激励与 BDD 写的不是同一个测试。
@@ -2460,6 +2465,15 @@ class TestbenchGenerator:
                                'label': f'{text.strip()} '
                                         f'({"taken" if want_taken else "not taken"})'})
                 stats['branch'] += 1
+                # 分支的结论按「跳 / 不跳」记（1 / 0）；槽位里 0 表示跳了，
+                # MARKER 表示没跳，其他值说明观测本身坏了
+                nominal = self._branch_taken(mnem, v1 or 0, v2 or 0)
+                self._trace_detail(trace, sc, port='taken', width=1, operation=mnem.upper(),
+                                   stimulus={**stim, 'path': 'branch', 'marker': MARKER},
+                                   expected_bdd=None if taken is None else int(_yes(taken)),
+                                   expected_ref=None if nominal is None else int(nominal),
+                                   expected_used=int(bool(want_taken)),
+                                   oracle='spec' if (oracle_source == 'spec' or taken is None) else 'bdd')
                 continue
 
             # ---- 写寄存器的指令：SW 出去再读 ----
@@ -2475,6 +2489,10 @@ class TestbenchGenerator:
                     checks.append({'tid': self._trace_tag(trace, sc), 'slot': (v1 & 0x3FF) // 4, 'expected': exp,
                                    'label': text.strip()})
                     stats['memory'] += 1
+                    self._trace_detail(trace, sc, port='mem', width=bitwidth, operation='SW',
+                                       stimulus={**stim, 'path': 'memory'},
+                                       expected_bdd=b_exp, expected_ref=v2, expected_used=exp & M32,
+                                       oracle='bdd' if (oracle_source != 'spec' and b_exp is not None) else 'spec')
                     continue
                 skip(sc, 'skipped_unsupported')
                 continue
@@ -2519,6 +2537,12 @@ class TestbenchGenerator:
             words += [NOP, NOP, NOP]
             checks.append({'tid': self._trace_tag(trace, sc), 'slot': slot // 4, 'expected': exp & M32,
                            'label': text.strip()})
+            nominal = (_int(sc.get('mem_value')) if mnem == 'lw'
+                       else self._rv32i_reference(mnem, v1 or 0, v2 or 0, imm))
+            self._trace_detail(trace, sc, port='rd', width=bitwidth, operation=mnem.upper(),
+                               stimulus={**stim, 'path': 'register', 'imm': imm},
+                               expected_bdd=b_exp, expected_ref=nominal, expected_used=exp & M32,
+                               oracle='bdd' if (oracle_source != 'spec' and b_exp is not None) else 'spec')
 
         words += [NOP] * 8
         quality_analysis['trace'] = trace

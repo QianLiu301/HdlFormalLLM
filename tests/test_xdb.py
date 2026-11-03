@@ -1048,7 +1048,7 @@ def test_design_repair_only_for_alu(run, db, monkeypatch):
     r = c.post('/api/generate-hardware', json={'module_type': 'counter', 'llm': 'deepseek',
                                                'repair_of': {'testbench_path': paths['testbench'],
                                                              'log_file': paths['log']}})
-    assert r.status_code == 400 and 'register-file designs only' in r.get_json()['error']
+    assert r.status_code == 400 and 'CPU designs only' in r.get_json()['error']
 
 
 # ================================================================ register file (M5)
@@ -1364,3 +1364,361 @@ def test_regfile_repair_scenarios_and_design(rf_run, db, monkeypatch):
     assert s3['verdicts'] == {'pass': 10, 'setup': 6}          # 9 reads + the testbench's own R0 check
     assert [p['who'] for p in s3['problems']] == ['coverage']
     assert s3['repairs']['duv_reason'] == f"feedback:{hw['repair']['feedback_id']}"
+
+
+# ================================================================ RV32I CPU (M5b)
+# Every Examples row runs as its own short program (ADDI loads the operands, the
+# instruction runs, SW stores the result). CPU_FEATURE has: two plain scenario
+# mistakes (SUB 10-30 expects 20; BLT -5<3 expects "no"), a row that gives x1
+# two values, a row that writes x0, an LW with an offset and a prompt-format SW
+# row (both beyond what the testbench can check). CPU_BUGGY compares SLT/SLTI
+# unsigned.
+
+CPU_FEATURE = """Feature: RISC-V CPU Verification (5-stage pipeline)
+  As a hardware verification engineer
+  I want to verify the RISC-V CPU implementation
+  So that I can ensure correct instruction execution
+
+  Background:
+    Given the CPU is a 5-stage pipeline RV32I processor
+    And all registers are initialized to 0
+
+  @arithmetic @req_1
+  Scenario Outline: Instructions that write a register
+    Given register x<rs1> contains <rs1_value>
+    And register x<rs2> contains <rs2_value>
+    When I execute <instruction>
+    Then register x<rd> should contain <expected>
+
+    Examples:
+      | instruction      | rs1 | rs1_value | rs2 | rs2_value | rd | expected |
+      | add x3, x1, x2   | 1   | 10        | 2   | 20        | 3  | 30       |
+      | sub x3, x1, x2   | 1   | 10        | 2   | 30        | 3  | 20       |
+      | addi x3, x1, 100 | 1   | 50        | 0   | 0         | 3  | 150      |
+      | add x3, x1, x1   | 1   | 5         | 1   | 7         | 3  | 12       |
+      | addi x0, x1, 5   | 1   | 10        | 0   | 0         | 0  | 15       |
+
+  @logical @req_1
+  Scenario Outline: Bitwise instructions
+    Given register x<rs1> contains <rs1_value>
+    And register x<rs2> contains <rs2_value>
+    When I execute <instruction>
+    Then register x<rd> should contain <expected>
+
+    Examples:
+      | instruction     | rs1 | rs1_value | rs2 | rs2_value | rd | expected |
+      | and x3, x1, x2  | 1   | 0xFF      | 2   | 0x0F      | 3  | 0x0F     |
+      | or x3, x1, x2   | 1   | 0xF0      | 2   | 0x0F      | 3  | 0xFF     |
+      | xori x3, x1, 15 | 1   | 0xFF      | 0   | 0         | 3  | 0xF0     |
+
+  @compare @req_2
+  Scenario Outline: Signed comparison
+    Given register x<rs1> contains <rs1_value>
+    And register x<rs2> contains <rs2_value>
+    When I execute <instruction>
+    Then register x<rd> should contain <expected>
+
+    Examples:
+      | instruction     | rs1 | rs1_value | rs2 | rs2_value | rd | expected |
+      | slt x3, x1, x2  | 1   | -1        | 2   | 1         | 3  | 1        |
+      | slt x3, x1, x2  | 1   | 5         | 2   | 3         | 3  | 0        |
+      | slti x3, x1, 0  | 1   | -1        | 0   | 0         | 3  | 1        |
+
+  @memory @req_3
+  Scenario Outline: Load and store, one instruction per row
+    Given register x<rs1> contains address <rs1_value>
+    And memory at that address contains <mem_value>
+    When I execute <instruction>
+    Then register x<rd> should contain <expected>
+
+    Examples:
+      | instruction    | rs1 | rs1_value | rs2 | rs2_value | rd | mem_value | expected |
+      | lw x3, 0(x1)   | 1   | 0x100     | 0   | 0         | 3  | 0x1234    | 0x1234   |
+      | lw x4, 4(x1)   | 1   | 0x180     | 0   | 0         | 4  | 0x55      | 0x55     |
+      | sw x2, 0(x1)   | 1   | 0x140     | 2   | 0x7BC     | 0  | 0         | 0x7BC    |
+
+  @branch @req_4
+  Scenario Outline: Branch taken or not taken
+    Given register x<rs1> contains <rs1_value>
+    And register x<rs2> contains <rs2_value>
+    When I execute <instruction>
+    Then the branch is taken should be <taken>
+
+    Examples:
+      | instruction    | rs1 | rs1_value | rs2 | rs2_value | taken |
+      | beq x1, x2, 8  | 1   | 10        | 2   | 10        | yes   |
+      | beq x1, x2, 8  | 1   | 10        | 2   | 20        | no    |
+      | bne x1, x2, 8  | 1   | 10        | 2   | 20        | yes   |
+      | blt x1, x2, 8  | 1   | -5        | 2   | 3         | no    |
+      | bge x1, x2, 8  | 1   | -5        | 2   | 3         | no    |
+"""
+
+CPU_OK = """// Minimal RV32I subset CPU for the explainability tests: one instruction per
+// cycle, a load takes two (the testbench's data memory reads synchronously).
+module riscv_cpu (
+    input  wire        clk,
+    input  wire        rst_n,
+    output wire [31:0] imem_addr,
+    input  wire [31:0] imem_data,
+    output wire [31:0] dmem_addr,
+    output wire [31:0] dmem_wdata,
+    output wire        dmem_wen,
+    output wire [3:0]  dmem_be,
+    input  wire [31:0] dmem_rdata,
+    output wire [31:0] debug_pc,
+    output wire [31:0] debug_inst
+);
+    reg [31:0] pc;
+    reg [31:0] x [0:31];
+    reg        load_wait;
+    integer k;
+
+    wire [31:0] inst = imem_data;
+    wire [6:0]  opc  = inst[6:0];
+    wire [4:0]  rd   = inst[11:7];
+    wire [2:0]  f3   = inst[14:12];
+    wire [4:0]  rs1  = inst[19:15];
+    wire [4:0]  rs2  = inst[24:20];
+    wire [6:0]  f7   = inst[31:25];
+    wire [31:0] a    = (rs1 == 0) ? 32'd0 : x[rs1];
+    wire [31:0] b    = (rs2 == 0) ? 32'd0 : x[rs2];
+    wire [31:0] imm_i = {{20{inst[31]}}, inst[31:20]};
+    wire [31:0] imm_s = {{20{inst[31]}}, inst[31:25], inst[11:7]};
+    wire [31:0] imm_b = {{19{inst[31]}}, inst[31], inst[7], inst[30:25], inst[11:8], 1'b0};
+
+    wire is_r = opc == 7'b0110011, is_i = opc == 7'b0010011, is_lw = opc == 7'b0000011,
+         is_sw = opc == 7'b0100011, is_br = opc == 7'b1100011;
+    wire [31:0] op2 = is_r ? b : imm_i;
+
+    reg [31:0] alu;
+    always @(*) begin
+        case (f3)
+            3'b000: alu = (is_r && f7[5]) ? a - op2 : a + op2;
+            3'b010: alu = ($signed(a) < $signed(op2)) ? 32'd1 : 32'd0;     // SLT / SLTI
+            3'b100: alu = a ^ op2;
+            3'b110: alu = a | op2;
+            3'b111: alu = a & op2;
+            default: alu = 32'd0;
+        endcase
+    end
+
+    reg taken;
+    always @(*) begin
+        case (f3)
+            3'b000: taken = a == b;
+            3'b001: taken = a != b;
+            3'b100: taken = $signed(a) < $signed(b);
+            3'b101: taken = $signed(a) >= $signed(b);
+            default: taken = 1'b0;
+        endcase
+    end
+
+    assign imem_addr  = pc;
+    assign dmem_addr  = is_sw ? a + imm_s : a + imm_i;
+    assign dmem_wdata = b;
+    assign dmem_wen   = is_sw & rst_n;
+    assign dmem_be    = 4'b1111;
+    assign debug_pc   = pc;
+    assign debug_inst = inst;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pc <= 0; load_wait <= 0;
+            for (k = 0; k < 32; k = k + 1) x[k] <= 0;
+        end else if (is_lw && !load_wait) begin
+            load_wait <= 1;                                   // address out, data next cycle
+        end else begin
+            load_wait <= 0;
+            if ((is_r || is_i) && rd != 0) x[rd] <= alu;
+            if (is_lw && rd != 0) x[rd] <= dmem_rdata;
+            pc <= (is_br && taken) ? pc + imm_b : pc + 4;
+        end
+    end
+endmodule
+"""
+
+CPU_BUGGY = CPU_OK.replace("3'b010: alu = ($signed(a) < $signed(op2)) ? 32'd1 : 32'd0;     // SLT / SLTI",
+                           "3'b010: alu = (a < op2) ? 32'd1 : 32'd0;     // BUG: SLT compares unsigned")
+
+CPU_RECORD = {'module_type': 'cpu', 'created_at': '2026-11-03T14:00:00', 'questions': [], 'decisions': [],
+              'requirements': [
+                  {'id': 'REQ-1', 'text': 'Arithmetic and logical instructions write their result to rd.',
+                   'source': 'llm'},
+                  {'id': 'REQ-2', 'text': 'SLT and SLTI compare signed values.', 'source': 'llm'},
+                  {'id': 'REQ-3', 'text': 'LW loads a word from memory; SW stores a word to memory.',
+                   'source': 'llm'},
+                  {'id': 'REQ-4', 'text': 'Branches are taken exactly when their condition holds.',
+                   'source': 'llm'}]}
+CPU_DUT = {'module_type': 'cpu', 'module_name': 'riscv_cpu', 'bitwidth': 32, 'pipeline_stages': 5}
+
+
+@pytest.fixture(scope='module')
+def cpu_run(db, tmp_path_factory):
+    """The CPU sample, simulated on the CPU whose SLT compares unsigned (run id cpu_run)."""
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.ingest import ingest_run
+    proj = tmp_path_factory.mktemp('cpuproj')
+    out = proj / 'output'
+    for d in ('bdd', 'dut', 'requirements', 'simulation'):
+        (out / d).mkdir(parents=True)
+    (out / 'bdd/cpu.feature').write_text(CPU_FEATURE, encoding='utf-8')
+    (out / 'dut/cpu.v').write_text(CPU_BUGGY, encoding='utf-8')
+    (out / 'requirements/req.json').write_text(json.dumps(CPU_RECORD), encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/cpu.feature'), dict(CPU_DUT))
+    assert tb['success'], tb
+    _simulate(proj, tb['filepath'], out / 'dut/cpu.v', 'output/simulation/cpu.log')
+    paths = {'requirements': 'output/requirements/req.json', 'bdd': 'output/bdd/cpu.feature',
+             'duv': 'output/dut/cpu.v', 'testbench': Path(tb['filepath']).relative_to(proj).as_posix(),
+             'log': 'output/simulation/cpu.log'}
+    res = ingest_run(proj, paths, run_id='cpu_run', url=db, data={'bitwidth': 32})
+    assert res['ingested'], res
+    return proj, paths, res
+
+
+def test_cpu_rules_match_the_testbench_reference():
+    """Library RV32I semantics vs. TestbenchGenerator._rv32i_reference / _branch_taken."""
+    import random
+    from src.testbench_generator import TestbenchGenerator as T
+    from src.xdb import library as L
+    rnd = random.Random(7)
+    corners = [0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 2047, 0xFFFFF800]
+    for op in ('add', 'sub', 'and', 'or', 'xor', 'slt', 'addi', 'andi', 'ori', 'xori', 'slti'):
+        for a in corners + [rnd.getrandbits(32) for _ in range(40)]:
+            for b in corners[:4] + [rnd.getrandbits(32)]:
+                imm = L._s32(b) % 4096 - 2048 if op.endswith('i') else None
+                lib = L.CPU_RULES[op.upper()]['cfn'](a, (imm & 0xFFFFFFFF) if imm is not None else b)
+                assert lib == T._rv32i_reference(op, a, b, imm), (op, a, b, imm)
+    for op in ('beq', 'bne', 'blt', 'bge'):
+        for a in corners:
+            for b in corners:
+                assert L.CPU_RULES[op.upper()]['cfn'](a, b) == T._branch_taken(op, a, b)
+
+
+def test_cpu_reference_judges_a_row_as_executed():
+    from src.xdb.library import cpu_reference as ref
+    row = lambda ins, **kw: {'instruction': ins, 'rs1': 1, 'rs1_value': 10, 'rs2': 2, 'rs2_value': 20,
+                             'rd': 3, 'path': 'register', **kw}
+    assert ref(row('add x3, x1, x2'))['value'] == 30
+    same = ref(row('add x3, x1, x1', rs2=1, rs2_value=7))
+    assert same['value'] == 14 and [n['kind'] for n in same['notes']] == ['same_register']
+    x0 = ref(row('addi x0, x1, 5', rd=0))
+    assert x0['value'] == 0 and [n['kind'] for n in x0['notes']] == ['x0_dest']
+    assert ref(row('add x3, x1, x0', rs2=0, rs2_value=5))['notes'][0]['kind'] == 'x0_value'
+    kinds = lambda r: [(i['kind'], i['fault']) for i in r['issues']]
+    assert kinds(ref(row('lw x3, 4(x1)', mem_value=5))) == [('offset', 'test')]
+    assert kinds(ref(row('sw x2, 0(x1)', rd=0))) == [('store_checked_as_register', 'test')]
+    assert ref(row('sw x2, 0(x1)', rd=None, path='memory'))['value'] == 20
+    assert kinds(ref(row('add x5, x1, x2'))) == [('rd_mismatch', 'scenario')]
+    assert kinds(ref(row('add x3, x4, x2'))) == [('unset_register', 'scenario')]
+    assert kinds(ref(row('add x3, x30, x2'))) == [('reserved', 'test'), ('unset_register', 'scenario')]
+    assert ref(row('blt x1, x2, 8', rs1_value=-5, rs2_value=3))['value'] == 1
+    assert ref(row('lw x3, 4(x1)', mem_value=5))['value'] is None
+
+
+def test_cpu_steps_are_all_mapped(cpu_run, db):
+    from sqlalchemy import func, select
+    from src import xdb
+    from src.xdb import models as M
+    with xdb.session_scope(db) as s:
+        n = dict(s.execute(select(M.StepMapping.canonical_step_id.is_(None), func.count())
+                           .join(M.Scenario, M.Scenario.id == M.StepMapping.scenario_id)
+                           .join(M.Feature, M.Feature.id == M.Scenario.feature_id)
+                           .join(M.Session, M.Session.id == M.Feature.session_id)
+                           .where(M.Session.run_id == 'cpu_run')
+                           .group_by(M.StepMapping.canonical_step_id.is_(None))).all())
+    assert n.get(True, 0) == 0 and n[False] > 25
+
+
+def test_cpu_verdicts_problems_and_requirements(cpu_run, db):
+    from src.xdb.explain import summarize_run
+    proj, paths, res = cpu_run
+    assert res['verdicts'] == {'pass': 11, 'scenario_wrong': 4, 'design_wrong': 2, 'undecided': 2}
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    probs = {p['title']: (p['who'], p['detail']) for p in s['problems']}
+    assert list(probs)[:2] == ['The design executes SLT wrong', 'The design executes SLTI wrong']
+    assert probs['The design executes SLT wrong'][1].endswith(
+        'the design gives 0, correct is 1. The design seems to compare the operands as unsigned numbers.')
+    assert 'the scenario expects 20, correct is -20' in probs['A scenario expects a wrong SUB result'][1]
+    assert 'the scenario says not taken, but it is taken' in probs['A scenario expects the wrong BLT decision'][1]
+    assert 'gives x1 two values, 5 and 7' in probs['A scenario expects a wrong ADD result'][1]
+    assert 'writes x0, which always stays 0' in probs['A scenario expects a wrong ADDI result'][1]
+    who, detail = probs['The testbench cannot check 2 examples']
+    assert who == 'test' and 'ignores the offset 4 of LW' in detail
+    for title, (_, detail) in probs.items():
+        assert 'CPU-' not in title + detail and 'BDD:' not in detail
+    assert s['overview']['checked'][0].startswith('19 instructions were simulated')
+    st = {r['req_key']: (r['status'], r['subject']) for r in s['requirements']}
+    assert st == {'REQ-1': ('fail', None), 'REQ-2': ('fail', None), 'REQ-3': ('verified', None),
+                  'REQ-4': ('fail', 'taken')}
+    assert next(r for r in s['requirements'] if r['req_key'] == 'REQ-3')['unchecked'] == 2   # LW offset, SW
+    assert s['repairs']['scenario_values'] == 3 and s['repairs']['design_failures'] == 2
+
+
+def test_cpu_local_explanations(cpu_run, db):
+    from src.xdb.explain import explain_check, summarize_run
+    proj, paths, _ = cpu_run
+    run = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)['sim_run_id']
+    sub = explain_check('CPU-ARITHMETIC-001/r2', sim_run_id=run, url=db)['plain']
+    assert sub['title'] == 'sub x3, x1, x2 with x1 = 10, x2 = 30'
+    assert sub['lines'][1] == 'Why -20: SUB writes rs1 − rs2 (modulo 2^32) to rd; here 10 − 30 = -20.'
+    slt = explain_check('CPU-COMPARE-001/r1', sim_run_id=run, url=db)
+    assert slt['structure']['verdict'] == 'design_wrong'
+    assert slt['plain']['lines'][0] == ('The design is wrong: x3 should be 1, as the scenario expects, '
+                                        'but the design gives 0.')
+    assert 'The design seems to compare the operands as unsigned numbers.' in slt['plain']['lines']
+    br = explain_check('CPU-BRANCH-001/r4', sim_run_id=run, url=db)['plain']['lines']
+    assert br[0].startswith('The scenario is wrong, not the design. It says the branch is not taken, but it is taken')
+    assert br[1] == 'Why taken: BLT is taken when rs1 < rs2 as signed numbers; here -5 < 3 is true.'
+    sw = explain_check('CPU-MEMORY-001/r3', sim_run_id=run, url=db)
+    assert sw['structure']['verdict'] == 'undecided'
+    assert sw['plain']['lines'] == ['This example cannot be checked as written: the testbench checks register x0 '
+                                    'instead of the memory the store writes. This is a limitation of the '
+                                    'testbench, not a fault of the design or the scenario.']
+    assert sw['structure']['stimulus']['tb_reference'] is None
+
+
+def test_cpu_repair_scenarios_and_design(cpu_run, db, monkeypatch):
+    from src import experiment_logger
+    proj, paths, _ = cpu_run
+    c = _client((proj, paths), db, monkeypatch)
+    body = _page_body(paths, run_id='cpu_run', dut_info=dict(CPU_DUT))
+    r = c.post('/api/repair/scenarios', json=body).get_json()
+    assert r['success'], r
+    # the row that gives x1 two values is left alone: a new expected value would hide the contradiction
+    assert [(x['operation'], x['old'], x['new']) for x in r['corrections']] == [
+        ('SUB', '20', '-20'), ('ADDI', '15', '0'), ('BLT', 'no', 'yes')]
+    assert r['corrections'][2]['text'] == 'blt x1, x2, 8 with x1 = -5, x2 = 3: branch taken no → yes'
+    body2 = _page_body(paths, run_id='cpu_run', dut_info=dict(CPU_DUT), bdd_filepath=r['feature_path'],
+                       testbench_path=r['testbench_path'], log_file=r['simulation']['log_file'])
+    assert c.post('/api/run-report', json=body2).get_json()['success']
+    s2 = _summary_when_ready(c, body2)
+    assert s2['verdicts'] == {'pass': 14, 'scenario_wrong': 1, 'design_wrong': 2, 'undecided': 2}
+
+    fb = c.post('/api/repair/design-feedback', json=body2).get_json()
+    assert fb['success'] and fb['count'] == 2 and fb['operations'] == ['SLT', 'SLTI']
+    assert '- slt x3, x1, x2 with x1 = -1, x2 = 1: x3 must be 1, the design gave 0' in fb['text']
+    assert '- SLTI: SLTI writes 1 to rd if rs1 < imm as signed numbers, else 0' in fb['text']
+
+    class FakeDesignModel:
+        def _call_api(self, prompt, max_tokens=None, system_prompt=None, sampling=None):
+            return '```verilog\n' + CPU_OK + '\n```'
+    experiment_logger.instrument_class(FakeDesignModel)
+    import main
+    monkeypatch.setattr(main.CPUGenerator, '_setup_llm', lambda self: FakeDesignModel())
+    hw = c.post('/api/generate-hardware', json={
+        'module_type': 'cpu', 'llm': 'deepseek', 'bitwidth': 32, 'pipeline_stages': 5,
+        'workflow_mode': 'implementation', 'run_id': 'cpu_run',
+        'repair_of': {'testbench_path': r['testbench_path'], 'log_file': r['simulation']['log_file']}}).get_json()
+    assert hw['success'], hw
+    new_duv = Path(hw['filepath']).relative_to(proj).as_posix()
+    rr = c.post('/api/repair/rerun', json=_page_body(paths, run_id='cpu_run', dut_info=dict(CPU_DUT),
+                                                     bdd_filepath=r['feature_path'], duv_filepath=new_duv)).get_json()
+    assert rr['success'], rr
+    body3 = _page_body(paths, run_id='cpu_run', dut_info=dict(CPU_DUT), bdd_filepath=r['feature_path'],
+                       duv_filepath=new_duv, testbench_path=rr['testbench_path'],
+                       log_file=rr['simulation']['log_file'])
+    assert c.post('/api/run-report', json=body3).get_json()['success']
+    s3 = _summary_when_ready(c, body3)
+    assert s3['verdicts'] == {'pass': 16, 'scenario_wrong': 1, 'undecided': 2}
+    assert sorted(p['who'] for p in s3['problems']) == ['scenario', 'test']

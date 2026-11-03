@@ -141,7 +141,12 @@ register file: rows run in order with state carried across scenarios; index
 records writes/resets as setup rows; `library.regfile_replay` gives each
 read's value and cause; explanations name the write/reset behind a value;
 subject port rdata1; repair works for regfile; `stage_run.py regfile`).
-M5b next (CPU) … M6 in the design doc. Product output (explanations, UI text,
+M5b done (D28, CPU: `library.cpu_operands`/`cpu_reference` judge each row as
+executed — R replaces the testbench's nominal value at ingestion; notes
+(same register twice, x0) vs. issues (scenario: unset/mismatched registers;
+testbench: offsets, SW-as-register, x29/x30) → verdict undecided; branches
+as taken 1/0; `stage_run.py cpu`). Known testbench-generator bugs (SW rows
+with rd, ignored offsets) are for a master-side fix. Next: counter, M6. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.

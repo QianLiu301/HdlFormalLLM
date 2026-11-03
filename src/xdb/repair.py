@@ -60,14 +60,25 @@ def _column_of(s, scenario_id: int, key: str) -> Optional[str]:
     return (row[0].get(vp) or {}).get('col')
 
 
-def _fmt_result(R: int, old: str, w: int) -> str:
-    """The reference value in the style of the cell it replaces."""
+def _fmt_result(R: int, old: str, w: int, signed: bool = False) -> str:
+    """The reference value in the style of the cell it replaces (signed=True:
+    a negative value is written as such, as RV32I scenarios do)."""
     old = (old or '').strip()
     if old.lower().startswith('0x'):
         return f'0x{R:X}'
-    if old.startswith('-') and R >= 1 << (w - 1):
+    if (old.startswith('-') or signed) and R >= 1 << (w - 1):
         return str(R - (1 << w))
     return str(R)
+
+
+def _fmt_bool(v: int, old: str) -> str:
+    """A yes/no cell (branch taken) in the words the scenario used."""
+    o = (old or '').strip()
+    for yes, no in (('yes', 'no'), ('taken', 'not taken'), ('true', 'false'), ('y', 'n'), ('1', '0')):
+        if o.lower() in (yes, no):
+            w = yes if v else no
+            return w.upper() if o.isupper() else (w.capitalize() if o[:1].isupper() else w)
+    return 'yes' if v else 'no'
 
 
 def _fmt_flag(v: int, old: str) -> str:
@@ -84,21 +95,27 @@ def scenario_corrections(s, run_id: int) -> List[Dict]:
     run = s.get(M.SimRun, run_id)
     sess = s.get(M.Session, s.get(M.Testbench, run.testbench_id).session_id)
     design = s.get(M.Design, sess.design_id) if sess.design_id else None
-    outcome_key = (L.library_for(design.module_type if design else None) or {}).get('outcome_key',
-                                                                                    'ALU.Q.RESULT')
+    lib = L.library_for(design.module_type if design else None) or {}
+    outcome_key = lib.get('outcome_key', 'ALU.Q.RESULT')
+    outcome_keys = lib.get('outcome_keys') or {}
     for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
                             .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
                             .where(M.CheckResult.sim_run_id == run_id, M.CheckItem.seq == 1)):
         if cr.verdict not in _FIXABLE or ci.expected_ref is None or not ci.scenario_id:
             continue
+        if lib.get('reference') and any(n['kind'] in ('same_register', 'x0_value')
+                                        for n in L.cpu_reference(ci.stimulus or {})['notes']):
+            continue        # the row contradicts itself; a new expected value would hide that
         er = s.get(M.ExampleRow, ci.example_row_id) if ci.example_row_id else None
-        col = _column_of(s, ci.scenario_id, outcome_key)
+        col = _column_of(s, ci.scenario_id, outcome_keys.get(ci.port, outcome_key))
         if er is None or not col or col not in (er.vals or {}):
             continue
         old = er.vals[col]
         out.append({'tag': ci.tag, 'scenario_key': ci.tag[4:].rsplit('/r', 1)[0], 'row_no': er.row_no,
                     'port': ci.port or 'result', 'column': col, 'old': old,
-                    'new': _fmt_result(int(ci.expected_ref), old, ci.width or 32), 'width': ci.width,
+                    'new': (_fmt_bool(int(ci.expected_ref), old) if ci.port == 'taken'
+                            else _fmt_result(int(ci.expected_ref), old, ci.width or 32,
+                                             signed=bool(lib.get('reference')))), 'width': ci.width,
                     'operation': ci.operation, 'stimulus': ci.stimulus})
     for (tag, port), o in _probe_results(s, _probe_run_id(s, run_id)).items():
         if o['verdict'] not in _FIXABLE or o['stated'] is None or o['rule_value'] is None:
@@ -121,6 +138,10 @@ def _describe(c: Dict) -> str:
     """One plain line for the page: inputs, then old -> new cell value."""
     from src.xdb.explain import _pv
     st, w = c.get('stimulus') or {}, c.get('width')
+    if 'instruction' in st:                # CPU: the instruction and its operands
+        from src.xdb.explain import _cpu_example
+        what = 'branch taken' if c['port'] == 'taken' else 'expected value'
+        return f"{_cpu_example(st)}: {what} {c['old']} → {c['new']}"
     if 'addr' in st:                       # register file: the read the value belongs to
         from src.xdb.explain import _example
         ex = _example('regfile', c.get('operation'), st, w)
@@ -295,6 +316,20 @@ def _rf_item(ci, cr, h: Optional[Dict], w: int) -> str:
     return line + ('. Before it: ' + '; '.join(ev) if ev else '')
 
 
+def _cpu_item(ci, cr) -> str:
+    """One failing CPU example: the instruction, its operands, what it must and did produce."""
+    from src.xdb.explain import _cpu_example, _cpu_val
+    port = ci.port or 'rd'
+    O = int(cr.observed_value) if cr.observed_value is not None else None
+    R = int(ci.expected_ref)
+    got = _cpu_val(O, port) if O is not None else f"an unexpected value ({(cr.observed or {}).get(port)})"
+    if port == 'taken':
+        return f"- {_cpu_example(ci.stimulus)}: the branch must be {_cpu_val(R, port)}, the design result was {got}"
+    ops = L.cpu_operands((ci.stimulus or {}).get('instruction') or '') or {}
+    where = f"x{ops.get('rd')}" if port == 'rd' and ops.get('rd') is not None else 'the stored word'
+    return f"- {_cpu_example(ci.stimulus)}: {where} must be {_cpu_val(R, port)}, the design gave {got}"
+
+
 def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tuple[Optional[Dict], Optional[str]]:
     """The design's failing checks as prompt text: inputs, correct value, the
     design's value, and the rules those checks follow; plus the Verilog that
@@ -313,6 +348,7 @@ def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tup
         items: List[Tuple[str, str]] = []
         ops, main_bad, ports = set(), set(), set()
         stateful = bool((L.library_for(mt) or {}).get('stateful'))
+        cpu = bool((L.library_for(mt) or {}).get('reference'))
         hist = _rf_history(s, tb.id, W) if stateful else {}
         for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
                                 .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
@@ -320,6 +356,11 @@ def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tup
                                 .order_by(M.CheckItem.test_no)):
             if ci.tag.startswith('GEN:') and cr.status == 'fail':
                 items.append(('', f"- the testbench's own check “{ci.label}” failed: {cr.message or ''}".rstrip()))
+                continue
+            if cpu and cr.verdict in _DESIGN_FAULT and ci.expected_ref is not None:
+                main_bad.add(ci.tag)
+                ops.add(ci.operation)
+                items.append((ci.operation, _cpu_item(ci, cr)))
                 continue
             if stateful and cr.verdict in _DESIGN_FAULT and ci.expected_ref is not None:
                 main_bad.add(ci.tag)
@@ -395,7 +436,7 @@ def close_feedback(fb_id: int, status: str, result_ref: Optional[str] = None, ur
 
 
 # Module types whose design Step 1 can regenerate with feedback (main.py).
-DESIGN_REPAIR_TYPES = ('alu', 'regfile')
+DESIGN_REPAIR_TYPES = ('alu', 'regfile', 'cpu')
 
 
 def available(s, run_id: int, module_type: Optional[str]) -> Dict:

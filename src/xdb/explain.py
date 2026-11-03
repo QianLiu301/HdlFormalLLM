@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.7'   # v1.7: register file (stateful replay, cause of each read)
+ALGORITHM = 'bdx_v1.8'   # v1.8: RV32I CPU (rows judged as executed, setup issues)
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -148,6 +148,11 @@ def _subject(module_type: Optional[str], text: str, outputs: List[str]) -> Optio
     requirement names the second read port."""
     import re
     lib = L.library_for(module_type) or {}
+    if lib.get('reference'):              # CPU: a branch decision, a stored word, or a register
+        t = text or ''
+        if re.search(r'\b(?:branch\w*|beq|bne|blt|bge|jump\w*|pc)\b', t, flags=re.I):
+            return 'taken'
+        return None                       # results reach the check through rd or memory alike
     if lib.get('stateful'):
         return 'rdata2' if re.search(r'\b(?:rdata2|raddr2|read port 2|second read port|port 2|'
                                      r'both read ports|two read ports)\b',
@@ -181,6 +186,8 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
                  if c} if run else set())
     scen, failing, untested = [], [], []
     main_ports_checked, main_n, probe_n = set(tb_ports), 0, 0
+    has_reference = bool((L.library_for(design.module_type if design else None) or {}).get('reference'))
+    unchecked = 0
     for link, sc in links:
         counts: Dict[str, int] = {}
         res = s.execute(select(M.CheckItem, M.CheckResult)
@@ -190,6 +197,9 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
         for ci, cr in res:
             if cr.status == 'setup':
                 continue                 # a write or reset row checks nothing by itself
+            if cr.verdict == 'undecided' and has_reference:
+                unchecked += 1           # the example cannot be checked as written (see cpu_reference)
+                continue
             main_ports_checked.add(ci.port)
             if subject and ci.port and ci.port != subject:
                 continue
@@ -225,7 +235,7 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
     else:
         status, evidence = 'not_tested', None
     return {'subject': subject, 'compared_by_testbench': compared, 'status': status,
-            'untested_scenarios': untested,
+            'untested_scenarios': untested, 'unchecked': unchecked,
             'evidence': evidence, 'scenarios': scen, 'failing': failing}
 
 
@@ -367,7 +377,10 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         rule = (L.library_for(mt) or {}).get('rules', {}).get((ci.operation or '').upper())
         rule_val = (L.apply_rule(mt, ci.operation, stim.get('a'), stim.get('b'), width)
                     if rule and width else None)
-        history = None
+        history, cpu = None, None
+        if (L.library_for(mt) or {}).get('reference') and stim:
+            cpu = L.cpu_reference(stim)
+            rule_val = cpu['value']
         if (L.library_for(mt) or {}).get('stateful'):
             history = _history_for(s, ci.testbench_id, ci.tag,
                                    _rf_history(s, ci.testbench_id, width).get(ci.tag), B)
@@ -384,6 +397,9 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         # Then steps no check of this row compares (e.g. ALU flags)
         compared = {c.port for c in s.scalars(select(M.CheckItem).where(
             M.CheckItem.testbench_id == ci.testbench_id, M.CheckItem.tag == ci.tag))}
+        for port_, also in ((L.library_for(mt) or {}).get('port_aliases') or {}).items():
+            if port_ in compared:
+                compared |= set(also)
         unverified, probed = [], []
         ov_mode, _ = _overflow_mode(s, sess.id)
         probe = _probe_results(s, _probe_run_id(s, run.id))
@@ -436,7 +452,7 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
                        'port': ci.port, 'status': cr.status if cr else None},
             'verdict': cr.verdict if cr else None,
             'values': {'observed': O, 'expected_bdd': B, 'expected_ref': R, 'width': width},
-            'operation': ci.operation, 'module_type': mt, 'history': history,
+            'operation': ci.operation, 'module_type': mt, 'history': history, 'cpu': cpu,
             'scenario': {'P': [x for x in steps if x['role'] == 'P'],
                          'Q': [x for x in steps if x['role'] == 'Q']},
             'stimulus': stim, 'stimulus_differs': differs,
@@ -631,7 +647,15 @@ def render(st: Dict) -> str:
         q_txt = f"Then {Q[0]['text']}" if Q else f"Then {tg.get('port')} = {_num(vals.get('expected_bdd'), w)}"
         lines.append(f"① Scenario: {P}; {q_txt}")
         stim = st.get('stimulus') or {}
-        if stim:
+        if stim and _is_cpu(st.get('module_type')):
+            lines.append("② Applied: " + _cpu_example(stim)
+                         + (f" (testbench reference {stim['tb_reference']})"
+                            if stim.get('tb_reference') is not None else ''))
+            for x in (st.get('cpu') or {}).get('issues') or []:
+                lines.append(f"   ✗ {x['fault']} issue: {x['text']}")
+            for x in (st.get('cpu') or {}).get('notes') or []:
+                lines.append(f"   note: {x['text']}")
+        elif stim:
             lines.append("② Applied: " + ', '.join(
                 f"{k} = {_num(v, w) if k != 'opcode' else v}" for k, v in stim.items()))
         r = st.get('rule')
@@ -907,6 +931,7 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
             reqs.append({'req_key': q.req_key, 'requirement_id': q.id, 'status': rs['status'],
                          'text': q.text, 'untested_scenarios': rs.get('untested_scenarios') or [],
                          'subject': rs['subject'], 'compared_by_testbench': rs['compared_by_testbench'],
+                         'unchecked': rs.get('unchecked', 0),
                          'evidence': rs['evidence'],
                          'failing_verdicts': sorted({f['verdict'] for f in rs['failing'] if f['verdict']})})
         prid = _probe_run_id(s, run.id)
@@ -1135,7 +1160,170 @@ def _plain_local_stateful(st: Dict) -> Dict:
     return {'title': title, 'verdict': v, 'lines': lines}
 
 
+def _is_cpu(module_type: Optional[str]) -> bool:
+    return bool((L.library_for(module_type) or {}).get('reference'))
+
+
+def _cv(v) -> str:
+    """A CPU value: signed decimal, hex when it is large."""
+    if v is None:
+        return '—'
+    v &= 0xFFFFFFFF
+    if v >= 1 << 31 and v >= 0xFFFF0000:
+        return str(v - (1 << 32))
+    return f'0x{v:X}' if v >= 1 << 16 else str(v)
+
+
+def _cpu_example(stim: Dict) -> str:
+    """'sub x3, x1, x2 with x1 = 10, x2 = 30' -- the instruction and what it reads."""
+    stim = stim or {}
+    ins = (stim.get('instruction') or '?').strip()
+    ops = L.cpu_operands(ins)
+    if not ops:
+        return ins
+    pre = {}
+    for reg, val in ((stim.get('rs1'), stim.get('rs1_value')), (stim.get('rs2'), stim.get('rs2_value'))):
+        if reg not in (None, 0) and val is not None:
+            pre[reg] = val
+    reads = [ops[k] for k in ('rs1', 'rs2') if ops.get(k) is not None]
+    addr = ops['rs1'] if ops['kind'] in ('LW', 'SW') else None
+    parts = [f'x{r} = ' + (f'0x{pre[r] & 0xFFFFFFFF:X}' if r == addr else _cv(pre[r]))
+             for r in dict.fromkeys(reads) if r in pre]
+    if ops['kind'] == 'LW' and stim.get('mem_value') is not None:
+        parts.append(f"{_cv(stim['mem_value'])} in memory")
+    return ins + (' with ' + ', '.join(parts) if parts else '')
+
+
+def _cpu_target(stim: Dict, port: str) -> str:
+    ops = L.cpu_operands((stim or {}).get('instruction') or '') or {}
+    if port == 'taken':
+        return 'the branch'
+    if port == 'mem':
+        return 'the stored word'
+    return f"x{ops.get('rd') if ops.get('rd') is not None else (stim or {}).get('rd')}"
+
+
+def _cpu_val(v, port) -> str:
+    if port == 'taken':
+        return '—' if v is None else ('taken' if v else 'not taken')
+    return _cv(v)
+
+
+def _cpu_why(st: Dict, R) -> Optional[str]:
+    """'10 − 30 = −20' style working for one row (operands as the CPU sees them)."""
+    stim, cpu = st.get('stimulus') or {}, st.get('cpu') or {}
+    ops = L.cpu_operands(stim.get('instruction') or '')
+    if not ops or R is None:
+        return None
+    vals = cpu.get('operands') or {}
+    a = 0 if ops.get('rs1') == 0 else vals.get(f"x{ops.get('rs1')}")
+    b = (ops['imm'] if ops['kind'] == 'I' else
+         (0 if ops.get('rs2') == 0 else vals.get(f"x{ops.get('rs2')}")))
+    if a is None or b is None:
+        return None
+    sa, sb = L._s32(a & 0xFFFFFFFF), L._s32(b & 0xFFFFFFFF)
+    op = ops['op']
+    wraps = lambda x: (f', which is {_cv(R)} as a 32-bit value'
+                       if ops.get('rd') != 0 and x != L._s32(R & 0xFFFFFFFF) else '')
+    if op in ('ADD', 'ADDI'):
+        return f'{sa} + {sb} = {sa + sb}' + wraps(sa + sb)
+    if op == 'SUB':
+        return f'{sa} − {sb} = {sa - sb}' + wraps(sa - sb)
+    if op in ('SLT', 'SLTI', 'BLT'):
+        return f"{sa} < {sb} is {'true' if sa < sb else 'false'}"
+    if op == 'BGE':
+        return f"{sa} ≥ {sb} is {'true' if sa >= sb else 'false'}"
+    if op in ('BEQ', 'BNE'):
+        return f"{sa} and {sb} are {'equal' if sa == sb else 'different'}"
+    return None
+
+
+def _cpu_design_hint(st: Dict, O) -> Optional[str]:
+    """What a wrong value of the design looks like, when it is recognisable."""
+    stim, cpu = st.get('stimulus') or {}, st.get('cpu') or {}
+    ops = L.cpu_operands(stim.get('instruction') or '')
+    if not ops or O is None:
+        return None
+    vals = cpu.get('operands') or {}
+    a = 0 if ops.get('rs1') == 0 else vals.get(f"x{ops.get('rs1')}")
+    b = ops['imm'] & 0xFFFFFFFF if ops['kind'] == 'I' and ops.get('imm') is not None else (
+        0 if ops.get('rs2') == 0 else vals.get(f"x{ops.get('rs2')}"))
+    op = ops['op']
+    if a is not None and b is not None:
+        unsigned = {'SLT': int(a < b), 'SLTI': int(a < b), 'BLT': int(a < b), 'BGE': int(a >= b)}.get(op)
+        signed = (L.CPU_RULES.get(op) or {}).get('cfn')
+        if unsigned is not None and signed and int(signed(a, b)) != unsigned and O == unsigned:
+            return 'The design seems to compare the operands as unsigned numbers.'
+        if op == 'SUB' and O == (a + b) & 0xFFFFFFFF:
+            return 'The design seems to add instead of subtract.'
+        if op in ('ADD', 'ADDI') and O == (a - b) & 0xFFFFFFFF:
+            return 'The design seems to subtract instead of add.'
+    if st['target'].get('port') == 'rd' and O == 0:
+        return f"The design stores 0, as if the instruction had not written x{ops.get('rd')}."
+    return None
+
+
+def _cpu_issue_text(cpu: Dict) -> Optional[str]:
+    if not cpu or not cpu.get('issues'):
+        return None
+    i = cpu['issues'][0]
+    tail = (' This is a limitation of the testbench, not a fault of the design or the scenario.'
+            if i['fault'] == 'test' else ' The example has to be fixed before it can test anything.')
+    return f"This example cannot be checked as written: {i['text']}.{tail}"
+
+
+def _plain_local_cpu(st: Dict) -> Dict:
+    v, vals = st.get('verdict'), st['values']
+    O, B, R = vals.get('observed'), vals.get('expected_bdd'), vals.get('expected_ref')
+    stim, port = st.get('stimulus') or {}, st['target'].get('port') or 'rd'
+    cpu = st.get('cpu') or {}
+    who, f = _cpu_target(stim, port), (lambda x: _cpu_val(x, port))
+    lines = []
+    if v == 'undecided' and cpu.get('issues'):
+        lines.append(_cpu_issue_text(cpu))
+    elif v == 'pass':
+        lines.append(f'Correct: {who} is {f(O)}, as the scenario expects.' if port != 'taken'
+                     else f'Correct: the branch is {f(O)}, as the scenario expects.')
+    elif v == 'scenario_wrong':
+        lines.append(f'The scenario is wrong, not the design. It expects {who} to be {f(B)}, but the correct '
+                     f'value is {f(R)} — and that is what the design gives.' if port != 'taken' else
+                     f'The scenario is wrong, not the design. It says the branch is {f(B)}, but it is {f(R)} '
+                     f'— and the design does that.')
+    elif v == 'design_wrong':
+        got = f(O) if O is not None else 'neither (the result store went wrong)'
+        lines.append(f'The design is wrong: {who} should be {f(R)}, as the scenario expects, '
+                     f'but the design gives {got}.' if port != 'taken' else
+                     f'The design is wrong. The branch should be {f(R)}, as the scenario expects, but the design '
+                     f'result is {got}.')
+    elif v == 'both_wrong':
+        lines.append(f'Both are wrong: the scenario expects {f(B)}, the design gives {f(O)}, correct is {f(R)}.')
+    elif v == 'consistent_wrong':
+        lines.append(f'The test passed, but scenario and design are wrong in the same way: both say {f(O)}, '
+                     f'correct is {f(R)}.')
+    elif v == 'undecided':
+        lines.append(f'There is no reference value for this example. Expected {f(B)}, the design gave {f(O)}.')
+    else:
+        lines.append('This check was not executed.')
+    r = st.get('rule')
+    if r and v not in ('pass', None) and not cpu.get('issues'):
+        work = _cpu_why(st, R)
+        lines.append(f"Why {f(R)}: {r['text']}" + (f'; here {work}' if work else '') + '.')
+    for n in cpu.get('notes') or []:
+        lines.append(n['text'][0].upper() + n['text'][1:] + '.')
+    if v in ('design_wrong', 'both_wrong', 'consistent_wrong'):
+        h = _cpu_design_hint(st, O)
+        if h:
+            lines.append(h)
+    c = st.get('contrast')
+    if c and v not in ('pass', None) and not cpu.get('issues'):
+        lines.append(f"For comparison, {_cpu_example(c.get('stimulus'))} "
+                     f"{'passed' if c['status'] == 'pass' else 'failed'}.")
+    return {'title': _cpu_example(stim), 'verdict': v, 'lines': lines}
+
+
 def plain_local(st: Dict) -> Dict:
+    if _is_cpu(st.get('module_type')):
+        return _plain_local_cpu(st)
     if _stateful(st.get('module_type')):
         return _plain_local_stateful(st)
     v, vals, w = st.get('verdict'), st['values'], st['values'].get('width')
@@ -1228,7 +1416,8 @@ def plain_requirement(st: Dict) -> Dict:
     subj = st.get('subject') or 'its output'
     lines = []
     if s_ == 'verified':
-        lines.append(f'Verified: every simulated example of {subj} passed.')
+        lines.append(f'Verified: every simulated example of {subj} passed.'
+                     + (f" {st['unchecked']} more could not be checked as written." if st.get('unchecked') else ''))
     elif s_ == 'verified_by_probe':
         lines.append(f"Verified: the {_FLAG_WORD.get(subj, subj)} was right in every example "
                      f"(checked by an extra simulation).")
@@ -1295,6 +1484,68 @@ def _stateful_problem(s, testbench_id, v, op, n, m, ci, B, R, O, w, h) -> Tuple[
                    f'point{why}. The design is right.')
 
 
+def _cpu_problem(v, op, n, m, ci, B, R, O) -> Tuple[str, str]:
+    stim, port = ci.stimulus or {}, ci.port or 'rd'
+    ex = _cpu_example(stim)
+    f = lambda x: _cpu_val(x, port)
+    branch = port == 'taken'
+    st = {'stimulus': stim, 'cpu': L.cpu_reference(stim), 'target': {'port': port}}
+    if v == 'design_wrong':
+        hint = _cpu_design_hint(st, O)
+        got = f(O) if O is not None else 'neither (the result store went wrong)'
+        return ((f'The design decides {op} wrong' if branch else f'The design executes {op} wrong'),
+                f'{n} of {m} {op} examples. E.g. {ex}: '
+                + (f'the design result is {got}, but the branch is {f(R)}.' if branch
+                   else f'the design gives {got}, correct is {f(R)}.') + (f' {hint}' if hint else ''))
+    if v == 'both_wrong':
+        return (f'{op}: both the design and the scenario are wrong',
+                f'{n} of {m} {op} examples. E.g. {ex}: scenario {f(B)}, design {f(O)}, correct {f(R)}.')
+    if v == 'consistent_wrong':
+        return (f'{op}: the design repeats a mistake of the scenario',
+                f'{n} of {m} {op} examples pass the test, but both give the wrong value. E.g. {ex}: '
+                f'both say {f(O)}, correct is {f(R)}.')
+    notes = ' '.join(x['text'][0].upper() + x['text'][1:] + '.' for x in st['cpu']['notes'])
+    title = ((f'A scenario expects the wrong {op} decision' if branch else f'A scenario expects a wrong {op} result')
+             if n == 1 else (f'{n} scenario examples expect the wrong {op} decision' if branch
+                             else f'{n} scenario examples expect a wrong {op} result'))
+    return title, (f'E.g. {ex}: the scenario says {f(B)}, but it is {f(R)}.' if branch else
+                   f'E.g. {ex}: the scenario expects {f(B)}, correct is {f(R)}.') + \
+        (f' {notes}' if notes else '') + ' The design is right.'
+
+
+def _cpu_unchecked(main) -> List[Dict]:
+    """Examples that ran but cannot mean what they say (library: cpu_reference issues)."""
+    groups: Dict[str, List] = {}
+    for ci, cr in main:
+        if not ci.tag.startswith('BDD:') or cr.verdict != 'undecided' or not ci.stimulus:
+            continue
+        ref = L.cpu_reference(ci.stimulus)
+        if ref['issues']:
+            groups.setdefault(ref['issues'][0]['fault'], []).append((ci, ref['issues'][0]))
+    out = []
+    for fault in ('scenario', 'test'):
+        items = groups.get(fault) or []
+        if not items:
+            continue
+        ci, iss = items[0]
+        n = len(items)
+        if fault == 'scenario':
+            out.append({'severity': 'warning', 'who': 'scenario',
+                        'title': ('An example cannot be checked as written' if n == 1
+                                  else f'{n} examples cannot be checked as written'),
+                        'detail': f"E.g. {_cpu_example(ci.stimulus)}: {iss['text']}. The example has to be "
+                                  f"fixed before it can test anything.",
+                        'explain': {'kind': 'check', 'tag': ci.tag}})
+        else:
+            out.append({'severity': 'warning', 'who': 'test',
+                        'title': ('The testbench cannot check one example' if n == 1
+                                  else f'The testbench cannot check {n} examples'),
+                        'detail': f"E.g. {_cpu_example(ci.stimulus)}: {iss['text']}. This is a limitation of "
+                                  f"the testbench, not a fault of the design or the scenario.",
+                        'explain': {'kind': 'check', 'tag': ci.tag}})
+    return out
+
+
 def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[Dict],
                    spec: List[Dict]) -> Tuple[List[Dict], Dict]:
     """Everything that is wrong or untested in one simulation, in plain words,
@@ -1327,6 +1578,11 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
         ci, cr = items[0]
         n, m = len(items), total_op.get(op, len(items))
         B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
+        if _is_cpu(mt):
+            title, detail = _cpu_problem(v, op, n, m, ci, B, R, O)
+            probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
+                          'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
+            continue
         if _stateful(mt):
             title, detail = _stateful_problem(s, run.testbench_id, v, op, n, m, ci, B, R, O, width,
                                               hist.get(ci.tag))
@@ -1349,6 +1605,19 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
             detail = f'E.g. {ex}: the scenario expects {_pv(B, width)}, correct is {_pv(R, width)}. The design is right.'
         probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                       'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
+
+    if _is_cpu(mt):
+        probs += _cpu_unchecked(main)
+        n_bad = sum(len(x) for (v_, _), x in by_op.items() if v_ in ('design_wrong', 'both_wrong'))
+        bad_ops = {op_ for (v_, op_) in by_op if v_ in ('design_wrong', 'both_wrong')}
+        n_all = sum(total_op.values())
+        if len(bad_ops) >= 4 and n_all and n_bad >= 0.8 * n_all:
+            probs.insert(0, {'severity': 'error', 'who': 'design',
+                             'title': 'Almost every instruction gives a wrong result',
+                             'detail': f'{n_bad} of {n_all} checks fail, across {len(bad_ops)} instructions. Every '
+                                       'result is observed the same way (operands loaded with ADDI, the result '
+                                       'stored with SW), so the fault is more likely in that path or in the '
+                                       'pipeline than in each instruction.', 'explain': None})
 
     # flags seen by the probe (rows whose result is already wrong are covered above)
     probe = _probe_results(s, _probe_run_id(s, run_id))
@@ -1446,7 +1715,12 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     for pr in probs:
         counts[pr['who']] = counts.get(pr['who'], 0) + 1
     n_checks = sum(total_op.values())
-    if _stateful(mt):
+    if _is_cpu(mt):
+        checked = [f'{n_checks} instructions were simulated, each in its own short program (the operands '
+                   f'loaded with ADDI, the result stored with SW), and compared with a reference model of RV32I.',
+                   'Not checked: the program counter and the pipeline timing; a branch is judged by whether '
+                   'it skips the instruction after it.']
+    elif _stateful(mt):
         checked = [f'{n_checks} register reads were simulated, in the order of the scenarios, and each was '
                    f'compared with a reference model that replays every write and reset before it.']
         compared = {ci.port for ci, _ in main if ci.port}

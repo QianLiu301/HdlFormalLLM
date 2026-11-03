@@ -411,12 +411,27 @@ def _log_by_test(log: str) -> Dict[int, Dict]:
     return out
 
 
+def _observed(status: str, got, c: M.CheckItem):
+    """O of one assertion. A CPU branch is observed through a result slot: 0
+    means the branch skipped the marker store (taken), the marker means it did
+    not; anything else means the observation itself went wrong (None)."""
+    if c.port == 'taken' and status == 'fail':
+        try:
+            raw = int(str(got), 0)
+        except (TypeError, ValueError):
+            return None
+        return 1 if raw == 0 else (0 if raw == (c.stimulus or {}).get('marker') else None)
+    return observed_value(status, got, c.expected_used, c.width)
+
+
 def _verdict(status: str, o, c: M.CheckItem) -> Optional[str]:
     """Verdict of one executed assertion. When the scenario states no value and
     the testbench compared against the reference model (oracle 'spec'), only
     the design can be wrong, as for a flag the scenario does not mention."""
     if status not in ('pass', 'fail'):
         return None
+    if c.port == 'taken' and status == 'fail' and o is None and c.expected_ref is not None:
+        return 'design_wrong'                 # neither taken nor not taken: the program went wrong
     if c.expected_bdd is None and c.oracle == 'spec' and c.expected_ref is not None and o is not None:
         return 'pass' if int(o) == int(c.expected_ref) else 'design_wrong'
     return classify(o, c.expected_bdd, c.expected_ref, c.width)
@@ -548,6 +563,8 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
         trace = index.get('trace') or {}
         weak = trace.get('weak') or {}
         detail = trace.get('detail') or {}
+        from src.xdb import library as L
+        ref_fn = (L.library_for(module_type) or {}).get('reference')
         checks: Dict[tuple, M.CheckItem] = {
             (c.tag, c.seq): c for c in s.scalars(select(M.CheckItem)
                                                  .where(M.CheckItem.testbench_id == tb.id))}
@@ -568,10 +585,16 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                 infos = detail.get(rid) or [None]
                 for k, info in enumerate(infos, 1):
                     info = info or {}
+                    stim, ref = info.get('stimulus'), info.get('expected_ref')
+                    if ref_fn and stim is not None:
+                        # the library judges the row as the design executes it (e.g. a
+                        # CPU row that sets one register twice); the testbench's own
+                        # value is kept next to the stimulus
+                        stim, ref = {**stim, 'tb_reference': ref}, ref_fn(stim)
                     _check(f'BDD:{rid}', k, test_no=info.get('test'), port=info.get('port'),
                            width=info.get('width'), operation=info.get('operation'),
-                           stimulus=info.get('stimulus'), expected_bdd=info.get('expected_bdd'),
-                           expected_ref=info.get('expected_ref'),
+                           stimulus=stim, expected_bdd=info.get('expected_bdd'),
+                           expected_ref=ref,
                            expected_used=info.get('expected_used'), oracle=info.get('oracle'),
                            **common)
         for g in trace.get('generated') or []:
@@ -615,7 +638,7 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                 msg = r.get('message') or r.get('reason')
                 mm = _EXP_RE.search(msg or '')
                 exp_txt, got = (mm.group(1), mm.group(2)) if mm else (None, None)
-            o = observed_value(status, got, c.expected_used, c.width)
+            o = _observed(status, got, c)
             v = _verdict(status, o, c)
             if v:
                 verdicts[v] = verdicts.get(v, 0) + 1

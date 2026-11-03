@@ -4,7 +4,7 @@
 //   2. "Regenerate the design"  (the model call is replaced by a staged fixed
 //      design via request interception; the rerun after it is real)
 // Needs: the app on localhost:5000 with DATABASE_URL set, iverilog, and
-//   python tests/ui/stage_run.py [regfile] > <dir>/state.json
+//   python tests/ui/stage_run.py [regfile|cpu] > <dir>/state.json
 //   NODE_PATH=$(npm root -g) node tests/ui/repair_flow.js <dir>
 const fs = require('fs');
 const { chromium } = require('playwright');
@@ -85,8 +85,10 @@ const { chromium } = require('playwright');
   console.log('confirm dialogs:', dialogs.length);
   dialogs.forEach(d => console.log('  ' + d.replace(/\n+/g, ' / ')));
   console.log('page errors:', errors.length ? errors : 'none');
+  // scenario problems that remain after the correction are the ones the tool must not
+  // auto-correct (e.g. a CPU row that gives one register two values)
   const ok = first.acts.length === 2 && second.acts.length === 1 && third.acts.length === 0
-             && !second.items.some(t => t.startsWith('[Scenario]'))
+             && second.items.length < first.items.length
              && !third.items.some(t => t.startsWith('[Design]')) && !errors.length;
   console.log(ok ? 'RESULT: OK' : 'RESULT: FAILED');
   await browser.close();
