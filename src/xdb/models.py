@@ -200,6 +200,9 @@ class Duv(Base):
     based_on_feature_id: Mapped[int | None] = mapped_column(ForeignKey('feature.id'))
     prompt_has_decisions: Mapped[bool | None] = mapped_column(Boolean)
     compiles: Mapped[bool | None] = mapped_column(Boolean)
+    # first compiler error of the Step-1 check (iverilog -g2012), e.g.
+    # "alu.v:70: syntax error" -- the explanation when nothing can be simulated
+    compile_error: Mapped[str | None] = mapped_column(Text)
     prov_kind: Mapped[str] = mapped_column(String(8), nullable=False)
     prov_ref: Mapped[str | None] = mapped_column(Text)
     created_at = _created()

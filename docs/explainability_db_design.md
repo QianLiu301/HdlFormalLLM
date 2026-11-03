@@ -434,6 +434,7 @@ table; `(scenario_id)` on `check_item`, `step_mapping`; `(sim_run_id)` on
 | `sim_run` + duv_id | exact feature ↔ Verilog pair that was simulated |
 | `explanation_target` + feature_id, sim_run_id; `explanation` + structure | context of an explanation; structured storage (D19) |
 | `artifact` + encoding | compression later (D18) |
+| `duv` + compile_error (migration 0003) | first iverilog error of the Step-1 check; the only explanation when a design cannot be simulated |
 
 Values B, R, O are stored as exact unsigned integers masked to the port width
 (`NUMERIC(40,0)`), the way the testbench compares them.
