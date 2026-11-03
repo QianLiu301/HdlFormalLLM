@@ -491,10 +491,21 @@ rendered with the row's values, plus expected vs. observed from
   of these is checked against the flag rules, so a scenario that states a
   wrong flag is reported even though nothing simulated it);
   `explain_global` (BDX global, P_T = ∅: every row whose instantiated Q
-  contains port = value, grouped by operation, plus the general rule);
+  contains port = value, grouped by operation, plus the general rule; each
+  row is checked against the rule, rows the rule predicts but the
+  specification omits are listed, and when all contradicting rows fit a
+  known alternative meaning — e.g. "overflow" used as unsigned
+  carry/borrow — that is said explicitly. Alternatives
+  (`library.FLAG_ALTERNATIVES`) only describe a specification, they are
+  never used as rules);
   `explain_requirement`. Results are stored in `explanation_target` /
   `explanation` (structure + English rendering) and reused.
 - CLI: `python -m src.xdb runs | remap | explain ...`.
+- First field observation (DeepSeek v4 Flash, 16-bit ALU, 2026-11-03): 61/61
+  checks passed, yet all 5 rows stating overflow = 1 contradict signed
+  overflow (the design template's definition) and match carry/borrow. The
+  testbench never compares the flag, so only the specification check sees
+  it (`test_global_explanation_detects_carry_meaning_of_overflow`).
 
 ---
 

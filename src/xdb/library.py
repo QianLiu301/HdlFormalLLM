@@ -100,7 +100,8 @@ FLAG_RULES = {
     'zero': {'expr': 'zero == (result == 0)', 'text': 'the zero flag is 1 exactly when the result is 0'},
     'negative': {'expr': 'negative == result[W-1]', 'text': 'the negative flag is the top bit of the result'},
     'overflow': {'expr': 'overflow == signed overflow of ADD/SUB',
-                 'text': 'the overflow flag is 1 when ADD or SUB overflows as a signed operation'},
+                 'text': 'the overflow flag is 1 when ADD or SUB overflows as a signed operation '
+                         "(the definition in the tool's design template, prompts/duv_alu)"},
 }
 
 LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES}}
@@ -193,3 +194,35 @@ def flag_value(module_type: str, port: str, op: Optional[str], a, b, width: int)
             return int(sa == sb and sr != sa)
         return int(sa != sb and sr != sa)
     return None
+
+
+def _carry(op, a, b, w):
+    op = (op or '').upper()
+    if op == 'ADD':
+        return int(a + b >= 1 << w)
+    if op == 'SUB':
+        return int(a < b)
+    return None
+
+
+# Other meanings a model may have given a flag. Used only to say what a
+# specification seems to mean when it contradicts the rule; never as a rule.
+FLAG_ALTERNATIVES = {
+    'overflow': [{'name': 'unsigned carry/borrow', 'text': 'ADD: A + B ≥ 2^W; SUB: A < B',
+                  'fn': _carry}],
+}
+
+
+def flag_alternatives(module_type: str, port: str, op, a, b, width: int) -> List[Dict]:
+    """[{name, text, value}] for the known alternative meanings of a flag."""
+    if not library_for(module_type):
+        return []
+    ai, bi = to_int(a, width), to_int(b, width)
+    if ai is None or bi is None:
+        return []
+    out = []
+    for alt in FLAG_ALTERNATIVES.get(port, []):
+        v = alt['fn'](op, ai, bi, width)
+        if v is not None:
+            out.append({'name': alt['name'], 'text': alt['text'], 'value': v})
+    return out
