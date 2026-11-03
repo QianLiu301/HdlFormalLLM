@@ -1,11 +1,16 @@
 """
 End-to-end test of the explainability database (src/xdb).
 
-Real pipeline, no LLM: a feature file the website once generated
+Real pipeline, no LLM: a feature file the website once generated with Gemini
 (artifact/ablation/variant_A_original.feature, with @req_N tags added) ->
 TestbenchGenerator -> iverilog on an ALU with one injected bug -> ingestion
 -> competency queries. The database must agree with run_report, which is
 what the Step-4 page shows.
+
+The feature file is a useful witness: two of its expected values are wrong
+(SUB row 7 says 50-100 = 4294967245, SRA row 5 says 0x80000000>>>1 =
+3221225471), while the design's only bug is SLTU comparing signed. The
+verdict must put the blame on the right side for all three.
 
 Needs a PostgreSQL the test may wipe:
     XDB_TEST_URL=postgresql://bdx:bdx@localhost/bdx_test   (default)
@@ -90,7 +95,12 @@ def run(tmp_path_factory):
                   {'id': 'REQ-1', 'text': 'ADD returns a + b modulo 2^32', 'source': 'llm'},
                   {'id': 'REQ-2', 'text': 'SLTU compares unsigned', 'source': 'llm'},
                   {'id': 'REQ-3', 'text': 'Reset clears outputs', 'source': 'user'}],
-              'questions': [], 'decisions': []}
+              'questions': [{'id': 'Q1', 'question': 'Is the overflow flag set for SUB?',
+                             'options': ['yes, signed overflow', 'no, ADD only'], 'default': 0,
+                             'why': 'The description only mentions ADD.'}],
+              'decisions': [{'id': 'D1', 'question_id': 'Q1',
+                             'question': 'Is the overflow flag set for SUB?',
+                             'answer': 'yes, signed overflow', 'source': 'default'}]}
     (out / 'requirements/req.json').write_text(json.dumps(record), encoding='utf-8')
 
     from src.testbench_generator import TestbenchGenerator
@@ -111,6 +121,9 @@ def run(tmp_path_factory):
     paths = {'requirements': 'output/requirements/req.json', 'bdd': 'output/bdd/alu.feature',
              'duv': 'output/dut/alu_32bit.v', 'testbench': rel(tb_path),
              'log': 'output/simulation/alu.log'}
+    # two discarded BDD generations of the step-by-step test
+    (out / 'bdd/alu_v1.feature').write_text(feat.replace('Verify ADD', 'Check ADD'), encoding='utf-8')
+    (out / 'bdd/alu_v2.feature').write_text(feat.replace('Verify SUB', 'Check SUB'), encoding='utf-8')
     return proj, paths
 
 
@@ -155,6 +168,7 @@ def test_ingest_matches_run_report(run, db):
     assert counts['scenario'] == sr['totals']['scenarios']
     assert counts['requirement'] == 3
     assert counts['design'] == 1 and counts['port'] == 9
+    assert counts['decision'] == 1 and counts['duv'] == 1
     # every row the report lists becomes exactly one check_result
     assert counts['check_result'] == sum(len(s['rows']) for s in sr['scenarios']) + len(sr['generated'])
 
@@ -207,7 +221,7 @@ def test_failed_check_has_expected_and_observed(run, db):
                               JOIN check_item ci ON ci.id = cr.check_id
                               JOIN example_row er ON er.id = ci.example_row_id
                               WHERE cr.status = 'fail' LIMIT 1""")).mappings().one()
-    assert r['expected']['value'] != r['observed']['value']
+    assert r['expected']['result'] != r['observed']['result']   # keyed by the compared port
     assert 'A' in r['vals']
 
 
@@ -236,3 +250,120 @@ def test_parse_ports_resolves_parameters():
     assert info['module'] == 'alu_32bit'
     assert ports['a']['width'] == 32 and ports['b']['width'] == 32
     assert ports['opcode']['width'] == 4 and ports['zero']['direction'] == 'output'
+
+
+# ---------------------------------------------------------------- M1: who is wrong
+
+def _verdict_of(db, tag):
+    from sqlalchemy import create_engine, text
+    with create_engine(db).connect() as c:
+        return c.execute(text("""SELECT cr.verdict, cr.status, ci.expected_bdd, ci.expected_ref,
+                                        cr.observed_value, ci.stimulus
+                                 FROM check_result cr JOIN check_item ci ON ci.id = cr.check_id
+                                 WHERE ci.tag = :t ORDER BY cr.sim_run_id DESC LIMIT 1"""),
+                         {'t': tag}).mappings().one()
+
+
+def test_who_is_wrong_on_the_real_feature(run, db):
+    sub = _verdict_of(db, 'BDD:ALU-SUB-001/r7')
+    assert sub['status'] == 'fail' and sub['verdict'] == 'scenario_wrong'
+    assert (int(sub['expected_bdd']), int(sub['expected_ref']), int(sub['observed_value'])) == \
+        (4294967245, 4294967246, 4294967246)
+    assert sub['stimulus'] == {'a': 50, 'b': 100, 'opcode': '0001'}
+
+    sra = _verdict_of(db, 'BDD:ALU-SRA-001/r5')
+    assert sra['verdict'] == 'scenario_wrong'
+
+    sltu = _verdict_of(db, 'BDD:ALU-SLTU-001/r4')
+    assert sltu['verdict'] == 'design_wrong'
+    assert (int(sltu['expected_bdd']), int(sltu['observed_value'])) == (0, 1)
+
+
+def test_every_failure_gets_a_side(run, db):
+    from sqlalchemy import create_engine, text
+    with create_engine(db).connect() as c:
+        rows = c.execute(text("SELECT status, verdict, count(*) n FROM check_result "
+                              "WHERE verdict IS NOT NULL GROUP BY status, verdict")).all()
+    by = {(s, v): n for s, v, n in rows}
+    assert all(v != 'pass' for (s, v) in by if s == 'fail')
+    assert all(v in ('pass', 'consistent_wrong') for (s, v) in by if s == 'pass')
+    assert by.get(('fail', 'design_wrong'), 0) >= 1 and by.get(('fail', 'scenario_wrong'), 0) == 2
+
+
+def test_verdict_table():
+    from src.xdb.verdict import classify, observed_value
+    assert classify(7, 7, 7) == 'pass'
+    assert classify(7, 8, 7) == 'scenario_wrong'
+    assert classify(9, 8, 8) == 'design_wrong'
+    assert classify(9, 8, 7) == 'both_wrong'
+    assert classify(8, 8, 7) == 'consistent_wrong'
+    assert classify(8, 8, None) == 'undecided'
+    assert classify('x', 8, 8) == 'design_wrong'
+    assert classify(4294967295, -1, '0xFFFFFFFF', width=32) == 'pass'
+    assert observed_value('pass', None, 5) == 5 and observed_value('fail', '6', 5) == 6
+    assert observed_value('not_tested', '6', 5) is None
+
+
+# ---------------------------------------------------------------- M1: every generation is kept
+
+def test_step_by_step_versions_and_pairing(run, db):
+    from sqlalchemy import create_engine, text
+    from src.xdb.ingest import ingest_duv, ingest_feature, ingest_run
+    proj, paths = run
+    data = {'module_type': 'alu', 'bitwidth': 32, 'workflow_mode': 'specification',
+            'requirements_filepath': paths['requirements']}
+    # spec-first: three BDD generations, the last one is used for the design
+    ids = [ingest_feature(proj, f'output/bdd/{n}', 'web_steps', data, url=db)['feature_id']
+           for n in ('alu_v1.feature', 'alu_v2.feature', 'alu.feature')]
+    assert len(set(ids)) == 3
+    again = ingest_feature(proj, 'output/bdd/alu.feature', 'web_steps', data, url=db)
+    assert again['feature_id'] == ids[2]                      # same file -> same row
+    duv = ingest_duv(proj, paths['duv'], 'web_steps', {**data, 'bdd_filepath': paths['bdd']},
+                     meta={'compiles': True}, url=db)
+    res = ingest_run(proj, paths, run_id='web_steps', url=db, data=data)
+    assert res['new'] and res['duv_id'] == duv['duv_id']
+
+    with create_engine(db).connect() as c:
+        feats = c.execute(text("""SELECT f.id, f.parent_id, f.reason FROM feature f
+                                  JOIN session s ON s.id = f.session_id
+                                  WHERE s.run_key = 'web_steps' ORDER BY f.id""")).all()
+        assert [(f.parent_id, f.reason) for f in feats] == \
+            [(None, 'generated'), (ids[0], 'regenerated'), (ids[1], 'regenerated')]
+        d = c.execute(text("SELECT * FROM duv WHERE id = :i"), {'i': duv['duv_id']}).mappings().one()
+        assert d['workflow_mode'] == 'specification' and d['prompt_has_bdd']
+        assert d['based_on_feature_id'] == ids[2] and d['compiles'] and d['module_name'] == 'alu_32bit'
+        # the exact pair that was simulated together
+        pair = c.execute(text("""SELECT t.feature_id, r.duv_id FROM sim_run r
+                                 JOIN testbench t ON t.id = r.testbench_id
+                                 WHERE r.id = :r"""), {'r': res['sim_run_id']}).one()
+        assert tuple(pair) == (ids[2], duv['duv_id'])
+        n_dec = c.execute(text("""SELECT count(*) FROM decision d JOIN session s ON s.id = d.session_id
+                                  WHERE s.run_key = 'web_steps'""")).scalar()
+        assert n_dec == 1
+
+
+def test_provenance_linked_when_call_arrives_later(run, db):
+    import sqlite3
+    from sqlalchemy import create_engine, text
+    from src import experiment_logger
+    from src.xdb.ingest import ingest_duv, ingest_feature
+    proj, paths = run
+    data = {'module_type': 'alu', 'bitwidth': 32}
+    first = ingest_duv(proj, paths['duv'], 'web_late', data, url=db)
+    conn = sqlite3.connect(experiment_logger.DB_PATH)
+    conn.execute("INSERT INTO llm_calls (created_at, provider, model, task_type, run_id, prompt, "
+                 "response, success) VALUES ('2026-11-03T11:00', 'ClaudeProvider', "
+                 "'claude-sonnet-5-5', 'web_duv_generation', 'web_late', 'P', 'module ...', 1)")
+    conn.commit()
+    conn.close()
+    ingest_feature(proj, paths['bdd'], 'web_late', data, url=db)
+    with create_engine(db).connect() as c:
+        d = c.execute(text("SELECT origin, prov_kind, prov_ref FROM duv WHERE id = :i"),
+                      {'i': first['duv_id']}).one()
+    assert d.origin == 'llm' and d.prov_kind == 'llm' and d.prov_ref.startswith('llm_call:')
+
+
+def test_storage_usage(db):
+    from src.xdb.queries import storage_usage
+    u = storage_usage(db)
+    assert u['limit_mb'] > 0 and 0 < u['database_mb'] < u['limit_mb'] and u['artifacts_mb'] >= 0

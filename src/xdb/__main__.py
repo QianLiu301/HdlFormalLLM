@@ -53,9 +53,13 @@ def main(argv=None):
     elif a.cmd == 'revision':
         command.revision(alembic_config(), message=a.message, autogenerate=True)
     elif a.cmd == 'stats':
-        from src.xdb.queries import table_counts
+        from src.xdb.queries import storage_usage, table_counts
         for t, n in table_counts().items():
             print(f'{t:22s} {n}')
+        u = storage_usage()
+        print(f"\nstorage: database {u['database_mb']} MB of {u['limit_mb']:.0f} MB "
+              f"({u['used_pct']}%), of which files {u['artifacts_mb']} MB, "
+              f"LLM prompts/responses {u['llm_text_mb']} MB")
     elif a.cmd == 'ingest':
         from src.xdb.ingest import ingest_run
         paths = {'testbench': a.testbench, 'log': a.log, 'bdd': a.bdd,

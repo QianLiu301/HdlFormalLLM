@@ -11,6 +11,23 @@ from src import xdb
 from src.xdb import models as M
 
 
+def storage_usage(url=None) -> Dict[str, float]:
+    """Database size against the plan limit (XDB_STORAGE_LIMIT_MB, default 512 =
+    Neon free plan). Artifacts are stored uncompressed until this gets tight."""
+    import os
+    limit_mb = float(os.environ.get('XDB_STORAGE_LIMIT_MB', '512'))
+    with xdb.session_scope(url) as s:
+        db = s.scalar(text('SELECT pg_database_size(current_database())'))
+        art = s.scalar(text('SELECT coalesce(sum(octet_length(content)), 0) FROM artifact'))
+        calls = s.scalar(text("SELECT coalesce(sum(octet_length(coalesce(prompt, '')) + "
+                              "octet_length(coalesce(response, '')) + "
+                              "octet_length(coalesce(system_prompt, ''))), 0) FROM llm_call"))
+    mb = 1024 * 1024
+    return {'database_mb': round(db / mb, 2), 'artifacts_mb': round(art / mb, 2),
+            'llm_text_mb': round(calls / mb, 2), 'limit_mb': limit_mb,
+            'used_pct': round(100 * db / (limit_mb * mb), 1)}
+
+
 def table_counts(url=None) -> Dict[str, int]:
     with xdb.session_scope(url) as s:
         return {t.name: s.scalar(select(func.count()).select_from(t))

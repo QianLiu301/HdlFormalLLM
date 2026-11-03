@@ -5,9 +5,12 @@ Code: `src/xdb/` (models, Alembic migrations, ingestion, queries).
 Tests: `tests/test_xdb.py`.
 
 The database is **optional**. Without `DATABASE_URL` the website behaves
-exactly as before. With it, every Step-4 run report (which the page requests
-after each simulation) is also written to the database in a background
-thread; a database error never breaks the page.
+exactly as before. With it, every Verilog design (Step 1) and feature file
+(Step 2) is stored as soon as it is generated, and every Step-4 run report
+(which the page requests after each simulation) adds the testbench, the
+simulation results and a verdict per assertion (who is wrong: design or
+scenario). All writes happen in background threads; a database error never
+breaks the page.
 
 ---
 
@@ -50,7 +53,9 @@ python -m src.xdb stats
 ```
 
 Run `upgrade` again whenever a new migration is pulled from git; it only
-applies what is missing.
+applies what is missing. `stats` ends with a storage line (database size
+against the 512 MB free-plan limit; about 7–8 MB of it is PostgreSQL's own
+baseline).
 
 ## 4. Use the website as usual
 
