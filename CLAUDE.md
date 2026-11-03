@@ -128,7 +128,9 @@ library follows the answer. Flag probe (`src/xdb/probe.py`, D23): a copy of
 the testbench with one $display per test observes zero/negative/overflow, stored
 as a separate sim_run with `probe_of`; main-run queries must exclude it
 (`probe_of IS NULL` / testbench.generator != 'probe'). Requirement status by
-subject port (D24, `explain.requirement_subject`). M4 next (repair) … M6 in the design doc. Product output (explanations, UI text,
+subject port (D24, `explain.requirement_subject`). Step 4 shows a plain-language
+Problems card first (D25, `explain.build_problems`, `render_plain`; no internal
+ids), the old sections folded into "Technical details". M4 next (repair) … M6 in the design doc. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.

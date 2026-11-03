@@ -82,9 +82,12 @@ Only testbenches generated after scenario tagging (they have a
 
 ## 5. Explanations on the website
 
-With `DATABASE_URL` set, Step 4 shows a section **Who Is Wrong? —
-Explanations** a few seconds after each simulation (the run is written to the
-database in the background first):
+With `DATABASE_URL` set, Step 4 opens with a **Problems** card a few seconds
+after each simulation (the run is written to the database in the background
+first): "No problems found" or a list of problems in plain words, each with
+who is at fault and a **Details** button, plus one line on what was checked.
+Everything below it — the former sections — is folded into **Technical
+details**:
 
 - a headline and counts per verdict (design wrong, scenario wrong, …);
 - a specification check: for each flag the scenarios state (zero, negative,
