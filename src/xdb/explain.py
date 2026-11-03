@@ -27,9 +27,10 @@ from src import xdb
 from src.xdb import library as L
 from src.xdb import models as M
 
-# bumped from bdx_v1 when Chinese rendering was removed, so stored v1
-# explanations (which carried Chinese rule text) are recomputed, not reused
-ALGORITHM = 'bdx_v1.1'
+# Bump whenever the structure changes, so stored explanations are recomputed
+# instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
+# global explanations and alternative meanings of contradicting flags.
+ALGORITHM = 'bdx_v1.2'
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
