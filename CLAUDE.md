@@ -130,7 +130,14 @@ as a separate sim_run with `probe_of`; main-run queries must exclude it
 (`probe_of IS NULL` / testbench.generator != 'probe'). Requirement status by
 subject port (D24, `explain.requirement_subject`). Step 4 shows a plain-language
 Problems card first (D25, `explain.build_problems`, `render_plain`; no internal
-ids), the old sections folded into "Technical details". M4 next (repair) … M6 in the design doc. Product output (explanations, UI text,
+ids), the old sections folded into "Technical details". M4 done (D26, `src/xdb/repair.py`: "Correct the scenarios" sets
+scenario_wrong cells to the reference value in a new `<stem>_fixN.feature`,
+no model; "Regenerate the design" re-calls Step 1 for ALU with the failing
+checks + rules + previous Verilog (`repair_of` in /api/generate-hardware,
+`prompt_store.repair_feedback_block`); both store a `feedback` row and the
+new file as version `feedback:<id>`, then rerun Step 3+4; browser check
+`tests/ui/repair_flow.js` with `tests/ui/stage_run.py`). M5 next (regfile,
+CPU) … M6 in the design doc. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.

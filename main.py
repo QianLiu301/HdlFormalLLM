@@ -597,7 +597,7 @@ def _read_decisions(data, module_type=None):
     return record, None
 
 
-def _log_artifact(data, run_id, stage, path=None, meta=None):
+def _log_artifact(data, run_id, stage, path=None, meta=None, sync=False):
     """把本步产物挂到依赖链上。
 
     testbench 与仿真没有 LLM 参与，在 llm_calls 里不会留下任何行；DUV/BDD 虽有
@@ -612,9 +612,14 @@ def _log_artifact(data, run_id, stage, path=None, meta=None):
     # 可解释性数据库：Step 1 / Step 2 一生成就存下完整文件（包括之后被放弃的
     # 版本）。Render 的磁盘每次部署都会清空，不能等到 Step 4 才写。
     # 没配置 DATABASE_URL 时什么都不做；后台线程，异常不外抛。
+    # sync=True (a repaired design): the row must exist before the page asks for
+    # the new simulation, or the run ingestion would create it first, without
+    # the repair as its reason.
     if stage in ('duv', 'bdd') and path and xdb.enabled():
         from src.xdb.ingest import ingest_step_safe
-        ingest_step_safe(PROJECT_ROOT, stage, path, run_id=run_id, data=data, meta=meta)
+        return ingest_step_safe(PROJECT_ROOT, stage, path, run_id=run_id, data=data, meta=meta,
+                                background=not sync)
+    return None
 
 
 def _resolve_output_file(subdir, filename, remembered=None):
@@ -1461,11 +1466,34 @@ def generate_hardware():
                       or _web_default_prompt_version(module_type))
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
+
+    # M4 repair: regenerate the design from the failures of its last simulation
+    # (src/xdb/repair.py). The new design continues the same run, so the
+    # database stores it as the next version of the design, reason feedback:<id>.
+    repair, repair_fb_id = None, None
+    if data.get('repair_of'):
+        if module_type != 'alu':
+            return jsonify({'success': False,
+                            'error': 'Regenerating a design from its failures is available for ALU designs only'}), 400
+        if not xdb.enabled():
+            return jsonify({'success': False,
+                            'error': 'Regenerating a design from its failures needs the explainability database'}), 400
+        from src.xdb import repair as XR
+        repair, rerr = XR.design_feedback(PROJECT_ROOT, _report_paths(data['repair_of']))
+        if rerr:
+            return jsonify({'success': False, 'error': rerr}), 400
+        repair_fb_id = XR.open_design_feedback(repair, llm_name)
+        if repair.get('run_id'):
+            data = {**data, 'run_id': repair['run_id']}
+        data['_version_reason'] = f'feedback:{repair_fb_id}'
+
     # impl-first 下 DUV 是依赖链起点，新建 run_id；spec-first 下起点是 BDD，
     # 这里改为继承前端传来的 run_id（详见 _chain_start）。
     # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
-                            new_run=_chain_start(data, 'duv'), model_used=True)
+                            new_run=_chain_start(data, 'duv') and not repair, model_used=True)
+    if repair_fb_id:
+        _ctx['extra']['repair_feedback_id'] = repair_fb_id
     _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
     # 解释里要说明场景/设计是用哪版 prompt 生成的
     _ctx['extra']['prompt_version'] = prompt_version
@@ -1502,6 +1530,9 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
+                if repair:
+                    generator.repair_feedback = repair['text']
+                    generator.repair_previous = repair.get('previous_verilog')
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
@@ -1571,6 +1602,8 @@ def generate_hardware():
             meta = _last_call_meta(run_id) or {}
             reason = (getattr(generator, 'last_error', None)
                       or meta.get('api_error'))
+            if repair_fb_id:
+                _close_repair(repair_fb_id, 'failed')
             return jsonify({'success': False,
                             'error': reason or 'Generation failed'}), 500
 
@@ -1589,14 +1622,20 @@ def generate_hardware():
         # 只报告不阻断：代码照样保存供查看，但立刻知道这份 DUV 是不是坏的
         duv_compile = _duv_compile_check(hw_path)
 
-        _log_artifact(data, run_id, 'duv', hw_path,
-                      meta={'llm': llm_name, 'module_type': module_type,
-                            'bitwidth': bitwidth, 'streaming': False,
-                            'compiles': (duv_compile or {}).get('ok'),
-                            'compile_error': (duv_compile or {}).get('error')})
+        stored = _log_artifact(data, run_id, 'duv', hw_path,
+                               meta={'llm': llm_name, 'module_type': module_type,
+                                     'bitwidth': bitwidth, 'streaming': False,
+                                     'compiles': (duv_compile or {}).get('ok'),
+                                     'compile_error': (duv_compile or {}).get('error')},
+                               sync=bool(repair_fb_id))
+        if repair_fb_id:
+            duv_id = (stored or {}).get('duv_id')
+            _close_repair(repair_fb_id, 'applied', f'duv:{duv_id}' if duv_id else None)
 
         return jsonify({
             'success': True,
+            'repair': ({'feedback_id': repair_fb_id, 'failures': repair['count'],
+                        'operations': repair['operations']} if repair else None),
             'duv_compile': duv_compile,
             'filename': hw_path_obj.name,
             'preview': content[:1000] + ('...' if len(content) > 1000 else ''),
@@ -1615,7 +1654,17 @@ def generate_hardware():
         print(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
+        if repair_fb_id:
+            _close_repair(repair_fb_id, 'failed')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _close_repair(fb_id, status, result_ref=None):
+    try:
+        from src.xdb import repair as XR
+        XR.close_feedback(fb_id, status, result_ref)
+    except Exception as e:
+        print(f"⚠️  could not update repair feedback {fb_id}: {e}")
 
 
 @app.route('/api/generate-hardware-stream', methods=['POST'])
@@ -2505,6 +2554,121 @@ def explain_requirement_api():
     from src.xdb import explain as E
     return _explain_call(lambda d: E.explain_requirement(
         int(d['requirement_id']), sim_run_id=int(d['sim_run_id']) if d.get('sim_run_id') else None))
+
+
+# ============================================================================
+# Repair (src/xdb/repair.py, milestone M4): act on the verdicts.
+#   /api/repair/scenarios        set the scenario values the reference model
+#                                disagrees with; new feature file + Step 3/4 again
+#   /api/repair/design-feedback  the design's failing checks as prompt text
+#                                (shown before the user regenerates the design)
+#   /api/repair/rerun            Step 3 + Step 4 for a feature and a design
+# Regenerating the design is /api/generate-hardware with "repair_of" set. No
+# model is called by these three endpoints.
+# ============================================================================
+def _rel(path) -> str:
+    p = Path(path)
+    try:
+        return p.resolve().relative_to(Path(PROJECT_ROOT).resolve()).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
+def _rerun_tb_and_sim(data, bdd_rel, duv_rel):
+    """Step 3 and Step 4 again, the way the page runs them. Returns (result, error)."""
+    if not HAS_TESTBENCH_MODULE:
+        return None, 'Testbench Generator module not available'
+    if not simulation_runner or not simulation_runner.can_run_simulation():
+        return None, 'Simulation tools not available on server'
+    bdd_path, err = run_report.safe_path(bdd_rel, PROJECT_ROOT)
+    duv_path, err2 = run_report.safe_path(duv_rel, PROJECT_ROOT)
+    if err or err2 or not bdd_path or not duv_path:
+        return None, err or err2 or 'a feature file and a design are needed'
+    dut_info = dict(data.get('dut_info') or {})
+    name = _module_name_from_verilog(str(duv_path))
+    if name:
+        dut_info['module_name'] = name
+    dut_info['dut_filepath'] = _rel(duv_path)
+    oracle_source = (data.get('oracle_source') or 'bdd').strip().lower()
+    if oracle_source not in ('bdd', 'spec'):
+        oracle_source = 'bdd'
+    tb = TestbenchGenerator(project_root=str(PROJECT_ROOT), debug=False).generate_single(
+        bdd_filepath=str(bdd_path), dut_info=dut_info, oracle_source=oracle_source)
+    if not tb.get('success'):
+        return None, tb.get('error') or 'testbench generation failed'
+    run_id = (data.get('run_id') or '').strip() or None
+    tb_rel = _rel(tb['filepath'])
+    _log_artifact(data, run_id, 'testbench', tb['filepath'],
+                  meta={'bdd_source': _rel(bdd_path), 'module_name': dut_info.get('module_name'),
+                        'test_count': tb.get('test_count'), 'generator': tb.get('generator'),
+                        'source_bdd_llm': tb.get('source_bdd_llm'),
+                        'oracle_source': tb.get('oracle_source'),
+                        'parse_stats': tb.get('parse_stats'), 'repair': True})
+    sim = simulation_runner.run_single(str(PROJECT_ROOT / tb_rel), str(duv_path))
+    _log_artifact(data, run_id, 'simulation', tb_rel,
+                  meta={'dut_path': _rel(duv_path), 'success': bool(sim.get('success')),
+                        'pass_rate': sim.get('pass_rate'), 'total_tests': sim.get('total_tests'),
+                        'passed_tests': sim.get('passed_tests'), 'repair': True})
+    return {'testbench_path': tb_rel, 'testbench_filename': tb['filename'],
+            'testbench_content': tb.get('full_content'),
+            'test_count': tb.get('test_count'), 'simulation': {**sim, 'run_id': run_id}}, None
+
+
+def _repair_call(fn):
+    if not xdb.enabled():
+        return jsonify({'success': False, 'error': 'repair needs the explainability database (DATABASE_URL)'}), 400
+    try:
+        out, err = fn(request.json or {})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 500
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    return jsonify({'success': True, **out})
+
+
+@app.route('/api/repair/scenarios', methods=['POST'])
+def repair_scenarios_api():
+    """New feature file with the reference values, then testbench and simulation again."""
+    from src.xdb import repair as XR
+
+    def _do(d):
+        res, err = XR.repair_scenarios(PROJECT_ROOT, _report_paths(d),
+                                       (d.get('run_id') or '').strip() or None, d)
+        if err:
+            return None, err
+        d = {**d, 'run_id': res.get('run_id') or d.get('run_id'), 'bdd_filepath': res['feature_path']}
+        rerun, err = _rerun_tb_and_sim(d, res['feature_path'], d.get('duv_filepath'))
+        if err:
+            return None, f"the scenarios were corrected ({res['feature_filename']}), but: {err}"
+        content = (PROJECT_ROOT / res['feature_path']).read_text(encoding='utf-8', errors='replace')
+        return {**res, **rerun, 'feature_content': content}, None
+    return _repair_call(_do)
+
+
+@app.route('/api/repair/design-feedback', methods=['POST'])
+def repair_design_feedback_api():
+    from src.xdb import repair as XR
+    return _repair_call(lambda d: XR.design_feedback(PROJECT_ROOT, _report_paths(d)))
+
+
+@app.route('/api/repair/rerun', methods=['POST'])
+def repair_rerun_api():
+    """Step 3 + 4 for the page's feature and design (after the design was regenerated)."""
+    def _do(d):
+        return _rerun_tb_and_sim(d, d.get('bdd_filepath'), d.get('duv_filepath'))
+    if not (request.json or {}).get('bdd_filepath'):
+        return jsonify({'success': False, 'error': 'bdd_filepath is required'}), 400
+    try:
+        out, err = _do(request.json or {})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 500
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+    return jsonify({'success': True, **out})
 
 
 def _requirements_config_line(data):
