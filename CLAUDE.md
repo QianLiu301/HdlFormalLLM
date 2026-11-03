@@ -112,7 +112,13 @@ Neon Frankfurt; canonical steps in three layers; revisions + provenance on
 every row; v1 = global/local explanations, click-first). Code in `src/xdb/`
 (SQLAlchemy models, Alembic migrations, ingestion hooked into
 `/api/run-report`, inert without `DATABASE_URL`, read from env or a gitignored
-`.env`). Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
+`.env`; Step 1/2 saves are stored via `_log_artifact`). Each assertion gets a
+verdict from O/B/R (observed / BDD expected / reference model in
+TestbenchGenerator): pass, scenario_wrong, design_wrong, both_wrong,
+consistent_wrong, undecided — testbench Verilog is unchanged, the data comes
+from the `*_tb.scenarios.json` index v2 (ALU only so far). Scope on this branch:
+web Steps 0–4 (+explain, repair); benchmark/golden/mutants set aside.
+Milestones M1 (done) … M6 in the design doc. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.
 

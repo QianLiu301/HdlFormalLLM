@@ -1,19 +1,24 @@
 """
-Ingest one website run (Steps 0-4) into the explainability database.
+Write the website's runs into the explainability database.
 
-Input is the same set of paths the Step-4 run report uses (requirements,
-feature file, DUV, testbench, simulation log), so the database holds exactly
-what the report shows, plus provenance:
+Three entry points, one per moment something is generated:
 
-    requirements  ->  requirement            (origin req_step)
-    feature file  ->  feature, scenario, scenario_step, example_row
-    @req_N tags   ->  scenario_requirement   (method llm_tag: the model's claim)
-    testbench     ->  testbench, check_item  (one per [BDD:...] / [GEN:...] tag)
-    sim log       ->  sim_run, check_result
-    llm_calls     ->  llm_call               (copied from the SQLite call log)
+    ingest_duv(...)      Step 1 saved a Verilog design            -> duv
+    ingest_feature(...)  Step 2 saved a feature file              -> feature
+    ingest_run(...)      Step 4 report (requirements, feature, DUV,
+                         testbench, simulation log)               -> everything below
 
-Idempotent: ingesting the same run again adds nothing; a new simulation of
-the same testbench adds one sim_run. Nothing here calls a model.
+    requirements file -> requirement, decision      (Step 0, read whenever a step used it)
+    feature file      -> feature, scenario, scenario_step, example_row
+    @req_N tags       -> scenario_requirement       (method llm_tag: the model's claim)
+    testbench index   -> testbench, check_item      (one per assertion; v2 index adds
+                                                     stimulus, port, B and R values)
+    simulation log    -> sim_run, check_result      (with the verdict, see verdict.py)
+    SQLite call log   -> llm_call
+
+Every entry point is idempotent: the same file in the same session is stored
+once; a new generation in the same session becomes a new version that points
+at the previous one (parent_id). Nothing here calls a model.
 """
 
 import hashlib
@@ -26,20 +31,28 @@ from typing import Dict, Optional
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 
 from src import xdb
 from src.xdb import gherkin
 from src.xdb import models as M
+from src.xdb.verdict import classify, observed_value
 
 try:
-    from src import run_report, scenario_results
-except ImportError:                                     # pragma: no cover
-    import run_report, scenario_results                 # type: ignore
+    from src import run_report, scenario_results, requirements_store
+except ImportError:                                                  # pragma: no cover
+    import run_report, scenario_results, requirements_store         # type: ignore
 
 _STATUS = {'pass': 'pass', 'fail': 'fail', 'setup': 'setup',
            'skipped': 'not_tested', 'missing': 'not_tested'}
 _EXP_RE = re.compile(r'Expected\s+([^,\s]+),?\s+Got\s+(\S+)', re.I)
+# "✗ Test 14: FAIL - Expected 4294967245, Got 4294967246 [BDD:ALU-SUB-001/r7]"
+_TEST_RE = re.compile(r'Test\s+(\d+)\s*:\s*(PASS|FAIL)\b(?:.*?Expected\s+([^,\s]+),?\s+Got\s+(\S+))?'
+                      r'.*?\[BDD:([^\]\s]+)\]')
+_TASK = {'duv': 'web_duv_generation', 'bdd': 'web_bdd_generation'}
 
+
+# ----------------------------------------------------------------- artifacts
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -51,12 +64,31 @@ def _artifact(s, kind: str, path: Optional[Path]) -> Optional[str]:
     data = path.read_bytes()
     sha = _sha(data)
     s.execute(pg_insert(M.Artifact).values(sha256=sha, kind=kind, content=data,
-                                           orig_name=path.name)
+                                           orig_name=path.name, encoding='identity')
               .on_conflict_do_nothing(index_elements=['sha256']))
     return sha
 
 
-# ----------------------------------------------------------------- design + ports
+def artifact_bytes(a: M.Artifact) -> bytes:
+    """Content of an artifact, whatever its storage encoding."""
+    if a.encoding == 'gzip':
+        import gzip
+        return gzip.decompress(a.content)
+    return a.content
+
+
+def artifact_text(a: M.Artifact) -> str:
+    return artifact_bytes(a).decode('utf-8', errors='replace')
+
+
+def _safe(project_root, path) -> Optional[Path]:
+    p, err = run_report.safe_path(str(path) if path else None, project_root)
+    if err:
+        raise ValueError(err)
+    return p
+
+
+# ----------------------------------------------------------------- design, ports, session
 
 _PORT_RE = re.compile(r'\b(input|output|inout)\b\s*(?:wire|reg|logic)?\s*(?:signed\s*)?'
                       r'(\[[^\]]+\])?\s*([A-Za-z_]\w*'
@@ -93,45 +125,71 @@ def parse_ports(verilog: str) -> Dict:
     return {'module': name.group(1) if name else None, 'params': params, 'ports': ports}
 
 
-def _design(s, module_type: str, verilog: Optional[str], tb_text: str) -> M.Design:
-    info = parse_ports(verilog) if verilog else {'module': None, 'params': {}, 'ports': []}
-    width = info['params'].get('WIDTH')
-    if width is None:
-        m = re.search(r'\bparameter\s+WIDTH\s*=\s*(\d+)', tb_text)
-        width = int(m.group(1)) if m else None
-    name = info['module'] or (f'{module_type}_{width}bit' if width else module_type)
+def _int(v) -> Optional[int]:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _design(s, module_type: str, bitwidth: Optional[int], verilog: Optional[str] = None) -> M.Design:
+    """Spec-level design: what is being designed (alu_32bit), not a particular Verilog."""
+    module_type = (module_type or 'other').strip() or 'other'
+    name = f'{module_type}_{bitwidth}bit' if bitwidth else module_type
     d = s.scalar(select(M.Design).where(M.Design.source == 'web', M.Design.name == name))
     if d is None:
-        d = M.Design(module_type=module_type, bitwidth=width, source='web', name=name)
+        d = M.Design(module_type=module_type, bitwidth=bitwidth, source='web', name=name)
         s.add(d)
         s.flush()
-        for p in info['ports']:
+    if verilog and not s.scalar(select(M.Port).where(M.Port.design_id == d.id).limit(1)):
+        for p in parse_ports(verilog)['ports']:
             if p['width'] is not None:
                 s.add(M.Port(design_id=d.id, **p))
+        s.flush()
     return d
 
 
-# ----------------------------------------------------------------- LLM calls
+def _session(s, run_key: str, run_id: Optional[str], design: M.Design) -> M.Session:
+    sess = s.scalar(select(M.Session).where(M.Session.run_key == run_key))
+    if sess is None:
+        sess = M.Session(run_key=run_key, run_id=run_id, design_id=design.id)
+        s.add(sess)
+        s.flush()
+    elif sess.design_id is None:
+        sess.design_id = design.id
+    return sess
+
+
+# ----------------------------------------------------------------- LLM calls + provenance
 
 def _copy_llm_calls(s, session_id: int, run_id: Optional[str]) -> Dict[str, int]:
-    """Copy this run's calls from the SQLite call log; returns task_type -> newest id."""
+    """Copy this run's calls from the SQLite call log; returns task_type -> newest id.
+
+    source_ref includes the timestamp: on Render the SQLite file is recreated at
+    every deploy, so its row ids alone repeat across deploys.
+    """
     if not run_id:
         return {}
     try:
-        from src.experiment_logger import DB_PATH
+        from src import experiment_logger
+        db_path = experiment_logger.DB_PATH
     except Exception:
         return {}
-    if not Path(DB_PATH).exists():
-        return {}
-    conn = sqlite3.connect(DB_PATH)
+    latest: Dict[str, int] = {}
+    for c in s.scalars(select(M.LlmCall).where(M.LlmCall.session_id == session_id)
+                       .order_by(M.LlmCall.id)):
+        if c.task_type:
+            latest[c.task_type] = c.id
+    if not Path(db_path).exists():
+        return latest
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute('SELECT * FROM llm_calls WHERE run_id = ? ORDER BY id', (run_id,)).fetchall()
     finally:
         conn.close()
-    latest: Dict[str, int] = {}
     for r in rows:
-        ref = f'sqlite:{r["id"]}'
+        ref = f'sqlite:{r["created_at"]}:{r["id"]}'
         call = s.scalar(select(M.LlmCall).where(M.LlmCall.source_ref == ref))
         if call is None:
             extra = json.loads(r['extra']) if r['extra'] else {}
@@ -152,12 +210,192 @@ def _copy_llm_calls(s, session_id: int, run_id: Optional[str]) -> Dict[str, int]
     return latest
 
 
-# ----------------------------------------------------------------- main entry
+def _link_provenance(s, sess: M.Session, calls: Dict[str, int]):
+    """A file may be ingested before its call reached the log (streaming writes
+    the call when the stream closes). Fill the link in on a later ingest."""
+    for model, task in ((M.Duv, _TASK['duv']), (M.Feature, _TASK['bdd'])):
+        if task not in calls:
+            continue
+        for row in s.scalars(select(model).where(model.session_id == sess.id,
+                                                 model.prov_kind == 'import')):
+            row.prov_kind, row.prov_ref = 'llm', f'llm_call:{calls[task]}'
+            if model is M.Duv and row.origin == 'unknown':
+                row.origin = 'llm'
+
+
+# ----------------------------------------------------------------- Step 0
+
+def _requirements(s, sess: M.Session, design: M.Design, record: Optional[Dict],
+                  req_sha: Optional[str]) -> Dict[str, M.Requirement]:
+    reqs: Dict[str, M.Requirement] = {}
+    if not record:
+        return reqs
+    prov_ref = record.get('analysis_run_id') or (f'artifact:{req_sha}' if req_sha else None)
+    for r in record.get('requirements') or []:
+        q = s.scalar(select(M.Requirement).where(
+            M.Requirement.session_id == sess.id, M.Requirement.req_key == r['id'],
+            M.Requirement.is_current))
+        if q is None:
+            q = M.Requirement(design_id=design.id, session_id=sess.id, req_key=r['id'],
+                              text=r.get('text', ''), origin='req_step',
+                              prov_kind='llm' if r.get('source') == 'llm' else 'human',
+                              prov_ref=prov_ref)
+            s.add(q)
+            s.flush()
+        reqs[r['id']] = q
+    questions = {q.get('id'): q for q in record.get('questions') or []}
+    for d in record.get('decisions') or []:
+        key = d.get('question_id') or d.get('id')
+        if not key or s.scalar(select(M.Decision).where(M.Decision.session_id == sess.id,
+                                                        M.Decision.question_key == key)):
+            continue
+        q = questions.get(key, {})
+        s.add(M.Decision(session_id=sess.id, question_key=key,
+                         question=d.get('question') or q.get('question') or '',
+                         options=q.get('options'), default_index=q.get('default'),
+                         answer=d.get('answer') or '', answer_source=d.get('source'),
+                         why=q.get('why'),
+                         # the user confirmed or wrote every answer
+                         prov_kind='human', prov_ref=prov_ref))
+    s.flush()
+    return reqs
+
+
+def _load_record(project_root, data) -> (Optional[Dict], Optional[Path]):
+    path = (data or {}).get('requirements_filepath')
+    if not path:
+        return None, None
+    p = _safe(project_root, path)
+    return json.loads(p.read_text(encoding='utf-8')), p
+
+
+# ----------------------------------------------------------------- Step 1 / Step 2
+
+def _next_version(s, model, sess_id: int, sha: str):
+    """(existing row or None, parent id) for a file in a session."""
+    existing = s.scalar(select(model).where(model.session_id == sess_id, model.artifact == sha))
+    if existing is not None:
+        return existing, None
+    prev = s.scalar(select(model).where(model.session_id == sess_id)
+                    .order_by(model.id.desc()).limit(1))
+    return None, (prev.id if prev else None)
+
+
+def _upsert_duv(s, sess, design, sha, verilog, data, calls, compiles=None,
+                feature_id=None) -> M.Duv:
+    row, parent = _next_version(s, M.Duv, sess.id, sha)
+    if row is not None:
+        return row
+    call = calls.get(_TASK['duv'])
+    spec_first = (data.get('workflow_mode') or 'implementation') == 'specification'
+    row = M.Duv(session_id=sess.id, design_id=design.id, artifact=sha,
+                module_name=parse_ports(verilog)['module'] if verilog else None,
+                origin='llm' if call else 'unknown', parent_id=parent,
+                reason='regenerated' if parent else 'generated',
+                workflow_mode=data.get('workflow_mode') or 'implementation',
+                prompt_has_bdd=bool(spec_first and data.get('bdd_filepath')),
+                based_on_feature_id=feature_id if spec_first else None,
+                prompt_has_decisions=bool(data.get('requirements_filepath')),
+                compiles=compiles,
+                prov_kind='llm' if call else 'import',
+                prov_ref=f'llm_call:{call}' if call else None)
+    s.add(row)
+    s.flush()
+    return row
+
+
+def _upsert_feature(s, sess, sha, text, data, calls) -> M.Feature:
+    row, parent = _next_version(s, M.Feature, sess.id, sha)
+    if row is not None:
+        return row
+    call = calls.get(_TASK['bdd'])
+    row = M.Feature(session_id=sess.id, artifact=sha, title=gherkin.feature_title(text),
+                    parent_id=parent, reason='regenerated' if parent else 'generated',
+                    workflow_mode=data.get('workflow_mode') or 'implementation',
+                    prompt_has_decisions=bool(data.get('requirements_filepath')),
+                    prov_kind='llm' if call else 'import',
+                    prov_ref=f'llm_call:{call}' if call else None)
+    s.add(row)
+    s.flush()
+    return row
+
+
+def _retry(fn, *a, **kw):
+    """Steps of one run may be ingested concurrently (background threads); the
+    loser of a race on a unique key simply runs again and finds the row."""
+    try:
+        return fn(*a, **kw)
+    except IntegrityError:
+        return fn(*a, **kw)
+
+
+def ingest_duv(project_root, path, run_id: Optional[str], data: Dict, meta: Optional[Dict] = None,
+               url=None) -> Dict:
+    def _do():
+        p = _safe(project_root, path)
+        verilog = p.read_text(encoding='utf-8', errors='replace')
+        with xdb.session_scope(url) as s:
+            sha = _artifact(s, 'duv', p)
+            # meta holds what Step 1 actually generated (the page's free-text input
+            # may override module type / bit width given in the request)
+            design = _design(s, (meta or {}).get('module_type') or data.get('module_type'),
+                             _int((meta or {}).get('bitwidth') or data.get('bitwidth')), verilog)
+            sess = _session(s, run_id or f'duv:{sha[:24]}', run_id, design)
+            calls = _copy_llm_calls(s, sess.id, run_id)
+            record, rpath = _load_record(project_root, data)
+            _requirements(s, sess, design, record, _artifact(s, 'requirements', rpath))
+            feat = None
+            if (data.get('workflow_mode') or '') == 'specification' and data.get('bdd_filepath'):
+                fp = _safe(project_root, data['bdd_filepath'])
+                fsha = _artifact(s, 'feature', fp)
+                feat = _upsert_feature(s, sess, fsha, fp.read_text(encoding='utf-8', errors='replace'),
+                                       data, calls)
+            duv = _upsert_duv(s, sess, design, sha, verilog, data, calls,
+                              compiles=(meta or {}).get('compiles'),
+                              feature_id=feat.id if feat else None)
+            _link_provenance(s, sess, calls)
+            return {'ingested': True, 'stage': 'duv', 'session_id': sess.id, 'duv_id': duv.id}
+    return _retry(_do)
+
+
+def ingest_feature(project_root, path, run_id: Optional[str], data: Dict, meta: Optional[Dict] = None,
+                   url=None) -> Dict:
+    def _do():
+        p = _safe(project_root, path)
+        text = p.read_text(encoding='utf-8', errors='replace')
+        with xdb.session_scope(url) as s:
+            sha = _artifact(s, 'feature', p)
+            design = _design(s, data.get('module_type'), _int(data.get('bitwidth')))
+            sess = _session(s, run_id or f'bdd:{sha[:24]}', run_id, design)
+            calls = _copy_llm_calls(s, sess.id, run_id)
+            record, rpath = _load_record(project_root, data)
+            _requirements(s, sess, design, record, _artifact(s, 'requirements', rpath))
+            feat = _upsert_feature(s, sess, sha, text, data, calls)
+            _link_provenance(s, sess, calls)
+            return {'ingested': True, 'stage': 'bdd', 'session_id': sess.id, 'feature_id': feat.id}
+    return _retry(_do)
+
+
+# ----------------------------------------------------------------- Step 4
+
+def _log_by_test(log: str) -> Dict[int, Dict]:
+    out = {}
+    for line in (log or '').splitlines():
+        m = _TEST_RE.search(line)
+        if m:
+            out[int(m.group(1))] = {'status': m.group(2).lower(), 'expected': m.group(3),
+                                    'got': m.group(4), 'row': m.group(5), 'line': line.strip()}
+    return out
+
 
 def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[str] = None,
-               url: Optional[str] = None) -> Dict:
+               url: Optional[str] = None, data: Optional[Dict] = None) -> Dict:
     """paths: requirements / bdd / duv / testbench / log, relative to project_root
     (or absolute) and inside output/, exactly as for the run report."""
+    return _retry(_ingest_run, project_root, paths, run_id, url, data or {})
+
+
+def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
     report, err = run_report.build(project_root, paths)
     if err:
         return {'ingested': False, 'reason': err}
@@ -172,16 +410,14 @@ def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[s
                 'reason': 'testbench has no scenario index (generated before scenario tagging)'}
 
     feature_path = files.get('bdd')
-    if feature_path is None and index.get('feature'):
-        cand = Path(index['feature'])
-        cand = cand if cand.is_absolute() else root / cand
-        feature_path = cand if cand.is_file() else None
-
     tb_text = files['testbench'].read_text(encoding='utf-8', errors='replace')
+    log_text = files['log'].read_text(encoding='utf-8', errors='replace')
     duv_text = files['duv'].read_text(encoding='utf-8', errors='replace') if files.get('duv') else None
     feature_text = feature_path.read_text(encoding='utf-8', errors='replace') if feature_path else ''
     record = report.get('requirements_record')
     module_type = index.get('module_type') or (record or {}).get('module_type') or 'other'
+    m = re.search(r'\bparameter\s+WIDTH\s*=\s*(\d+)', tb_text)
+    bitwidth = _int(data.get('bitwidth')) or (int(m.group(1)) if m else None)
 
     with xdb.session_scope(url) as s:
         sha = {k: _artifact(s, kind, files.get(k)) for k, kind in
@@ -189,59 +425,29 @@ def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[s
                 ('testbench', 'testbench'), ('log', 'sim_log'))}
         sha['bdd'] = _artifact(s, 'feature', feature_path)
 
-        design = _design(s, module_type, duv_text, tb_text)
-        run_key = run_id or f"tb:{sha['testbench'][:24]}"
-        sess = s.scalar(select(M.Session).where(M.Session.run_key == run_key))
-        if sess is None:
-            sess = M.Session(run_key=run_key, run_id=run_id, design_id=design.id)
-            s.add(sess)
-            s.flush()
+        design = _design(s, module_type, bitwidth, duv_text)
+        sess = _session(s, run_id or f"tb:{sha['testbench'][:24]}", run_id, design)
         calls = _copy_llm_calls(s, sess.id, run_id)
+        reqs = _requirements(s, sess, design, record, sha['requirements'])
 
-        # -- requirements (Step 0)
-        reqs: Dict[str, M.Requirement] = {}
-        for r in (record or {}).get('requirements') or []:
-            q = s.scalar(select(M.Requirement).where(
-                M.Requirement.session_id == sess.id, M.Requirement.req_key == r['id'],
-                M.Requirement.is_current))
-            if q is None:
-                q = M.Requirement(design_id=design.id, session_id=sess.id, req_key=r['id'],
-                                  text=r.get('text', ''), origin='req_step',
-                                  prov_kind='llm' if r.get('source') == 'llm' else 'human',
-                                  prov_ref=(record or {}).get('analysis_run_id')
-                                  or (f"artifact:{sha['requirements']}" if sha['requirements'] else None))
-                s.add(q)
-                s.flush()
-            reqs[r['id']] = q
-
-        # -- feature + scenarios (Step 2)
-        feature = None
-        if sha['bdd']:
-            feature = s.scalar(select(M.Feature).where(M.Feature.session_id == sess.id,
-                                                       M.Feature.artifact == sha['bdd']))
-            if feature is None:
-                bdd_call = calls.get('web_bdd_generation')
-                feature = M.Feature(session_id=sess.id, artifact=sha['bdd'],
-                                    title=gherkin.feature_title(feature_text),
-                                    prov_kind='llm' if bdd_call else 'import',
-                                    prov_ref=f'llm_call:{bdd_call}' if bdd_call else feature_path.name)
-                s.add(feature)
-                s.flush()
+        feature = _upsert_feature(s, sess, sha['bdd'], feature_text, data, calls) if sha['bdd'] else None
+        duv = (_upsert_duv(s, sess, design, sha['duv'], duv_text, data, calls,
+                           feature_id=feature.id if feature else None) if sha['duv'] else None)
+        _link_provenance(s, sess, calls)
         background = gherkin.background_steps(feature_text) if feature_text else []
 
+        # -- scenarios of this feature version
         scen: Dict[str, M.Scenario] = {}
         rows: Dict[str, M.ExampleRow] = {}
         n_new_scen = 0
-        for entry in index.get('catalog') or []:
-            if feature is None:
-                break
+        for entry in (index.get('catalog') or []) if feature else []:
             sc = s.scalar(select(M.Scenario).where(M.Scenario.feature_id == feature.id,
                                                    M.Scenario.scenario_key == entry['id'],
                                                    M.Scenario.is_current))
             span = entry.get('span') or [0, 0]
             block = feature_text[span[0]:span[1]]
-            parsed = gherkin.parse_scenario(block)
             if sc is None:
+                parsed = gherkin.parse_scenario(block)
                 n_new_scen += 1
                 sc = M.Scenario(feature_id=feature.id, scenario_key=entry['id'],
                                 title=entry.get('title') or parsed['title'],
@@ -251,15 +457,11 @@ def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[s
                 s.add(sc)
                 s.flush()
                 pos = 0
-                for st in background:
+                for st, bg in [(x, True) for x in background] + [(x, False) for x in parsed['steps']]:
                     pos += 1
                     s.add(M.ScenarioStep(scenario_id=sc.id, position=pos, keyword=st['keyword'],
                                          role=st['role'], surface_text=st['text'],
-                                         from_background=True))
-                for st in parsed['steps']:
-                    pos += 1
-                    s.add(M.ScenarioStep(scenario_id=sc.id, position=pos, keyword=st['keyword'],
-                                         role=st['role'], surface_text=st['text']))
+                                         from_background=bg))
                 for row in parsed['rows']:
                     s.add(M.ExampleRow(scenario_id=sc.id, row_no=row['row_no'], vals=row['vals'],
                                        prov_kind=sc.prov_kind, prov_ref=sc.prov_ref))
@@ -273,7 +475,7 @@ def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[s
                                                            M.ExampleRow.is_current)):
                 rows[f"{entry['id']}/r{er.row_no}"] = er
 
-        # -- testbench + checks (Step 3)
+        # -- testbench + one check per assertion
         tb = s.scalar(select(M.Testbench).where(M.Testbench.session_id == sess.id,
                                                 M.Testbench.artifact == sha['testbench']))
         if tb is None:
@@ -285,54 +487,86 @@ def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[s
             s.flush()
         trace = index.get('trace') or {}
         weak = trace.get('weak') or {}
-        checks: Dict[str, M.CheckItem] = {
-            c.tag: c for c in s.scalars(select(M.CheckItem).where(M.CheckItem.testbench_id == tb.id))}
+        detail = trace.get('detail') or {}
+        checks: Dict[tuple, M.CheckItem] = {
+            (c.tag, c.seq): c for c in s.scalars(select(M.CheckItem)
+                                                 .where(M.CheckItem.testbench_id == tb.id))}
 
-        def _check(tag, **kw):
-            if tag not in checks:
-                checks[tag] = M.CheckItem(testbench_id=tb.id, tag=tag, **kw)
-                s.add(checks[tag])
-            return checks[tag]
+        def _check(tag, seq=1, **kw):
+            if (tag, seq) not in checks:
+                checks[(tag, seq)] = M.CheckItem(testbench_id=tb.id, tag=tag, seq=seq, **kw)
+                s.add(checks[(tag, seq)])
+            return checks[(tag, seq)]
 
         for entry in index.get('catalog') or []:
+            sc_id = scen[entry['id']].id if entry['id'] in scen else None
             for rid in entry.get('rows') or []:
                 er = rows.get(rid)
-                _check(f'BDD:{rid}', scenario_id=scen[entry['id']].id if entry['id'] in scen else None,
-                       example_row_id=er.id if er else None,
-                       strength='weak' if rid in weak else 'normal', weak_reason=weak.get(rid))
+                common = dict(scenario_id=sc_id, example_row_id=er.id if er else None,
+                              strength='weak' if rid in weak else 'normal',
+                              weak_reason=weak.get(rid))
+                infos = detail.get(rid) or [None]
+                for k, info in enumerate(infos, 1):
+                    info = info or {}
+                    _check(f'BDD:{rid}', k, test_no=info.get('test'), port=info.get('port'),
+                           width=info.get('width'), operation=info.get('operation'),
+                           stimulus=info.get('stimulus'), expected_bdd=info.get('expected_bdd'),
+                           expected_ref=info.get('expected_ref'),
+                           expected_used=info.get('expected_used'), oracle=info.get('oracle'),
+                           **common)
         for g in trace.get('generated') or []:
             _check(f"GEN:{g['id']}", label=g.get('label'))
         s.flush()
 
-        # -- simulation (Step 4)
+        # -- simulation
         dup = s.scalar(select(M.SimRun).where(M.SimRun.testbench_id == tb.id,
                                               M.SimRun.dut_artifact == sha['duv'],
                                               M.SimRun.log_artifact == sha['log']))
         if dup is not None:
             return {'ingested': True, 'new': False, 'session_id': sess.id, 'sim_run_id': dup.id}
         totals = results.get('totals') or {}
-        run = M.SimRun(testbench_id=tb.id, dut_artifact=sha['duv'], target='generated_duv',
-                       simulator='iverilog', log_artifact=sha['log'],
+        run = M.SimRun(testbench_id=tb.id, duv_id=duv.id if duv else None,
+                       dut_artifact=sha['duv'], target='generated_duv', simulator='iverilog',
+                       log_artifact=sha['log'],
                        status='ok' if (totals.get('bdd_checks') or totals.get('generated_checks'))
                        else 'no_results')
         s.add(run)
         s.flush()
 
+        by_test = _log_by_test(log_text)
+        row_res = {r['id']: r for sc_res in results.get('scenarios') or [] for r in sc_res.get('rows') or []}
+        verdicts: Dict[str, int] = {}
         n_results = 0
-        for sc_res in results.get('scenarios') or []:
-            for r in sc_res.get('rows') or []:
-                c = checks.get(f"BDD:{r['id']}")
-                if c is None:
+        for (tag, seq), c in checks.items():
+            if not tag.startswith('BDD:'):
+                continue
+            rid = tag[4:]
+            hit = by_test.get(c.test_no) if c.test_no else None
+            if hit is not None:
+                status, msg = hit['status'], hit['line']
+                got, exp_txt = hit['got'], hit['expected']
+            else:
+                r = row_res.get(rid)
+                if r is None:
                     continue
+                status = _STATUS.get(r['status'], 'not_tested')
+                if c.test_no and status in ('pass', 'fail'):
+                    status = 'not_tested'      # this assertion never reported
                 msg = r.get('message') or r.get('reason')
-                m = _EXP_RE.search(msg or '')
-                s.add(M.CheckResult(sim_run_id=run.id, check_id=c.id,
-                                    status=_STATUS.get(r['status'], 'not_tested'), message=msg,
-                                    expected={'value': m.group(1)} if m else None,
-                                    observed={'value': m.group(2)} if m else None))
-                n_results += 1
+                mm = _EXP_RE.search(msg or '')
+                exp_txt, got = (mm.group(1), mm.group(2)) if mm else (None, None)
+            o = observed_value(status, got, c.expected_used, c.width)
+            v = (classify(o, c.expected_bdd, c.expected_ref, c.width)
+                 if status in ('pass', 'fail') else None)
+            if v:
+                verdicts[v] = verdicts.get(v, 0) + 1
+            s.add(M.CheckResult(sim_run_id=run.id, check_id=c.id, status=status, message=msg,
+                                expected={c.port or 'value': exp_txt} if exp_txt else None,
+                                observed={c.port or 'value': got} if got else None,
+                                observed_value=o if isinstance(o, int) else None, verdict=v))
+            n_results += 1
         for g in results.get('generated') or []:
-            c = checks.get(f"GEN:{g['id']}")
+            c = checks.get((f"GEN:{g['id']}", 1))
             if c is not None:
                 s.add(M.CheckResult(sim_run_id=run.id, check_id=c.id,
                                     status=_STATUS.get(g['status'], 'not_tested'),
@@ -340,26 +574,43 @@ def ingest_run(project_root, paths: Dict[str, Optional[str]], run_id: Optional[s
                 n_results += 1
 
         return {'ingested': True, 'new': True, 'session_id': sess.id, 'sim_run_id': run.id,
-                'design': design.name, 'requirements': len(reqs), 'scenarios_new': n_new_scen,
-                'checks': len(checks), 'check_results': n_results, 'llm_calls': len(calls)}
+                'design': design.name, 'duv_id': duv.id if duv else None,
+                'requirements': len(reqs), 'scenarios_new': n_new_scen, 'checks': len(checks),
+                'check_results': n_results, 'verdicts': verdicts, 'llm_calls': len(calls)}
 
 
-def ingest_run_safe(project_root, paths, run_id=None, background=True) -> Optional[Dict]:
-    """Website hook: no-op without DATABASE_URL, never raises, by default does
-    not block the request (Neon may need a moment to wake up)."""
+# ----------------------------------------------------------------- website hooks
+
+def _run_safe(fn, background, label):
     if not xdb.enabled():
         return None
 
     def _work():
         try:
-            out = ingest_run(project_root, paths, run_id=run_id)
-            print(f'🗄️  explainability DB: {out}')
+            out = fn()
+            print(f'🗄️  explainability DB ({label}): {out}')
             return out
         except Exception as e:                       # never break the website
-            print(f'⚠️  explainability DB ingest failed (non-fatal): {type(e).__name__}: {e}')
+            print(f'⚠️  explainability DB {label} failed (non-fatal): {type(e).__name__}: {e}')
             return {'ingested': False, 'reason': f'{type(e).__name__}: {e}'}
 
     if background:
-        threading.Thread(target=_work, name='xdb-ingest', daemon=True).start()
+        threading.Thread(target=_work, name=f'xdb-{label}', daemon=True).start()
         return {'queued': True}
     return _work()
+
+
+def ingest_run_safe(project_root, paths, run_id=None, data=None, background=True) -> Optional[Dict]:
+    """Step 4 hook: no-op without DATABASE_URL, never raises, by default does
+    not block the request (Neon may need a moment to wake up)."""
+    return _run_safe(lambda: ingest_run(project_root, paths, run_id=run_id, data=data),
+                     background, 'run')
+
+
+def ingest_step_safe(project_root, stage: str, path, run_id=None, data=None, meta=None,
+                     background=True) -> Optional[Dict]:
+    """Step 1 / Step 2 hook: store the generated file as soon as it is saved."""
+    fn = {'duv': ingest_duv, 'bdd': ingest_feature}.get(stage)
+    if fn is None or not path:
+        return None
+    return _run_safe(lambda: fn(project_root, path, run_id, data or {}, meta), background, stage)

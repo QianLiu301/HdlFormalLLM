@@ -609,6 +609,12 @@ def _log_artifact(data, run_id, stage, path=None, meta=None):
                  session_id=(data.get('session_id') or '').strip() or None,
                  workflow_mode=(data.get('workflow_mode') or '').strip() or 'implementation',
                  meta=meta)
+    # 可解释性数据库：Step 1 / Step 2 一生成就存下完整文件（包括之后被放弃的
+    # 版本）。Render 的磁盘每次部署都会清空，不能等到 Step 4 才写。
+    # 没配置 DATABASE_URL 时什么都不做；后台线程，异常不外抛。
+    if stage in ('duv', 'bdd') and path and xdb.enabled():
+        from src.xdb.ingest import ingest_step_safe
+        ingest_step_safe(PROJECT_ROOT, stage, path, run_id=run_id, data=data, meta=meta)
 
 
 def _resolve_output_file(subdir, filename, remembered=None):
@@ -2426,7 +2432,7 @@ def run_report_json():
     if xdb.enabled():
         from src.xdb.ingest import ingest_run_safe
         db = ingest_run_safe(PROJECT_ROOT, paths,
-                             run_id=(data.get('run_id') or '').strip() or None)
+                             run_id=(data.get('run_id') or '').strip() or None, data=data)
     return jsonify({'success': True, **report, 'explainability_db': db})
 
 

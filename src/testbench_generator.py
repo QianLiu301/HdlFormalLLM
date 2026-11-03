@@ -1217,7 +1217,10 @@ class TestbenchGenerator:
             # 在日志里根本不出现的场景。
             trace = quality_analysis.get('trace') or self._new_trace()
             scenario_index = {
-                'version': 1,
+                # v2: trace['detail'] holds, per assertion, the stimulus actually
+                # applied, the compared port and both expected values (BDD and the
+                # reference model). Used to tell a wrong design from a wrong scenario.
+                'version': 2,
                 'feature': bdd_path.name,
                 'module_type': module_type,
                 'oracle_source': oracle_source,
@@ -1320,7 +1323,30 @@ class TestbenchGenerator:
     # 现有的通过率解析与实验脚本不受影响。
     @staticmethod
     def _new_trace() -> Dict:
-        return {'checks': {}, 'skipped': {}, 'generated': []}
+        return {'checks': {}, 'skipped': {}, 'generated': [], 'detail': {}}
+
+    @staticmethod
+    def _as_int(v) -> Optional[int]:
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        try:
+            return int(str(v).strip(), 0)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _trace_detail(trace: Dict, scenario: Dict, **info):
+        """Record what one assertion actually does (index only, never the TB text).
+
+        Values are stored as unsigned integers masked to the port width, which
+        is how the testbench compares them, so -1 and 4294967295 are the same
+        32-bit value. expected_ref is None when no reference model exists.
+        """
+        bid = scenario.get('_bdd_id')
+        if bid:
+            trace.setdefault('detail', {}).setdefault(bid, []).append(info)
 
     @staticmethod
     def _trace_tag(trace: Dict, scenario: Dict) -> str:
@@ -1545,6 +1571,22 @@ class TestbenchGenerator:
             a_str = self._format_verilog_value(a_val, bitwidth)
             b_str = self._format_verilog_value(b_val, bitwidth)
             exp_str = self._format_verilog_value(expected, bitwidth)
+
+            ai, bi = self._as_int(a_val), self._as_int(b_val)
+            bdd_exp = self._as_int(scenario.get('expected_result', scenario.get('result')))
+            ref_exp = (self._reference_result(op_name, ai, bi, bitwidth)
+                       if ai is not None and bi is not None else None)
+            used = self._as_int(expected)
+            self._trace_detail(
+                trace, scenario, test=i, port='result', width=bitwidth,
+                operation=op_name,
+                stimulus={'a': ai & max_val if ai is not None else None,
+                          'b': bi & max_val if bi is not None else None,
+                          'opcode': op_str},
+                expected_bdd=bdd_exp & max_val if bdd_exp is not None else None,
+                expected_ref=ref_exp,
+                expected_used=used & max_val if used is not None else None,
+                oracle=oracle_source if oracle_source == 'spec' and ref_exp is not None else 'bdd')
 
             lines.append(f"        // Test {i}{tid}")
             lines.append(f"        a = {a_str};")

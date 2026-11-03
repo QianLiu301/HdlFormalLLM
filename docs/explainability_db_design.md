@@ -1,7 +1,9 @@
-# Explainability Database — Design (v0.2)
+# Explainability Database — Design (v0.3)
 
-Status: **phase 2 implemented** (schema, migrations, web-workflow ingestion,
-v1 queries; see `explainability_db_setup.md`). Phases 3+ pending. Branch: `bdx-explainability`
+Status: **M1 implemented** (schema v2 with verdicts, step-by-step ingestion;
+see `explainability_db_setup.md`). M2+ pending. The ORM models in
+`src/xdb/models.py` and the migrations are the authoritative schema; §5 shows
+the v0.2 baseline and §5a the v0.3 changes. Branch: `bdx-explainability`
 (never merged into `master`).
 
 Goal: add explainability to the HdlFormalLLM website. Every generated item
@@ -31,6 +33,15 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D10 | Explanations are computed by deterministic rules and **stored** with their evidence. An LLM may only rephrase them; rephrasings are checked for added facts | 2026-11-03 |
 | D11 | Every LLM call is kept, including failed ones | 2026-11-03 |
 | D12 | Semantic search (embeddings) is v2. Embedding provider decided then (OpenAI API vs. local open model) | 2026-11-03 |
+| D13 | Scope of this branch: the website's Steps 0–4 plus two new steps, **5 explain** and **6 repair**. Benchmark, golden designs, mutants, Yosys analysis, uploads and batch tools are set aside (kept, not changed) | 2026-11-03 |
+| D14 | Every evaluated assertion gets a **verdict** from three values — O observed, B expected by the BDD scenario, R expected by the tool's reference model (`TestbenchGenerator._reference_result`, `_rv32i_reference`): pass, scenario_wrong, design_wrong, both_wrong, consistent_wrong (O = B ≠ R), undecided (no reference). "Who is wrong" is the first line of every explanation | 2026-11-03 |
+| D15 | The testbench Verilog is not changed. Its side index (`*_tb.scenarios.json`, v2) records per assertion the applied stimulus, compared port, B and R. Columns the testbench does not compare (e.g. ALU flags) stay unchecked; explanations label such Then steps "stated, not verified" | 2026-11-03 |
+| D16 | Versions are kept **per file**: a regenerated or corrected feature / Verilog is a new row with `parent_id` and `reason`. Scenarios and rows are views of one file version, so every displayed state can be simulated | 2026-11-03 |
+| D17 | Every generated file is stored when it is saved (Step 1, Step 2), including versions later discarded; Step-0 requirements and decisions are stored when a step uses them. Render's disk is wiped on deploy, so waiting for Step 4 would lose them | 2026-11-03 |
+| D18 | Files are stored uncompressed for now; `artifact.encoding` allows switching to gzip later without a schema change. `python -m src.xdb stats` shows usage against the 512 MB plan limit | 2026-11-03 |
+| D19 | Rules (operation semantics) come from a rule library written by us (provenance `human`, checked against the reference model); canonical-step predicates are expressions (SVA-compatible). Explanations are stored as structured data and rendered at display time (English / Chinese) | 2026-11-03 |
+| D20 | v1 explanation modes: complete and **contrastive** (another observed row of the same scenario that behaved differently, as X₁,C in the BDX paper); solver-based counterfactuals later | 2026-11-03 |
+| D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
 
@@ -411,6 +422,29 @@ table; `(scenario_id)` on `check_item`, `step_mapping`; `(sim_run_id)` on
 
 ---
 
+## 5a. Schema changes in v0.3 (migration 0002)
+
+| Change | Why |
+|--------|-----|
+| new `duv` (origin llm/upload/golden/mutant, parent_id + reason, workflow_mode, prompt_has_bdd, based_on_feature_id, prompt_has_decisions, compiles, provenance) | a design has many concrete Verilog implementations; pairing with the feature it came from (D16, D17) |
+| new `decision` (question, options, default, answer, answer source, why) | Step-0 answers explain choices both generators made |
+| `feature` + parent_id, reason, workflow_mode, prompt_has_decisions | file-level versions (D16) |
+| `check_item` + seq, test_no, port, width, operation, stimulus, expected_bdd (B), expected_ref (R), expected_used, oracle; unique (testbench, tag, seq) | one row per assertion, with what it actually does (D15) |
+| `check_result` + observed_value (O), verdict | who is wrong (D14) |
+| `sim_run` + duv_id | exact feature ↔ Verilog pair that was simulated |
+| `explanation_target` + feature_id, sim_run_id; `explanation` + structure | context of an explanation; structured storage (D19) |
+| `artifact` + encoding | compression later (D18) |
+
+Values B, R, O are stored as exact unsigned integers masked to the port width
+(`NUMERIC(40,0)`), the way the testbench compares them.
+
+Validated on a real Gemini feature file: of three failing ALU rows, SUB row 7
+(B = 4294967245, R = O = 4294967246) and SRA row 5 are `scenario_wrong`, SLTU
+row 4 (B = R = 0, O = 1, injected bug) is `design_wrong`
+(`tests/test_xdb.py::test_who_is_wrong_on_the_real_feature`).
+
+---
+
 ## 6. Explanation algorithm v1 (sketch)
 
 Global target `T = (∅, Q_T)` — e.g. click "why?" on outcome step
@@ -474,7 +508,15 @@ rendered with the row's values, plus expected vs. observed from
 
 ---
 
-## 9. Phases
+## 9. Phases (superseded by the milestones below)
+
+Milestones (2026-11-03): **M1** verdicts + schema v2 + step-by-step storage (done) ·
+**M2** ALU canonical-step and rule library, explanation engine (local, global,
+contrastive) · **M3** Step-4 UI: verdict summary and "why?" panel, EN/ZH ·
+**M4** repair: apply reference value (new feature version) / regenerate design ·
+**M5** regfile, CPU; counter reference model · **M6** free-text questions.
+
+Original phase list:
 
 1. Review this document.
 2. Schema + migrations; ingestion of the web workflow (Steps 0–4) on a local

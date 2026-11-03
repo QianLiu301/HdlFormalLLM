@@ -14,11 +14,24 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (BigInteger, Boolean, CheckConstraint, DateTime,
                         ForeignKey, ForeignKeyConstraint, Index, Integer,
-                        LargeBinary, REAL as Real, String, Text, UniqueConstraint, text)
+                        LargeBinary, Numeric, REAL as Real, String, Text,
+                        UniqueConstraint, text)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 PROV_KINDS = ('human', 'llm', 'rule', 'import')
+
+# Who is wrong when a check is evaluated (design doc §0, D14). O = observed,
+# B = expected value written in the BDD scenario, R = reference model.
+VERDICTS = ('pass',              # O = B = R
+            'scenario_wrong',    # O != B, O = R
+            'design_wrong',      # O != B, B = R
+            'both_wrong',        # O, B, R all different
+            'consistent_wrong',  # O = B != R: test passes, both deviate the same way
+            'undecided')         # no reference model (or a value is missing)
+
+# Exact integers wider than 64 bits (values are stored unsigned, masked to the port)
+WideInt = Numeric(40, 0)
 
 
 def _now():
@@ -48,6 +61,8 @@ class RevisionMixin:
 # ----------------------------------------------------------------- core
 
 class Design(Base):
+    """What is being designed (spec level), e.g. alu_32bit. Concrete Verilog
+    implementations of it are rows of `duv`."""
     __tablename__ = 'design'
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     module_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -71,6 +86,10 @@ class Artifact(Base):
     sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # identity = stored as is; gzip later when storage gets tight (D18).
+    # Readers must go through artifact_text()/artifact_bytes().
+    encoding: Mapped[str] = mapped_column(String(16), nullable=False, default='identity',
+                                          server_default='identity')
     orig_name: Mapped[str | None] = mapped_column(Text)
     created_at = _created()
 
@@ -131,11 +150,61 @@ class Feature(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey('session.id'), nullable=False)
     artifact: Mapped[str] = mapped_column(ForeignKey('artifact.sha256'), nullable=False)
     title: Mapped[str | None] = mapped_column(Text)
+    # File-level versions (D16): a regenerated or corrected feature is a new
+    # row pointing at the one it replaces, with the reason.
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey('feature.id'))
+    reason: Mapped[str | None] = mapped_column(Text)       # generated | regenerated | feedback:<id>
+    workflow_mode: Mapped[str | None] = mapped_column(String(16))   # implementation | specification
+    prompt_has_decisions: Mapped[bool | None] = mapped_column(Boolean)
     prov_kind: Mapped[str] = mapped_column(String(8), nullable=False)
     prov_ref: Mapped[str | None] = mapped_column(Text)
     created_at = _created()
     __table_args__ = (UniqueConstraint('session_id', 'artifact', name='uq_feature_session_artifact'),
                       _prov_check('feature'))
+
+
+class Decision(Base):
+    """Step 0: an open point of the description and the answer given. The same
+    answers are added to the DUV and the BDD prompts, so they explain choices
+    both sides made (e.g. which way a counter counts after a load)."""
+    __tablename__ = 'decision'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey('session.id'), nullable=False)
+    question_key: Mapped[str] = mapped_column(String(16), nullable=False)    # Q1
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[list | None] = mapped_column(JSONB)
+    default_index: Mapped[int | None] = mapped_column(Integer)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_source: Mapped[str | None] = mapped_column(String(16))           # default | user | custom
+    why: Mapped[str | None] = mapped_column(Text)
+    prov_kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    prov_ref: Mapped[str | None] = mapped_column(Text)
+    created_at = _created()
+    __table_args__ = (UniqueConstraint('session_id', 'question_key', name='uq_decision_session_q'),
+                      _prov_check('decision'))
+
+
+class Duv(Base):
+    """One concrete Verilog implementation (generated, uploaded, golden or mutant)."""
+    __tablename__ = 'duv'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey('session.id'))
+    design_id: Mapped[int] = mapped_column(ForeignKey('design.id'), nullable=False)
+    artifact: Mapped[str] = mapped_column(ForeignKey('artifact.sha256'), nullable=False)
+    module_name: Mapped[str | None] = mapped_column(String(128))
+    origin: Mapped[str] = mapped_column(String(12), nullable=False)   # llm | upload | golden | mutant | unknown
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey('duv.id'))
+    reason: Mapped[str | None] = mapped_column(Text)                 # generated | regenerated | feedback:<id>
+    workflow_mode: Mapped[str | None] = mapped_column(String(16))
+    prompt_has_bdd: Mapped[bool | None] = mapped_column(Boolean)
+    based_on_feature_id: Mapped[int | None] = mapped_column(ForeignKey('feature.id'))
+    prompt_has_decisions: Mapped[bool | None] = mapped_column(Boolean)
+    compiles: Mapped[bool | None] = mapped_column(Boolean)
+    prov_kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    prov_ref: Mapped[str | None] = mapped_column(Text)
+    created_at = _created()
+    __table_args__ = (UniqueConstraint('session_id', 'artifact', name='uq_duv_session_artifact'),
+                      _prov_check('duv'))
 
 
 class Scenario(RevisionMixin, Base):
@@ -237,18 +306,30 @@ class CheckItem(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     testbench_id: Mapped[int] = mapped_column(ForeignKey('testbench.id'), nullable=False)
     tag: Mapped[str] = mapped_column(String(96), nullable=False)        # BDD:ALU-ADD-001/r3 | GEN:RF-R0
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default='1')
     label: Mapped[str | None] = mapped_column(Text)
+    # What this assertion actually does (testbench index v2); NULL for older testbenches
+    test_no: Mapped[int | None] = mapped_column(Integer)
+    port: Mapped[str | None] = mapped_column(String(64))
+    width: Mapped[int | None] = mapped_column(Integer)
+    operation: Mapped[str | None] = mapped_column(String(32))
+    stimulus: Mapped[dict | None] = mapped_column(JSONB)
+    expected_bdd = mapped_column(WideInt)        # value written in the scenario
+    expected_ref = mapped_column(WideInt)        # reference model; NULL = none exists
+    expected_used = mapped_column(WideInt)       # what the testbench compares against
+    oracle: Mapped[str | None] = mapped_column(String(8))                # bdd | spec
     scenario_id: Mapped[int | None] = mapped_column(ForeignKey('scenario.id'))
     example_row_id: Mapped[int | None] = mapped_column(ForeignKey('example_row.id'))
     strength: Mapped[str] = mapped_column(String(8), nullable=False, default='normal')  # normal | weak
     weak_reason: Mapped[str | None] = mapped_column(Text)
-    __table_args__ = (UniqueConstraint('testbench_id', 'tag', name='uq_check_item_tb_tag'),)
+    __table_args__ = (UniqueConstraint('testbench_id', 'tag', 'seq', name='uq_check_item_tb_tag_seq'),)
 
 
 class SimRun(Base):
     __tablename__ = 'sim_run'
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     testbench_id: Mapped[int] = mapped_column(ForeignKey('testbench.id'), nullable=False)
+    duv_id: Mapped[int | None] = mapped_column(ForeignKey('duv.id'))
     dut_artifact: Mapped[str | None] = mapped_column(ForeignKey('artifact.sha256'))
     target: Mapped[str] = mapped_column(String(64), nullable=False)   # generated_duv | golden | mutant:<file>
     simulator: Mapped[str | None] = mapped_column(String(64))
@@ -266,9 +347,13 @@ class CheckResult(Base):
     # pass | fail | not_tested (skipped / never reported) | setup
     status: Mapped[str] = mapped_column(String(12), nullable=False)
     expected: Mapped[dict | None] = mapped_column(JSONB)
-    observed: Mapped[dict | None] = mapped_column(JSONB)
+    observed: Mapped[dict | None] = mapped_column(JSONB)       # raw text from the log, e.g. {"result": "x"}
+    observed_value = mapped_column(WideInt)                    # O, when it is a number
+    verdict: Mapped[str | None] = mapped_column(String(16))    # see VERDICTS; NULL when not run
     sim_time: Mapped[int | None] = mapped_column(BigInteger)
     message: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (CheckConstraint(f"verdict IS NULL OR verdict IN {VERDICTS}",
+                                      name='ck_check_result_verdict'),)
 
 
 class TraceEvent(Base):
@@ -290,9 +375,13 @@ class ExplanationTarget(Base):
     question: Mapped[str | None] = mapped_column(Text)
     subject_type: Mapped[str | None] = mapped_column(String(24))
     subject_id: Mapped[int | None] = mapped_column(BigInteger)
+    # context the explanation is computed in: which specification, which run
+    feature_id: Mapped[int | None] = mapped_column(ForeignKey('feature.id'))
+    sim_run_id: Mapped[int | None] = mapped_column(ForeignKey('sim_run.id'))
     p_t: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     q_t: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     scope: Mapped[str] = mapped_column(String(8), nullable=False)          # global | local
+    # complete | contrastive (other observed rows) | counterfactual (solver, v2)
     mode: Mapped[str] = mapped_column(String(16), nullable=False, default='complete')
     mapping_llm_call: Mapped[int | None] = mapped_column(ForeignKey('llm_call.id'))
     created_at = _created()
@@ -305,6 +394,9 @@ class Explanation(RevisionMixin, Base):
     target_id: Mapped[int] = mapped_column(ForeignKey('explanation_target.id'), nullable=False)
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
     selected: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Structured explanation (D19); text is rendered from it at display time,
+    # text_rule keeps the rendering that was current when it was computed.
+    structure: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     text_rule: Mapped[str] = mapped_column(Text, nullable=False)
     text_polished: Mapped[str | None] = mapped_column(Text)
     polish_llm_call: Mapped[int | None] = mapped_column(ForeignKey('llm_call.id'))
@@ -337,3 +429,6 @@ Index('ix_trace_event_run', TraceEvent.sim_run_id)
 Index('ix_requirement_session', Requirement.session_id)
 Index('ix_llm_call_session', LlmCall.session_id)
 Index('ix_example_row_vals', ExampleRow.vals, postgresql_using='gin')
+Index('ix_duv_session', Duv.session_id)
+Index('ix_sim_run_duv', SimRun.duv_id)
+Index('ix_check_result_verdict', CheckResult.verdict)
