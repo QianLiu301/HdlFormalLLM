@@ -25,14 +25,22 @@ _DOTENV = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 def _from_dotenv():
     """DATABASE_URL from the project's .env (gitignored), so the password
     never has to live in a shell profile. Only this one key is read."""
+    import re
     try:
-        with open(_DOTENV, encoding='utf-8') as f:
-            for line in f:
-                k, sep, v = line.strip().partition('=')
-                if sep and k.strip() == ENV_VAR:
-                    return v.strip().strip('"').strip("'")
+        with open(_DOTENV, encoding='utf-8-sig') as f:      # -sig: tolerate a BOM
+            lines = f.read().splitlines()
     except OSError:
-        pass
+        return None
+    for line in lines:
+        s = line.strip()
+        if s.startswith('export '):
+            s = s[len('export '):].strip()
+        k, sep, v = s.partition('=')
+        if sep and k.strip() == ENV_VAR:
+            v = v.strip()
+            # Neon's "psql" snippet: psql 'postgresql://...'
+            m = re.search(r"postgres(?:ql)?://[^\s'\"]+", v)
+            return m.group(0) if m else v.strip('"').strip("'")
     return None
 
 

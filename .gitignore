@@ -72,3 +72,5 @@ logs/
 
 # Local secrets (DATABASE_URL for the explainability DB, ...)
 .env
+.env.*
+!.env.example
