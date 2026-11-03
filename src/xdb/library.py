@@ -99,9 +99,7 @@ ALU_RULES: Dict[str, Dict] = {r['op']: r for r in [
 FLAG_RULES = {
     'zero': {'expr': 'zero == (result == 0)', 'text': 'the zero flag is 1 exactly when the result is 0'},
     'negative': {'expr': 'negative == result[W-1]', 'text': 'the negative flag is the top bit of the result'},
-    'overflow': {'expr': 'overflow == signed overflow of ADD/SUB',
-                 'text': 'the overflow flag is 1 when ADD or SUB overflows as a signed operation '
-                         "(the definition in the tool's design template, prompts/duv_alu)"},
+    # overflow: one of OVERFLOW_DEFINITIONS, chosen per session (flag_rule)
 }
 
 LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES}}
@@ -176,24 +174,13 @@ def apply_rule(module_type: str, op: Optional[str], a, b, width: int) -> Optiona
     return rule['fn'](ai, bi, width)
 
 
-def flag_value(module_type: str, port: str, op: Optional[str], a, b, width: int) -> Optional[int]:
-    """What the flag rules give for a flag the testbench does not compare.
-    None when the rule library does not define the flag for this operation
-    (e.g. overflow of AND: a specification choice, not a fact)."""
-    res = apply_rule(module_type, op, a, b, width)
-    if res is None:
+def _signed_overflow(op, a, b, w):
+    op = (op or '').upper()
+    if op not in ('ADD', 'SUB'):
         return None
-    if port == 'zero':
-        return int(res == 0)
-    if port == 'negative':
-        return (res >> (width - 1)) & 1
-    if port == 'overflow' and (op or '').upper() in ('ADD', 'SUB'):
-        ai, bi = to_int(a, width), to_int(b, width)
-        sa, sb, sr = ai >> (width - 1), bi >> (width - 1), res >> (width - 1)
-        if op.upper() == 'ADD':
-            return int(sa == sb and sr != sa)
-        return int(sa != sb and sr != sa)
-    return None
+    r = ((a + b) if op == 'ADD' else (a - b)) % (1 << w)
+    sa, sb, sr = a >> (w - 1), b >> (w - 1), r >> (w - 1)
+    return int(sa == sb and sr != sa) if op == 'ADD' else int(sa != sb and sr != sa)
 
 
 def _carry(op, a, b, w):
@@ -205,24 +192,80 @@ def _carry(op, a, b, w):
     return None
 
 
-# Other meanings a model may have given a flag. Used only to say what a
-# specification seems to mean when it contradicts the rule; never as a rule.
-FLAG_ALTERNATIVES = {
-    'overflow': [{'name': 'unsigned carry/borrow', 'text': 'ADD: A + B ≥ 2^W; SUB: A < B',
-                  'fn': _carry}],
+# The two meanings "overflow" has in practice. Which one is the rule for a run
+# is a specification choice: the Step-0 answer if there is one, otherwise the
+# tool's design template (signed). The other one is only used to say what a
+# specification seems to mean when it contradicts the rule.
+OVERFLOW_DEFINITIONS = {
+    'signed': {'name': 'signed overflow', 'expr': 'overflow == signed overflow of ADD/SUB',
+               'text': 'the overflow flag is 1 when ADD or SUB overflows as a signed operation',
+               'fn': _signed_overflow},
+    'carry': {'name': 'unsigned carry/borrow', 'expr': 'overflow == carry of ADD / borrow of SUB',
+              'text': 'the overflow flag is 1 when ADD carries out of the top bit or SUB borrows (A < B)',
+              'short': 'ADD: A + B ≥ 2^W; SUB: A < B', 'fn': _carry},
 }
+OVERFLOW_DEFINITIONS['signed']['short'] = 'ADD/SUB result outside the signed W-bit range'
+DEFAULT_OVERFLOW_MODE = 'signed'          # prompts/duv_alu v2/v3 compute signed overflow
 
 
-def flag_alternatives(module_type: str, port: str, op, a, b, width: int) -> List[Dict]:
-    """[{name, text, value}] for the known alternative meanings of a flag."""
-    if not library_for(module_type):
+def overflow_mode_from_answer(answer: Optional[str]) -> Optional[str]:
+    """Map the Step-0 answer to a definition; None for a custom answer."""
+    from src import requirements_store as R
+    return {R.OVERFLOW_SIGNED: 'signed', R.OVERFLOW_CARRY: 'carry'}.get((answer or '').strip())
+
+
+def flag_rule(module_type: str, port: str, overflow_mode: Optional[str] = DEFAULT_OVERFLOW_MODE,
+              basis: Optional[str] = None) -> Optional[Dict]:
+    """{expr, text, basis} of the rule for a flag, or None (no library / custom answer)."""
+    lib = library_for(module_type)
+    if not lib:
+        return None
+    if port == 'overflow':
+        d = OVERFLOW_DEFINITIONS.get(overflow_mode or '')
+        if d is None:
+            return None
+        return {'expr': d['expr'], 'text': d['text'], 'name': d['name'],
+                'basis': basis or "the tool's design template, prompts/duv_alu"}
+    r = lib['flags'].get(port)
+    return {**r, 'basis': 'definition of the flag'} if r else None
+
+
+def flag_value(module_type: str, port: str, op: Optional[str], a, b, width: int,
+               overflow_mode: Optional[str] = DEFAULT_OVERFLOW_MODE) -> Optional[int]:
+    """What the flag rules give for a flag the testbench does not compare.
+    None when the rule does not define the flag for this operation (e.g.
+    overflow of AND: a specification choice, not a fact) or no rule applies."""
+    res = apply_rule(module_type, op, a, b, width)
+    if res is None:
+        return None
+    if port == 'zero':
+        return int(res == 0)
+    if port == 'negative':
+        return (res >> (width - 1)) & 1
+    if port == 'overflow':
+        d = OVERFLOW_DEFINITIONS.get(overflow_mode or '')
+        return d['fn'](op, to_int(a, width), to_int(b, width), width) if d else None
+    return None
+
+
+def flag_alternatives(module_type: str, port: str, op, a, b, width: int,
+                      overflow_mode: Optional[str] = DEFAULT_OVERFLOW_MODE) -> List[Dict]:
+    """[{name, text, value}] for the other known meanings of a flag."""
+    if not library_for(module_type) or port != 'overflow':
         return []
     ai, bi = to_int(a, width), to_int(b, width)
     if ai is None or bi is None:
         return []
     out = []
-    for alt in FLAG_ALTERNATIVES.get(port, []):
-        v = alt['fn'](op, ai, bi, width)
+    for mode, d in OVERFLOW_DEFINITIONS.items():
+        if mode == overflow_mode:
+            continue
+        v = d['fn'](op, ai, bi, width)
         if v is not None:
-            out.append({'name': alt['name'], 'text': alt['text'], 'value': v})
+            out.append({'name': d['name'], 'text': d['short'], 'value': v})
     return out
+
+
+def alternative_by_name(name: str) -> Optional[Dict]:
+    return next(({'name': d['name'], 'text': d['short']} for d in OVERFLOW_DEFINITIONS.values()
+                 if d['name'] == name), None)

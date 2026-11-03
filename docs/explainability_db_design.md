@@ -1,8 +1,8 @@
 # Explainability Database — Design (v0.3)
 
-Status: **M1 + M2 implemented** (schema v2 with verdicts, step-by-step
+Status: **M1–M3 implemented** (schema v2 with verdicts, step-by-step
 ingestion, ALU canonical-step and rule library, explanation engine; see
-`explainability_db_setup.md`). M3+ pending. The ORM models in
+`explainability_db_setup.md`). M4+ pending. The ORM models in
 `src/xdb/models.py` and the migrations are the authoritative schema; §5 shows
 the v0.2 baseline and §5a the v0.3 changes. Branch: `bdx-explainability`
 (never merged into `master`).
@@ -42,6 +42,7 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D18 | Files are stored uncompressed for now; `artifact.encoding` allows switching to gzip later without a schema change. `python -m src.xdb stats` shows usage against the 512 MB plan limit | 2026-11-03 |
 | D19 | Rules (operation semantics) come from a rule library written by us (provenance `human`, checked against the reference model); canonical-step predicates are expressions (SVA-compatible). Explanations are stored as structured data and rendered at display time, **in English only** (product output contains no Chinese; decided 2026-11-03) | 2026-11-03 |
 | D20 | v1 explanation modes: complete and **contrastive** (another observed row of the same scenario that behaved differently, as X₁,C in the BDX paper); solver-based counterfactuals later | 2026-11-03 |
+| D22 | Step 0 always asks, for ALU designs, what "overflow" means (signed overflow — the design template's definition, recommended — or unsigned carry/borrow). The answer goes into both prompts like every decision, and the rule library uses it as the overflow rule; without an answer the template's definition applies. Reason: the first field observation (DeepSeek, §6a) | 2026-11-03 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -509,6 +510,25 @@ rendered with the row's values, plus expected vs. observed from
 
 ---
 
+## 6b. What M3 implements
+
+- Endpoints (read-only, no model call, so no access password; `{"enabled": false}`
+  without `DATABASE_URL`): `/api/explain/summary` (finds the simulation by the
+  SHA-256 of its testbench and log, returns verdict counts, per-check verdicts,
+  requirement ids and the specification check; `ready: false` until the
+  background write has finished), `/api/explain/check`, `/api/explain/global`,
+  `/api/explain/requirement`.
+- `explain.check_specification(feature)`: for each flag the scenarios state,
+  every row against the rule, with the alternative meaning when all
+  contradictions share one.
+- Step 4 page: section "Who Is Wrong? — Explanations" (headline, verdict
+  chips, specification check with Why?), a verdict chip and Why? on every
+  scenario row and requirement, explanation in a modal. English only.
+  Verified in headless Chromium (`tests/ui/explain_panel.js`), including a
+  390 px wide viewport.
+
+---
+
 ## 7. Evaluating explanations
 
 | Criterion | Meaning | Measurement |
@@ -550,7 +570,7 @@ rendered with the row's values, plus expected vs. observed from
 
 Milestones (2026-11-03): **M1** verdicts + schema v2 + step-by-step storage (done) ·
 **M2** ALU canonical-step and rule library, explanation engine (local, global,
-contrastive) (done, see §6a) · **M3** Step-4 UI: verdict summary and "why?" panel (English) ·
+contrastive) (done, see §6a) · **M3** Step-4 UI: verdict summary and "why?" panel (English) (done, §6b) ·
 **M4** repair: apply reference value (new feature version) / regenerate design ·
 **M5** regfile, CPU; counter reference model · **M6** free-text questions.
 

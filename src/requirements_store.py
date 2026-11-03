@@ -23,6 +23,41 @@ from typing import Dict, List, Optional, Tuple
 MAX_REQUIREMENTS = 30
 MAX_QUESTIONS = 8
 
+# Questions the tool always asks for a module type: the generated design and
+# the generated scenarios must agree on them, and descriptions rarely say.
+# The wording is fixed because the explainability rule library reads the
+# answer back (src/xdb/library.py, overflow_mode_from_answer).
+OVERFLOW_QUESTION = 'What does the overflow flag mean?'
+OVERFLOW_SIGNED = ("Signed overflow: the ADD/SUB result does not fit in W-bit two's complement "
+                   "(e.g. 8-bit 127 + 1)")
+OVERFLOW_CARRY = ('Unsigned carry/borrow: ADD carries out of the top bit, SUB borrows when A < B '
+                  '(e.g. 8-bit 255 + 1)')
+FIXED_QUESTIONS = {
+    'alu': [{'topic': 'overflow', 'question': OVERFLOW_QUESTION,
+             'options': [OVERFLOW_SIGNED, OVERFLOW_CARRY], 'default': 0,
+             'why': ('"Overflow" is used for both. The design and the scenarios are generated '
+                     'separately, so they must be told the same meaning; the recommended answer '
+                     "is the tool's design template."),
+             'fixed': True}],
+}
+FIXED_QUESTIONS['alu_comb'] = FIXED_QUESTIONS['alu']
+
+
+def add_fixed_questions(analysis: Dict, module_type: Optional[str]) -> Dict:
+    """Append the tool's fixed questions for this module type. A question the
+    model asked about the same topic is dropped: the fixed wording wins, so
+    the answer can be read back. Ids are renumbered Q1..Qn."""
+    fixed = FIXED_QUESTIONS.get((module_type or '').strip(), [])
+    if not fixed:
+        return analysis
+    qs = list(analysis.get('questions') or [])
+    for fq in fixed:
+        qs = [q for q in qs if fq['topic'] not in (q.get('question') or '').lower()]
+    qs += [{k: v for k, v in fq.items() if k != 'topic'} for fq in fixed]
+    for i, q in enumerate(qs, 1):
+        q['id'] = f'Q{i}'
+    return {**analysis, 'questions': qs}
+
 
 def parse_analysis(text: str) -> Tuple[Optional[Dict], Optional[str]]:
     """Pull the JSON object out of an LLM reply and normalise it.

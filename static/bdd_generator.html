@@ -243,6 +243,30 @@
         }
         .scn-group-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); padding: 8px 12px 4px; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        /* Explainability: who is wrong, specification check, "Why?" explanations */
+        .xp-verdicts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .xp-chip { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-secondary); white-space: nowrap; }
+        .xp-chip strong { font-family: 'JetBrains Mono', monospace; margin-right: 4px; }
+        .xv-pass { color: var(--accent); border-color: rgba(0, 168, 132, 0.35); background: rgba(0, 168, 132, 0.08); }
+        .xv-scenario_wrong { color: #b45309; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.10); }
+        .xv-design_wrong, .xv-both_wrong { color: var(--error); border-color: rgba(220, 38, 38, 0.35); background: rgba(220, 38, 38, 0.08); }
+        .xv-consistent_wrong { color: #7c3aed; border-color: rgba(124, 58, 237, 0.35); background: rgba(124, 58, 237, 0.08); }
+        .xp-headline { font-size: 12px; color: var(--text-primary); margin-bottom: 8px; line-height: 1.5; }
+        .xp-spec { border: 1px solid var(--border-color); border-radius: 8px; padding: 6px 12px; margin-bottom: 6px; font-size: 12px; }
+        .xp-spec-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin: 4px 0; }
+        .xp-spec-item { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; line-height: 1.45; }
+        .xp-spec-item .xp-mark { flex: 0 0 14px; text-align: center; }
+        .xp-spec-item.bad { color: #b45309; }
+        .xp-spec-item > span:nth-child(2) { flex: 1 1 auto; min-width: 0; }
+        .why-btn { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary, #fff); color: var(--text-secondary); cursor: pointer; flex: 0 0 auto; }
+        .why-btn:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+        .xp-slot { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+        .xp-slot .xp-chip { font-size: 10px; padding: 0 6px; font-weight: 600; }
+        .xp-modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+        .xp-dialog { background: var(--bg-primary, #fff); border-radius: 10px; width: min(920px, 100%); max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.25); }
+        .xp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; font-size: 13px; }
+        .xp-text { margin: 0; padding: 14px 16px; overflow: auto; white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.55; color: var(--text-primary, #1e293b); }
+        @media (max-width: 640px) { .xp-slot { margin-left: 0; } .xp-text { font-size: 11px; } }
         .action-buttons { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
         .action-buttons .btn { flex: 1; min-width: 120px; }
 
@@ -2053,6 +2077,31 @@
                     <p style="font-size: 11px; color: var(--text-secondary); margin-top: 8px;">
                         ℹ️ Simplified preview. Download VCD for full waveform analysis with GTKWave.
                     </p>
+                </div>
+
+                <!-- 可解释性：每条检查是设计错了还是场景写错了，以及规格里写了但
+                     testbench 从不比较的内容（如标志位）是否与规则一致。只有配置了
+                     DATABASE_URL 才显示，数据来自后台写入的可解释性数据库。 -->
+                <div id="sim-explain" style="display: none;">
+                    <div class="preview-label">🧭 Who Is Wrong? — Explanations</div>
+                    <div class="xp-headline" id="xp-headline"></div>
+                    <div class="xp-verdicts" id="xp-verdicts"></div>
+                    <div class="xp-spec" id="xp-spec" style="display: none;"></div>
+                    <p class="sim-failure-hint" id="xp-hint">
+                        Each check compares three values: what the design produced, what the scenario
+                        expects, and what the tool's reference model computes. Use <strong>Why?</strong>
+                        on any scenario row or requirement below for the full explanation.
+                    </p>
+                </div>
+                <div class="xp-modal" id="xp-modal" style="display: none;"
+                     onclick="if (event.target === this) closeExplanation()">
+                    <div class="xp-dialog" role="dialog" aria-modal="true" aria-labelledby="xp-title">
+                        <div class="xp-head">
+                            <span id="xp-title">Explanation</span>
+                            <button class="btn btn-secondary btn-sm" onclick="closeExplanation()">Close</button>
+                        </div>
+                        <pre class="xp-text" id="xp-text"></pre>
+                    </div>
                 </div>
 
                 <!-- 需求覆盖：Step 0 确认过需求时才显示。链接来自 BDD 生成器在场景上
@@ -5853,7 +5902,8 @@
                 const weak = r.weak ? ` — ⚠ ${r.weak}` : '';
                 return `<div class="scn-row r-${r.status}"><span class="r-id">${rn}</span>`
                      + `<span class="r-st">${ROW_MARK[r.status] || ''}</span>`
-                     + `<span>${escapeHtml(text + weak)}</span></div>`;
+                     + `<span>${escapeHtml(text + weak)}</span>`
+                     + `<span class="xp-slot" data-tag="BDD:${escapeHtml(r.id)}"></span></div>`;
             };
 
             let list = sr.scenarios.map(s => {
@@ -5887,6 +5937,7 @@
             }
             document.getElementById('sim-scn-list').innerHTML = list;
             box.style.display = 'block';
+            applyExplainSlots();
         }
 
         // ============================================================
@@ -5911,6 +5962,8 @@
         async function loadRunReport() {
             const box = document.getElementById('sim-coverage');
             box.style.display = 'none';
+            document.getElementById('sim-explain').style.display = 'none';
+            explainState = null;
             if (!currentSimResult || !currentSimResult.paths) return;
             try {
                 const r = await fetch('/api/run-report', {
@@ -5919,10 +5972,158 @@
                 });
                 const rep = await r.json();
                 if (rep.success && rep.traceability) renderCoverage(rep.traceability);
+                if (rep.explainability_db) loadExplainSummary(currentSimResult.paths);
             } catch (e) {
                 console.warn('run report unavailable:', e);   // 附加信息，失败不影响仿真结果
             }
         }
+
+        // ============================================================
+        // Explainability: who is wrong, specification check, "Why?" panel.
+        // Data comes from the explainability database (src/xdb), written in
+        // the background when the run report is requested; poll until ready.
+        // ============================================================
+        let explainState = null;
+        const VERDICT_ORDER = ['design_wrong', 'scenario_wrong', 'both_wrong', 'consistent_wrong',
+                               'pass', 'undecided', 'not_tested', 'setup'];
+        const VERDICT_LABEL = {
+            pass: 'pass', scenario_wrong: 'scenario wrong', design_wrong: 'design wrong',
+            both_wrong: 'both wrong', consistent_wrong: 'same mistake in both',
+            undecided: 'undecided', not_tested: 'not tested', setup: 'setup'
+        };
+        const VERDICT_HELP = {
+            pass: 'Design and scenario both agree with the reference model',
+            scenario_wrong: 'The design is right; the expected value in the scenario is not',
+            design_wrong: 'The scenario is right; the design is not',
+            both_wrong: 'Scenario and design are both wrong',
+            consistent_wrong: 'The test passes, but scenario and design deviate from the reference model in the same way',
+            undecided: 'No reference model for this design type, so it cannot be decided who is wrong',
+            not_tested: 'No assertion ran for this row', setup: 'Setup step without a check of its own'
+        };
+
+        async function loadExplainSummary(paths, attempt = 0) {
+            if (!paths || !currentSimResult || currentSimResult.paths !== paths) return;  // a newer run is on screen
+            try {
+                const r = await fetch('/api/explain/summary', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(paths)
+                });
+                const j = await r.json();
+                if (!j.enabled) return;                       // no database configured
+                if (!j.ready) {                               // background write still running
+                    if (attempt < 15) setTimeout(() => loadExplainSummary(paths, attempt + 1), 1500);
+                    return;
+                }
+                if (!currentSimResult || currentSimResult.paths !== paths) return;
+                explainState = j;
+                renderExplainSummary(j);
+            } catch (e) {
+                console.warn('explanations unavailable:', e);  // additional information only
+            }
+        }
+
+        function verdictChip(v, n) {
+            const cls = `xp-chip xv-${v}`;
+            const num = n === undefined ? '' : `<strong>${n}</strong>`;
+            return `<span class="${cls}" title="${escapeHtml(VERDICT_HELP[v] || '')}">${num}${escapeHtml(VERDICT_LABEL[v] || v)}</span>`;
+        }
+
+        function renderExplainSummary(j) {
+            const box = document.getElementById('sim-explain');
+            const v = j.verdicts || {};
+            const total = Object.values(v).reduce((a, b) => a + b, 0);
+            document.getElementById('xp-verdicts').innerHTML = VERDICT_ORDER.filter(k => v[k])
+                .map(k => verdictChip(k, v[k])).join('');
+
+            const wrongScn = v.scenario_wrong || 0, wrongDes = (v.design_wrong || 0) + (v.both_wrong || 0);
+            let head;
+            if (!j.has_rule_library) {
+                head = `No reference model for ${escapeHtml(j.module_type || 'this design')} yet, so failures `
+                     + `cannot be attributed to the design or the scenario.`;
+            } else if (!wrongScn && !wrongDes && !v.consistent_wrong) {
+                head = `All ${total} checks agree with the reference model.`;
+            } else {
+                const parts = [];
+                if (wrongDes) parts.push(`<strong>${wrongDes}</strong> failure${wrongDes > 1 ? 's are' : ' is'} caused by the design`);
+                if (wrongScn) parts.push(`<strong>${wrongScn}</strong> by a wrong expected value in the scenario`);
+                if (v.consistent_wrong) parts.push(`<strong>${v.consistent_wrong}</strong> passing check${v.consistent_wrong > 1 ? 's' : ''} share a mistake between design and scenario`);
+                head = parts.join('; ') + '.';
+            }
+            document.getElementById('xp-headline').innerHTML = head;
+
+            const spec = j.spec_check || [];
+            const specBox = document.getElementById('xp-spec');
+            if (spec.length) {
+                const items = spec.map((it, i) => {
+                    const bad = it.contradicting > 0;
+                    return `<div class="xp-spec-item${bad ? ' bad' : ''}">`
+                         + `<span class="xp-mark">${bad ? '✗' : '✓'}</span>`
+                         + `<span>${escapeHtml(j.spec_check_text[i] || '')}</span>`
+                         + `<button class="why-btn" onclick="openExplanation('global', '${escapeHtml(it.port)}')">Why?</button></div>`;
+                }).join('');
+                specBox.innerHTML = `<div class="xp-spec-title">Specification check — what the scenarios `
+                                  + `state about flags, against the rule library</div>${items}`;
+                specBox.style.display = 'block';
+            } else {
+                specBox.style.display = 'none';
+            }
+            box.style.display = 'block';
+            applyExplainSlots();
+        }
+
+        /** Fill the verdict / "Why?" slots in the scenario rows and the requirement table. */
+        function applyExplainSlots() {
+            const j = explainState;
+            if (!j) return;
+            document.querySelectorAll('.xp-slot[data-tag]').forEach(el => {
+                const tag = el.dataset.tag;
+                const c = (j.checks || {})[tag];
+                if (!c) { el.innerHTML = ''; return; }
+                const chip = c.verdict && c.verdict !== 'pass' ? verdictChip(c.verdict) : '';
+                el.innerHTML = chip + `<button class="why-btn" data-tag="${escapeHtml(tag)}" `
+                             + `onclick="event.stopPropagation(); openExplanation('check', this.dataset.tag)">Why?</button>`;
+            });
+            const reqs = Object.fromEntries((j.requirements || []).map(r => [r.req_key, r.requirement_id]));
+            document.querySelectorAll('.xp-slot[data-req]').forEach(el => {
+                const id = reqs[el.dataset.req];
+                el.innerHTML = id ? `<button class="why-btn" onclick="openExplanation('requirement', ${id})">Why?</button>` : '';
+            });
+        }
+
+        async function openExplanation(kind, arg) {
+            const j = explainState;
+            if (!j) return;
+            const modal = document.getElementById('xp-modal');
+            const text = document.getElementById('xp-text');
+            const title = document.getElementById('xp-title');
+            let url, body;
+            if (kind === 'check') {
+                url = '/api/explain/check'; body = { tag: arg, sim_run_id: j.sim_run_id };
+                title.textContent = `Explanation — ${arg.replace(/^BDD:/, '')}`;
+            } else if (kind === 'global') {
+                url = '/api/explain/global'; body = { feature_id: j.feature_id, port: arg, value: 'True' };
+                title.textContent = `Specification — when is ${arg} = 1?`;
+            } else {
+                url = '/api/explain/requirement'; body = { requirement_id: arg, sim_run_id: j.sim_run_id };
+                title.textContent = 'Requirement';
+            }
+            text.textContent = 'Loading…';
+            modal.style.display = 'flex';
+            try {
+                const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify(body) });
+                const e = await r.json();
+                text.textContent = e.success && e.ready !== false ? e.text
+                    : (e.error || 'No explanation is available for this item.');
+            } catch (err) {
+                text.textContent = `Could not load the explanation: ${err}`;
+            }
+        }
+
+        function closeExplanation() {
+            document.getElementById('xp-modal').style.display = 'none';
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeExplanation(); });
 
         function renderCoverage(tr) {
             const reqs = tr.requirements || [];
@@ -5945,7 +6146,8 @@
                      + `<td class="cov-text">${escapeHtml(r.text)}</td>`
                      + `<td>${chips}</td>`
                      + `<td><span class="scn-${COV_CLASS[r.status] || 'not_run'}">`
-                     + `<span class="scn-badge">${COV_LABEL[r.status] || r.status}</span></span>${unc}</td></tr>`;
+                     + `<span class="scn-badge">${COV_LABEL[r.status] || r.status}</span></span>${unc}`
+                     + `<span class="xp-slot xp-req" data-req="${escapeHtml(r.id)}"></span></td></tr>`;
             }).join('');
             const orphans = tr.orphan_scenarios || [];
             const orphanRow = orphans.length
@@ -5962,6 +6164,7 @@
                 + `(such as flags) are in the scenarios but never checked, so a requirement about `
                 + `them is not verified by a pass.`;
             document.getElementById('sim-coverage').style.display = 'block';
+            applyExplainSlots();
         }
 
         async function downloadRunReport() {
@@ -6271,6 +6474,8 @@
         document.getElementById('sim-download-vcd').style.display = 'none';
         document.getElementById('vcd-tip').style.display = 'none';
         document.getElementById('sim-coverage').style.display = 'none';
+        document.getElementById('sim-explain').style.display = 'none';
+        explainState = null;
         currentSimResult = null;
         updateStepStatus(4, 'pending');
     }
