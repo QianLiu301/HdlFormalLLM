@@ -149,8 +149,9 @@ executed — R replaces the testbench's nominal value at ingestion; notes
 (same register twice, x0) vs. issues (scenario: unset/mismatched registers;
 testbench: offsets, SW-as-register, x29/x30) → verdict undecided; branches
 as taken 1/0; `stage_run.py cpu`). Template testbench fixes merged here:
-3ab7993 (no operation guessed from English words in titles), ab9960a (an
-ALU/counter row without expected value is not asserted; reason
+3ab7993 (no operation guessed from English words in titles), ab9960a (a
+row without expected value is not asserted — ALU/counter, and since
+2026-11-04 register-file reads and CPU rows too; reason
 `TestbenchGenerator.NO_EXPECTED_RESULT`, `tests/test_no_expected_result.py`),
 41d90a9 (CPU: stores with an rd column checked in memory, load/store offsets,
 register/column mismatches, x29/x30, bad addresses, memory conflicts skipped

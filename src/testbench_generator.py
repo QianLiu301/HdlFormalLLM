@@ -1112,7 +1112,9 @@ class TestbenchGenerator:
             return (f"No assertion could be generated from {name}. All {n} Examples "
                     f"rows that were read state no expected result (no "
                     f"Expected_Result / Result column for an ALU, no Expected_Value / "
-                    f"Expected column for a counter's UP/DOWN rows). A row without an "
+                    f"Expected column for a counter's UP/DOWN rows, no expected column "
+                    f"for a register-file read, no expected / taken column for a CPU "
+                    f"row). A row without an "
                     f"expected value is not turned into a check against 0, because "
                     f"that passes on any design whose output happens to be 0. Add the "
                     f"expected-result column to the Examples tables, or re-generate "
@@ -2229,6 +2231,7 @@ class TestbenchGenerator:
         # 写 x0 被忽略，都按 DUV prompt 里的 RISC-V 约定建模。
         mask = (1 << bitwidth) - 1
         model = {}
+        ev = self._new_expected_values_stats(len(scenarios))
         stats = {'write': 0, 'read': 0, 'reset': 0, 'write_read': 0,
                  'read_hits_prior_write': 0, 'skipped': 0}
 
@@ -2339,9 +2342,22 @@ class TestbenchGenerator:
                 ref = 0 if addr == 0 else model.get(addr, 0)
                 expect = ref
                 e = _pick(scenario, 'expected')
+                if oracle_source != 'spec' and not isinstance(e, int):
+                    # 与 ALU / counter 一致：场景没写读出值就不生成检查（见
+                    # NO_EXPECTED_RESULT）。write_read 的写已经发出去了，它照样
+                    # 改变后面的读，所以按写记进索引
+                    self._skip_no_expected(ev, i, scenario)
+                    self._trace_skip(trace, scenario, self.NO_EXPECTED_RESULT)
+                    if op == 'write_read':
+                        self._trace_detail(trace, scenario, test=i, port=None, width=bitwidth,
+                                           operation='WRITE', stimulus={'addr': addr, 'data': data},
+                                           expected_bdd=None, expected_ref=None, expected_used=None,
+                                           oracle=None)
+                    lines.append("")
+                    continue
                 if oracle_source != 'spec':
-                    if isinstance(e, int):
-                        expect = e & mask
+                    expect = e & mask
+                ev['asserted'] += 1
                 emit_read(i, addr, expect, self._trace_tag(trace, scenario))
                 stim = {'addr': addr}
                 if op == 'write_read':
@@ -2359,6 +2375,7 @@ class TestbenchGenerator:
             lines.append("")
 
         quality_analysis['regfile_sequence'] = stats
+        quality_analysis['expected_values'] = ev
 
         # Test register 0 (should always be 0)
         # 这条检查不来自 BDD，是模板固定加的
@@ -2520,9 +2537,11 @@ class TestbenchGenerator:
         stats = {'arith': 0, 'memory': 0, 'branch': 0,
                  'skipped_unparsable': 0, 'skipped_unsupported': 0,
                  'skipped_imm_too_large': 0, 'skipped_register_mismatch': 0,
+                 'skipped_no_expected': 0,
                  'skipped_reserved_register': 0, 'skipped_bad_address': 0,
                  'skipped_memory_conflict': 0}
         dmem_init: List[Tuple[int, int]] = []
+        ev = self._new_expected_values_stats(len(scenarios))
         # 数据内存的每个字被哪一行用过：('lw', 初值) 或 ('sw',)。结果在整段
         # 程序跑完后才读，所以同一地址被两行写、或先被写再被读，前一行的检查
         # 看到的就不是它自己的结果
@@ -2543,6 +2562,7 @@ class TestbenchGenerator:
                                      '(-2048..2047); the spec has no LUI',
             'skipped_unsupported': 'instruction/column combination not '
                                    'supported by the CPU template',
+            'skipped_no_expected': self.NO_EXPECTED_RESULT,
             'skipped_register_mismatch': 'the instruction uses other registers than the '
                                          'rs1/rs2/rd columns',
             'skipped_reserved_register': 'it uses x29 or x30, which the testbench needs for itself',
@@ -2579,6 +2599,12 @@ class TestbenchGenerator:
             stim = {'instruction': text.strip(), 'rs1': rs1, 'rs1_value': v1, 'rs2': rs2,
                     'rs2_value': v2, 'rd': rd, 'mem_value': _int(sc.get('mem_value'))}
             b_exp = _int(sc.get('expected'))
+            # 与 ALU / counter 一致：场景没写期望值（分支没写 taken）就不生成检查
+            if oracle_source != 'spec' and (
+                    sc.get('taken') is None if mnem in ('beq', 'bne', 'blt', 'bge') else b_exp is None):
+                self._skip_no_expected(ev, idx + 1, sc)
+                skip(sc, 'skipped_no_expected')
+                continue
 
             # 预置寄存器只能用 ADDI（无 LUI），装不下的值整行跳过并计数，
             # 不硬凑——凑出来的激励与 BDD 写的不是同一个测试。
@@ -2745,6 +2771,8 @@ class TestbenchGenerator:
 
         words += [NOP] * 8
         quality_analysis['trace'] = trace
+        ev['asserted'] = len(checks)
+        quality_analysis['expected_values'] = ev
         quality_analysis['cpu_program'] = dict(
             stats, instructions=len(words), checks=len(checks))
 
