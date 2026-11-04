@@ -134,8 +134,10 @@ def test_gherkin_and_keyword_is_not_an_operation():
 # ---------------------------------------------------------------------------
 # Already-correct features: unchanged, byte for byte
 # ---------------------------------------------------------------------------
+# SLTU has 7 rows: until 2026-11-04 the parser dropped the last Examples row of
+# a file without a final newline (all ablation variants), so 6 were counted.
 BASELINE_OPS = {'ADD': 7, 'SUB': 7, 'AND': 6, 'OR': 6, 'XOR': 6,
-                'SLL': 7, 'SRL': 7, 'SRA': 8, 'SLT': 7, 'SLTU': 6}
+                'SLL': 7, 'SRL': 7, 'SRA': 8, 'SLT': 7, 'SLTU': 7}
 
 
 @pytest.mark.parametrize('variant', [

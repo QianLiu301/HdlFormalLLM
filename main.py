@@ -2885,6 +2885,8 @@ def generate_testbench():
             'generator': result.get('generator', 'deterministic-template'),
             'oracle_source': result.get('oracle_source'),
             'parse_stats': result.get('parse_stats'),
+            # rows that became no check because the scenario states no expected value
+            'expected_values': result.get('expected_values'),
         })
 
     except Exception as e:

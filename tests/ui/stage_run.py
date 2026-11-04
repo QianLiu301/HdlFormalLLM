@@ -22,10 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / 'tests'))
 
-from test_xdb import (ALU, CPU_BUGGY, CPU_FEATURE, CPU_OK, CPU_RECORD, RF_BUGGY, RF_FEATURE,  # noqa: E402
-                      RF_FIXED, RF_RECORD)
+from src.xdb.samples import (ALU, CPU_BUGGY, CPU_FEATURE, CPU_OK, CPU_RECORD, RF_BUGGY,  # noqa: E402
+                             RF_FEATURE, RF_FIXED, RF_RECORD)
 # ALU: SLTU compares signed. Register file: register 0 is not protected; the
 # feature reads R1 expecting 100 after a later row wrote 300.
 

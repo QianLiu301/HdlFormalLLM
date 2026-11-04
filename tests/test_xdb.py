@@ -30,36 +30,9 @@ URL = os.environ.get('XDB_TEST_URL', 'postgresql://bdx:bdx@localhost/bdx_test')
 
 sqlalchemy = pytest.importorskip('sqlalchemy')
 
-ALU = """
-module alu_32bit #(parameter WIDTH = 32) (
-    input  wire clk, input wire rst,
-    input  wire [WIDTH-1:0] a, b,
-    input  wire [3:0] opcode,
-    output reg  [WIDTH-1:0] result,
-    output wire zero, output reg overflow, output wire negative
-);
-    always @(*) begin
-        overflow = 1'b0;
-        case (opcode)
-            4'b0000: begin result = a + b;
-                     overflow = (a[WIDTH-1] == b[WIDTH-1]) && (result[WIDTH-1] != a[WIDTH-1]); end
-            4'b0001: begin result = a - b;
-                     overflow = (a[WIDTH-1] != b[WIDTH-1]) && (result[WIDTH-1] != a[WIDTH-1]); end
-            4'b0010: result = a & b;
-            4'b0011: result = a | b;
-            4'b0100: result = a ^ b;
-            4'b0101: result = a << b[4:0];
-            4'b0110: result = a >> b[4:0];
-            4'b0111: result = $signed(a) >>> b[4:0];
-            4'b1000: result = ($signed(a) < $signed(b)) ? 1 : 0;
-            4'b1001: result = ($signed(a) < $signed(b)) ? 1 : 0;   // BUG: SLTU compares signed
-            default: result = 0;
-        endcase
-    end
-    assign zero = (result == 0);
-    assign negative = result[WIDTH-1];
-endmodule
-"""
+from src.xdb.samples import (ALU, CPU_BUGGY, CPU_DUT, CPU_FEATURE, CPU_OK, CPU_RECORD,  # noqa: E402
+                             FIXED_ALU, RF_BUGGY, RF_DUT, RF_FEATURE, RF_FIXED, RF_RECORD)
+
 
 
 def _db_ok():
@@ -483,11 +456,12 @@ def test_probe_run_is_kept_apart_from_the_testbench_run(run, db):
                               FROM sim_run r JOIN testbench t ON t.id = r.testbench_id
                               LEFT JOIN check_result cr ON cr.sim_run_id = r.id
                               WHERE r.probe_of = 1 GROUP BY 1, 2, 3""")).one()
-        # zero + negative for 67 rows, overflow only for the 14 ADD/SUB rows
-        assert tuple(r) == (1, 'probe', 'ok', 67 * 2 + 14)
+        # zero + negative for 68 rows, overflow only for the 14 ADD/SUB rows
+        # (68: the last SLTU row counts since the parser keeps a final row without a newline)
+        assert tuple(r) == (1, 'probe', 'ok', 68 * 2 + 14)
         # the testbench's own pass rate is untouched by the probe
         n = c.execute(text("SELECT count(*) FROM check_result WHERE sim_run_id = 1")).scalar()
-        assert n == 67
+        assert n == 68
 
 
 def test_requirement_subject():
@@ -727,13 +701,13 @@ def test_explain_api(run, db, monkeypatch):
     body = {'testbench_path': paths['testbench'], 'log_file': paths['log']}
     s = c.post('/api/explain/summary', json=body).get_json()
     assert s['enabled'] and s['ready'] and s['design'] == 'alu_32bit'
-    assert s['verdicts'] == {'pass': 62, 'design_wrong': 3, 'scenario_wrong': 2}
+    assert s['verdicts'] == {'pass': 62, 'design_wrong': 4, 'scenario_wrong': 2}
     assert s['checks']['BDD:ALU-SUB-001/r7']['verdict'] == 'scenario_wrong'
     assert any('zero flag' in x and 'contradicts' in x for x in s['spec_check_text'])
     # P4/P5: what was compared, and what the flag probe saw
     assert s['compared_ports'] == ['result']
     assert s['probe']['status'] == 'ok'
-    assert s['probe']['per_port']['zero'] == {'rows': 67, 'design_agrees': 64}
+    assert s['probe']['per_port']['zero'] == {'rows': 68, 'design_agrees': 64}
     assert s['probe']['issues']['BDD:ALU-ADD-001/r7'] == [{'port': 'zero', 'verdict': 'scenario_wrong'}]
     # P1: status by subject port
     st = {r['req_key']: (r['status'], r['subject']) for r in s['requirements']}
@@ -856,8 +830,6 @@ def test_reference_value_keeps_the_cell_style():
     assert (_fmt_flag(0, 'True'), _fmt_flag(1, 'false'), _fmt_flag(1, '0')) == ('False', 'true', '1')
 
 
-FIXED_ALU = ALU.replace("4'b1001: result = ($signed(a) < $signed(b)) ? 1 : 0;   // BUG: SLTU compares signed",
-                        "4'b1001: result = (a < b) ? 1 : 0;")
 
 
 def _client(run, db, monkeypatch):
@@ -914,7 +886,7 @@ def test_repair_scenarios_end_to_end(run, db, monkeypatch):
     before = (proj / paths['bdd']).read_text(encoding='utf-8')
     s = _summary_when_ready(c, body)
     rp = s['repairs']
-    assert (rp['scenario_values'], rp['design_failures'], rp['design_regeneration']) == (3, 3, True)
+    assert (rp['scenario_values'], rp['design_failures'], rp['design_regeneration']) == (3, 4, True)
     # earlier tests stored discarded generations in this session, so 'regenerated' is right too
     assert rp['feature_reason'] in ('generated', 'regenerated') and rp['duv_reason'] == 'generated'
 
@@ -943,9 +915,9 @@ def test_repair_scenarios_end_to_end(run, db, monkeypatch):
                        log_file=r['simulation']['log_file'], run_id=r['run_id'])
     assert c.post('/api/run-report', json=body2).get_json()['success']
     s2 = _summary_when_ready(c, body2)
-    assert s2['verdicts'] == {'pass': 64, 'design_wrong': 3}
+    assert s2['verdicts'] == {'pass': 64, 'design_wrong': 4}
     assert s2['probe']['issues'].get('BDD:ALU-ADD-001/r7') is None
-    assert s2['repairs']['scenario_values'] == 0 and s2['repairs']['design_failures'] == 3
+    assert s2['repairs']['scenario_values'] == 0 and s2['repairs']['design_failures'] == 4
     assert s2['repairs']['feature_reason'] == f"feedback:{r['feedback_id']}"
     assert not any(p['who'] == 'scenario' for p in s2['problems'])
 
@@ -991,7 +963,7 @@ def test_repair_design_with_feedback(run, db, monkeypatch):
 
     run_id = _session_run_id(db, _summary_when_ready(c, body))
     fb = c.post('/api/repair/design-feedback', json=body).get_json()
-    assert fb['success'] and fb['count'] == 3 and fb['operations'] == ['SLTU']
+    assert fb['success'] and fb['count'] == 4 and fb['operations'] == ['SLTU']
     assert 'SLTU is 1 when A < B as unsigned numbers' in fb['text']
     assert 'result must be 1, the design gave 0' in fb['text'] or 'result must be 0, the design gave 1' in fb['text']
     assert 'BUG: SLTU compares signed' in fb['previous_verilog']
@@ -1013,7 +985,7 @@ def test_repair_design_with_feedback(run, db, monkeypatch):
         'repair_of': {'testbench_path': paths['testbench'], 'log_file': paths['log']}}).get_json()
     assert hw['success'], hw
     assert hw['run_id'] == run_id                            # continues the repaired run
-    assert hw['repair']['failures'] == 3
+    assert hw['repair']['failures'] == 4
     p = seen['prompt']
     assert 'IMPORTANT - Repair of a previous version' in p and 'SLTU with a = ' in p
     assert p.index('Confirmed Requirements') < p.index('Repair of a previous version')
@@ -1026,7 +998,7 @@ def test_repair_design_with_feedback(run, db, monkeypatch):
                        log_file=rr['simulation']['log_file'], run_id=run_id)
     assert c.post('/api/run-report', json=body2).get_json()['success']
     s2 = _summary_when_ready(c, body2)
-    assert s2['verdicts'] == {'pass': 65, 'scenario_wrong': 2}
+    assert s2['verdicts'] == {'pass': 66, 'scenario_wrong': 2}
     assert s2['repairs']['design_failures'] == 0
     assert s2['repairs']['duv_reason'] == f"feedback:{hw['repair']['feedback_id']}"
 
@@ -1058,131 +1030,9 @@ def test_design_repair_only_for_alu(run, db, monkeypatch):
 # expects 100); RF_BUGGY does not protect register 0 (writes to it are stored,
 # reads of it return them).
 
-RF_FEATURE = """Feature: 32x32-bit Register File Verification
-  As a hardware verification engineer
-  I want to verify the Register File implementation
-  So that I can ensure correct read/write behavior
 
-  Background:
-    Given the Register File has 32 registers of 32-bit width
 
-  @write @req_1
-  Scenario Outline: Write values into registers
-    Given the register file is ready
-    When I write <data> to register <addr>
-    Then the write is accepted
 
-    Examples:
-      | addr | data       |
-      | 1    | 100        |
-      | 2    | 255        |
-      | 5    | 4294967295 |
-      | 1    | 300        |
-
-  @read @req_1
-  Scenario Outline: Read back values written earlier
-    Given the register file holds earlier writes
-    When I read register <addr>
-    Then the value should be <expected>
-
-    Examples:
-      | addr | expected   |
-      | 1    | 100        |
-      | 2    | 255        |
-      | 5    | 4294967295 |
-      | 9    | 0          |
-
-  @write_read @req_1
-  Scenario Outline: Write and immediately read back
-    Given the register file is ready
-    When I write <data> to register <addr>
-    And I read register <addr>
-    Then the value should be <expected>
-
-    Examples:
-      | addr | data | expected |
-      | 7    | 42   | 42       |
-      | 12   | 7    | 7        |
-
-  @write @req_2
-  Scenario Outline: Writes to register 0 are ignored
-    Given the register file is ready
-    When I write <data> to register <addr>
-    Then the write is discarded
-
-    Examples:
-      | addr | data |
-      | 0    | 123  |
-
-  @read @req_2
-  Scenario Outline: Register 0 always reads as zero
-    Given register 0 is hardwired
-    When I read register <addr>
-    Then the value should be <expected>
-
-    Examples:
-      | addr | expected |
-      | 0    | 0        |
-
-  @reset @req_3
-  Scenario Outline: Reset clears every register
-    Given registers hold values
-    When reset is asserted
-    Then register <addr> is cleared
-
-    Examples:
-      | addr |
-      | 1    |
-
-  @read @req_3
-  Scenario Outline: Everything reads zero after reset
-    Given reset has completed
-    When I read register <addr>
-    Then the value should be <expected>
-
-    Examples:
-      | addr | expected |
-      | 1    | 0        |
-      | 7    | 0        |
-"""
-
-RF_BUGGY = """module regfile #(parameter WIDTH = 32, parameter DEPTH = 32, parameter ADDR_WIDTH = 5) (
-    input  wire                  clk,
-    input  wire                  rst_n,
-    input  wire [ADDR_WIDTH-1:0] raddr1,
-    output wire [WIDTH-1:0]      rdata1,
-    input  wire [ADDR_WIDTH-1:0] raddr2,
-    output wire [WIDTH-1:0]      rdata2,
-    input  wire                  wen,
-    input  wire [ADDR_WIDTH-1:0] waddr,
-    input  wire [WIDTH-1:0]      wdata
-);
-    reg [WIDTH-1:0] registers [0:DEPTH-1];
-    integer i;
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (i = 0; i < DEPTH; i = i + 1) registers[i] <= 0;
-        end else if (wen) begin
-            registers[waddr] <= wdata;          // BUG: register 0 is not protected
-        end
-    end
-    assign rdata1 = registers[raddr1];          // BUG: register 0 is not hardwired
-    assign rdata2 = (raddr2 == 0) ? 0 : registers[raddr2];
-endmodule
-"""
-
-RF_FIXED = (RF_BUGGY.replace("registers[waddr] <= wdata;          // BUG: register 0 is not protected",
-                             "if (waddr != 0) registers[waddr] <= wdata;")
-            .replace("assign rdata1 = registers[raddr1];          // BUG: register 0 is not hardwired",
-                     "assign rdata1 = (raddr1 == 0) ? 0 : registers[raddr1];"))
-
-RF_RECORD = {'module_type': 'regfile', 'created_at': '2026-11-03T12:00:00', 'questions': [], 'decisions': [],
-             'requirements': [
-                 {'id': 'REQ-1', 'text': 'A read returns the value last written to that register.', 'source': 'llm'},
-                 {'id': 'REQ-2', 'text': 'Register 0 always reads as zero; writes to it are ignored.', 'source': 'llm'},
-                 {'id': 'REQ-3', 'text': 'Reset clears every register.', 'source': 'llm'},
-                 {'id': 'REQ-4', 'text': 'Both read ports can read any register at the same time.', 'source': 'llm'}]}
-RF_DUT = {'module_type': 'regfile', 'module_name': 'regfile', 'bitwidth': 32, 'depth': 32}
 
 
 def _simulate(proj, tb_path, duv_path, log_rel):
@@ -1375,183 +1225,9 @@ def test_regfile_repair_scenarios_and_design(rf_run, db, monkeypatch):
 # a prompt-format SW row (both checked correctly since the template fix).
 # CPU_BUGGY compares SLT/SLTI unsigned.
 
-CPU_FEATURE = """Feature: RISC-V CPU Verification (5-stage pipeline)
-  As a hardware verification engineer
-  I want to verify the RISC-V CPU implementation
-  So that I can ensure correct instruction execution
 
-  Background:
-    Given the CPU is a 5-stage pipeline RV32I processor
-    And all registers are initialized to 0
 
-  @arithmetic @req_1
-  Scenario Outline: Instructions that write a register
-    Given register x<rs1> contains <rs1_value>
-    And register x<rs2> contains <rs2_value>
-    When I execute <instruction>
-    Then register x<rd> should contain <expected>
 
-    Examples:
-      | instruction      | rs1 | rs1_value | rs2 | rs2_value | rd | expected |
-      | add x3, x1, x2   | 1   | 10        | 2   | 20        | 3  | 30       |
-      | sub x3, x1, x2   | 1   | 10        | 2   | 30        | 3  | 20       |
-      | addi x3, x1, 100 | 1   | 50        | 0   | 0         | 3  | 150      |
-      | add x3, x1, x1   | 1   | 5         | 1   | 7         | 3  | 12       |
-      | addi x0, x1, 5   | 1   | 10        | 0   | 0         | 0  | 15       |
-      | add x5, x1, x2   | 1   | 10        | 2   | 20        | 3  | 30       |
-
-  @logical @req_1
-  Scenario Outline: Bitwise instructions
-    Given register x<rs1> contains <rs1_value>
-    And register x<rs2> contains <rs2_value>
-    When I execute <instruction>
-    Then register x<rd> should contain <expected>
-
-    Examples:
-      | instruction     | rs1 | rs1_value | rs2 | rs2_value | rd | expected |
-      | and x3, x1, x2  | 1   | 0xFF      | 2   | 0x0F      | 3  | 0x0F     |
-      | or x3, x1, x2   | 1   | 0xF0      | 2   | 0x0F      | 3  | 0xFF     |
-      | xori x3, x1, 15 | 1   | 0xFF      | 0   | 0         | 3  | 0xF0     |
-
-  @compare @req_2
-  Scenario Outline: Signed comparison
-    Given register x<rs1> contains <rs1_value>
-    And register x<rs2> contains <rs2_value>
-    When I execute <instruction>
-    Then register x<rd> should contain <expected>
-
-    Examples:
-      | instruction     | rs1 | rs1_value | rs2 | rs2_value | rd | expected |
-      | slt x3, x1, x2  | 1   | -1        | 2   | 1         | 3  | 1        |
-      | slt x3, x1, x2  | 1   | 5         | 2   | 3         | 3  | 0        |
-      | slti x3, x1, 0  | 1   | -1        | 0   | 0         | 3  | 1        |
-
-  @memory @req_3
-  Scenario Outline: Load and store, one instruction per row
-    Given register x<rs1> contains address <rs1_value>
-    And memory at that address contains <mem_value>
-    When I execute <instruction>
-    Then register x<rd> should contain <expected>
-
-    Examples:
-      | instruction    | rs1 | rs1_value | rs2 | rs2_value | rd | mem_value | expected |
-      | lw x3, 0(x1)   | 1   | 0x100     | 0   | 0         | 3  | 0x1234    | 0x1234   |
-      | lw x4, 4(x1)   | 1   | 0x180     | 0   | 0         | 4  | 0x55      | 0x55     |
-      | sw x2, 0(x1)   | 1   | 0x140     | 2   | 0x7BC     | 0  | 0         | 0x7BC    |
-
-  @branch @req_4
-  Scenario Outline: Branch taken or not taken
-    Given register x<rs1> contains <rs1_value>
-    And register x<rs2> contains <rs2_value>
-    When I execute <instruction>
-    Then the branch is taken should be <taken>
-
-    Examples:
-      | instruction    | rs1 | rs1_value | rs2 | rs2_value | taken |
-      | beq x1, x2, 8  | 1   | 10        | 2   | 10        | yes   |
-      | beq x1, x2, 8  | 1   | 10        | 2   | 20        | no    |
-      | bne x1, x2, 8  | 1   | 10        | 2   | 20        | yes   |
-      | blt x1, x2, 8  | 1   | -5        | 2   | 3         | no    |
-      | bge x1, x2, 8  | 1   | -5        | 2   | 3         | no    |
-"""
-
-CPU_OK = """// Minimal RV32I subset CPU for the explainability tests: one instruction per
-// cycle, a load takes two (the testbench's data memory reads synchronously).
-module riscv_cpu (
-    input  wire        clk,
-    input  wire        rst_n,
-    output wire [31:0] imem_addr,
-    input  wire [31:0] imem_data,
-    output wire [31:0] dmem_addr,
-    output wire [31:0] dmem_wdata,
-    output wire        dmem_wen,
-    output wire [3:0]  dmem_be,
-    input  wire [31:0] dmem_rdata,
-    output wire [31:0] debug_pc,
-    output wire [31:0] debug_inst
-);
-    reg [31:0] pc;
-    reg [31:0] x [0:31];
-    reg        load_wait;
-    integer k;
-
-    wire [31:0] inst = imem_data;
-    wire [6:0]  opc  = inst[6:0];
-    wire [4:0]  rd   = inst[11:7];
-    wire [2:0]  f3   = inst[14:12];
-    wire [4:0]  rs1  = inst[19:15];
-    wire [4:0]  rs2  = inst[24:20];
-    wire [6:0]  f7   = inst[31:25];
-    wire [31:0] a    = (rs1 == 0) ? 32'd0 : x[rs1];
-    wire [31:0] b    = (rs2 == 0) ? 32'd0 : x[rs2];
-    wire [31:0] imm_i = {{20{inst[31]}}, inst[31:20]};
-    wire [31:0] imm_s = {{20{inst[31]}}, inst[31:25], inst[11:7]};
-    wire [31:0] imm_b = {{19{inst[31]}}, inst[31], inst[7], inst[30:25], inst[11:8], 1'b0};
-
-    wire is_r = opc == 7'b0110011, is_i = opc == 7'b0010011, is_lw = opc == 7'b0000011,
-         is_sw = opc == 7'b0100011, is_br = opc == 7'b1100011;
-    wire [31:0] op2 = is_r ? b : imm_i;
-
-    reg [31:0] alu;
-    always @(*) begin
-        case (f3)
-            3'b000: alu = (is_r && f7[5]) ? a - op2 : a + op2;
-            3'b010: alu = ($signed(a) < $signed(op2)) ? 32'd1 : 32'd0;     // SLT / SLTI
-            3'b100: alu = a ^ op2;
-            3'b110: alu = a | op2;
-            3'b111: alu = a & op2;
-            default: alu = 32'd0;
-        endcase
-    end
-
-    reg taken;
-    always @(*) begin
-        case (f3)
-            3'b000: taken = a == b;
-            3'b001: taken = a != b;
-            3'b100: taken = $signed(a) < $signed(b);
-            3'b101: taken = $signed(a) >= $signed(b);
-            default: taken = 1'b0;
-        endcase
-    end
-
-    assign imem_addr  = pc;
-    assign dmem_addr  = is_sw ? a + imm_s : a + imm_i;
-    assign dmem_wdata = b;
-    assign dmem_wen   = is_sw & rst_n;
-    assign dmem_be    = 4'b1111;
-    assign debug_pc   = pc;
-    assign debug_inst = inst;
-
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            pc <= 0; load_wait <= 0;
-            for (k = 0; k < 32; k = k + 1) x[k] <= 0;
-        end else if (is_lw && !load_wait) begin
-            load_wait <= 1;                                   // address out, data next cycle
-        end else begin
-            load_wait <= 0;
-            if ((is_r || is_i) && rd != 0) x[rd] <= alu;
-            if (is_lw && rd != 0) x[rd] <= dmem_rdata;
-            pc <= (is_br && taken) ? pc + imm_b : pc + 4;
-        end
-    end
-endmodule
-"""
-
-CPU_BUGGY = CPU_OK.replace("3'b010: alu = ($signed(a) < $signed(op2)) ? 32'd1 : 32'd0;     // SLT / SLTI",
-                           "3'b010: alu = (a < op2) ? 32'd1 : 32'd0;     // BUG: SLT compares unsigned")
-
-CPU_RECORD = {'module_type': 'cpu', 'created_at': '2026-11-03T14:00:00', 'questions': [], 'decisions': [],
-              'requirements': [
-                  {'id': 'REQ-1', 'text': 'Arithmetic and logical instructions write their result to rd.',
-                   'source': 'llm'},
-                  {'id': 'REQ-2', 'text': 'SLT and SLTI compare signed values.', 'source': 'llm'},
-                  {'id': 'REQ-3', 'text': 'LW loads a word from memory; SW stores a word to memory.',
-                   'source': 'llm'},
-                  {'id': 'REQ-4', 'text': 'Branches are taken exactly when their condition holds.',
-                   'source': 'llm'}]}
-CPU_DUT = {'module_type': 'cpu', 'module_name': 'riscv_cpu', 'bitwidth': 32, 'pipeline_stages': 5}
 
 
 @pytest.fixture(scope='module')
@@ -1727,3 +1403,40 @@ def test_cpu_repair_scenarios_and_design(cpu_run, db, monkeypatch):
     assert s3['verdicts'] == {'pass': 18, 'scenario_wrong': 1, 'not_tested': 1}
     # left: the row that gives x1 two values, and the row the testbench skips
     assert sorted(p['who'] for p in s3['problems']) == ['scenario', 'test']
+
+
+# ================================================================ trial runner (R1)
+
+def test_trial_runner_dry_run(rf_run, db, monkeypatch, tmp_path):
+    """The batch runner drives the web flow end to end with the mock model:
+    Step 0-4, explanations, then both repairs, and reports what it saw."""
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        import main
+    from src.simulation_runner import WebSimulationRunner
+    from src.xdb import trial as TR
+    from src import xdb
+    from src.xdb import models as M
+    proj = tmp_path / 'proj'
+    (proj / 'output').mkdir(parents=True)
+    monkeypatch.setattr(main, 'PROJECT_ROOT', proj)
+    monkeypatch.setattr(main, 'simulation_runner', WebSimulationRunner(project_root=str(proj)))
+    monkeypatch.setenv('DATABASE_URL', db)
+    TR.install_mock()
+    t = TR.Trial('pytest', step0=True, repair_rounds=2, out_root=tmp_path / 'trials',
+                 app=main.app, project_root=proj)
+    rec = t.run_one('mock', 'regfile', 1)
+    assert rec['stage'] == 'done' and rec['error'] is None, rec.get('error')
+    assert rec['step0']['ok'] and rec['step0']['requirements'] == 4
+    v = rec['initial']['verdicts']
+    assert (v['pass'], v['design_wrong'], v['scenario_wrong']) == (7, 1, 1)
+    assert rec['initial']['steps_unmapped'] == 0 and rec['initial']['steps_mapped'] > 20
+    assert [(r['action'], r['ok']) for r in rec['rounds']] == [('scenarios', True), ('design', True)]
+    assert rec['final']['all_clear'] and rec['final']['verdicts']['pass'] == 9
+    assert rec['llm_calls'] >= 4                              # Step 0, design, scenarios, repair
+    summary = TR.write_outputs(t.out, [rec])
+    assert '| mock | regfile | 1 | 1 | 9 | 78% | 11% | 11% | 0% | 100% | 0 | 0/1 | 1/1 | 1 | — |' in summary
+    assert (t.out / 'runs.csv').read_text(encoding='utf-8').startswith('llm,design,rep,stage')
+    with xdb.session_scope(db) as s:
+        assert s.get(M.Session, rec['initial']['session_id']).note == 'trial:pytest'
