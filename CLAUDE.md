@@ -154,7 +154,9 @@ ALU/counter row without expected value is not asserted; reason
 `TestbenchGenerator.NO_EXPECTED_RESULT`, `tests/test_no_expected_result.py`),
 41d90a9 (CPU: stores with an rd column checked in memory, load/store offsets,
 register/column mismatches, x29/x30, bad addresses, memory conflicts skipped
-with a reason; `tests/test_template_testbenches.py`). Next: counter, M6. Product output (explanations, UI text,
+with a reason; `tests/test_template_testbenches.py`). Papers are decided
+later (user, 2026-11-04: build website features first); candidate papers,
+evidence and the feature roadmap R1–R7 are in `docs/research_outline.md`. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon;
 `service postgresql start` if the container restarted).
