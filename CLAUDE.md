@@ -101,6 +101,7 @@ download CSV/ZIP from the dashboard after important runs.
   `~/PycharmProjects/HdlFormalLLM`. Give Mac commands only (bash/zsh syntax,
   Homebrew, `open`, Cmd shortcuts) — no PowerShell. Earlier work was on Windows,
   so keep the UTF-8 gotchas below. Tests in browser.
+- **New session? Read `docs/handover.md` first** (goals, sources the user shared, how we work, status, next steps).
 - Workflow (user request 2026-11-04): work in a Claude Code session on the user's Mac, in the local project folder; trial data and logs stay local (read them in `output/trials/`); commit locally and push to `bdx-explainability` only when the user says so. Cloud sessions cannot use the folder (Remote Control folder not offered to cloud sessions).
 - Explain things in Chinese to the user; code/comments/docs in the repo mostly
   English (some Chinese comments in experiment tooling are fine).
