@@ -256,3 +256,44 @@ def test_empty_cells_keep_the_row_and_an_empty_operand_skips_it(tmp_path):
     assert text.count('total = total + 1;') == 2 and r['test_count'] == 2
     assert r['parse_stats']['rows_dropped_malformed'] == 0
     assert list(SR.load_index(r['filepath'])['trace']['skipped'].values()) == ['the row leaves an operand empty']
+
+
+# The data memory of the CPU testbench reads combinationally (prompts/duv_cpu/v2).
+# With a registered read, every load of a design that takes dmem_rdata in the
+# cycle it presents the address returned the word of the previous bus address:
+# both DeepSeek CPUs of the trials first and cpu_fix were blamed for wrong loads.
+SAME_CYCLE_CPU = CPU.replace("""        end else if (is_lw && !load_wait) begin
+            load_wait <= 1;                                   // address out, data next cycle
+        end else begin""", """        end else begin""")
+
+
+def test_cpu_testbench_memory_reads_in_the_same_cycle(tmp_path):
+    r = _generate(tmp_path, HEADER + _outline('memory', ['lw x3, 0(x1) | 1 | 4 | 0 | 0 | 3 | 7 | 7']), CPU_DUT)
+    tb = Path(r['filepath']).read_text(encoding='utf-8')
+    assert 'always @(*) dmem_rdata = dmem[dmem_addr[11:2]];' in tb
+    assert 'dmem_rdata <=' not in tb
+
+
+@needs_iverilog
+@pytest.mark.parametrize('design', ['waits a cycle', 'same cycle'])
+def test_loads_pass_with_either_load_timing(tmp_path, design):
+    assert SAME_CYCLE_CPU != CPU
+    rows = ['lw x3, 0(x1) | 1 | 0 | 0 | 0 | 3 | 0x1234 | 0x1234',
+            'lw x3, 0(x1) | 1 | 4 | 0 | 0 | 3 | -1     | -1',
+            'lw x3, 0(x1) | 1 | 8 | 0 | 0 | 3 | 2047   | 2047']
+    r = _generate(tmp_path, HEADER + _outline('memory', rows), CPU_DUT)
+    lines = _run(tmp_path, r['filepath'], CPU if design == 'waits a cycle' else SAME_CYCLE_CPU)
+    assert len(lines) == 3 and not any('FAIL' in l for l in lines), lines
+
+
+def test_cpu_prompt_states_the_memory_timing_and_is_the_web_default():
+    from src import prompt_store
+    with contextlib.redirect_stdout(io.StringIO()):
+        import main
+    doc = prompt_store.load('duv_cpu', 'v2')
+    assert 'dmem_rdata is combinational' in doc['user'] and 'no read latency' in doc['user']
+    assert main._web_default_prompt_version('cpu') == 'v2'
+    c = main.app.test_client()
+    assert c.get('/api/prompts/duv_cpu').get_json()['default'] == 'v2'
+    assert c.get('/api/prompts/duv_alu').get_json()['default'] == 'v3'
+    assert c.get('/api/prompts/duv_register').get_json()['default'] == 'v1'

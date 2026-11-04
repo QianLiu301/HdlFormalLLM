@@ -74,6 +74,8 @@ Anti-leak design: FP list withheld from the tested LLM; only port declaration
   check. Keep that guard.
 - **User's local proxy**: v2rayN-style, SOCKS5 on 10808 / HTTP on 10809.
   Config in `config/llm_config.json` (gitignored; example file committed).
+- **Credentials (D32)**: never put a key in a URL (Gemini uses the `x-goog-api-key` header); pass error texts that leave the machine through `src.redact.redact_secrets`; trial outputs are redacted in `write_outputs`. Pre-commit hook `tools/check_secrets.py` (`git config core.hooksPath .githooks`). 2026-11-04: a Gemini key and the Neon password reached the public repo (runs.jsonl, .env.save) — both to be rotated by the user; never print key values in chat.
+- **CPU memory timing (D31)**: the CPU testbench reads both memories combinationally; `prompts/duv_cpu/v2` (web default) states it. A registered read made textbook pipelines fail every load.
 - iverilog required for all simulation paths (Windows: bleyer.org/icarus,
   check "Add to PATH"). Included in Dockerfile.
 
@@ -99,6 +101,7 @@ download CSV/ZIP from the dashboard after important runs.
   `~/PycharmProjects/HdlFormalLLM`. Give Mac commands only (bash/zsh syntax,
   Homebrew, `open`, Cmd shortcuts) — no PowerShell. Earlier work was on Windows,
   so keep the UTF-8 gotchas below. Tests in browser.
+- Workflow (user request 2026-11-04): work in a Claude Code session on the user's Mac, in the local project folder; trial data and logs stay local (read them in `output/trials/`); commit locally and push to `bdx-explainability` only when the user says so. Cloud sessions cannot use the folder (Remote Control folder not offered to cloud sessions).
 - Explain things in Chinese to the user; code/comments/docs in the repo mostly
   English (some Chinese comments in experiment tooling are fine).
 

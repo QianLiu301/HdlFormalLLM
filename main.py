@@ -297,6 +297,24 @@ app = Flask(__name__,
             template_folder=str(PROJECT_ROOT / 'static'))
 CORS(app)
 
+
+@app.after_request
+def _redact_error_responses(resp):
+    """No credential leaves the server in an error message: exception texts can
+    carry a request URL or a connection string (src/redact.py). Only JSON
+    answers that report an error are touched; streams pass unchanged."""
+    try:
+        if (resp.mimetype == 'application/json' and not resp.direct_passthrough
+                and (resp.status_code >= 400 or b'"error"' in resp.get_data())):
+            from src.redact import redact_secrets
+            body = resp.get_data(as_text=True)
+            clean = redact_secrets(body)
+            if clean != body:
+                resp.set_data(clean)
+    except Exception:
+        pass
+    return resp
+
 # Store last generated files
 last_generated_bdd = {'filename': None, 'filepath': None, 'llm': None}
 last_generated_hw = {'filename': None, 'filepath': None, 'llm': None, 'module_type': None}
@@ -375,6 +393,9 @@ WEB_DEFAULT_PROMPT_VERSION = {
     # v3 = v1 + 「复制次数/部分选择必须是常量」。codestral 与 Llama 在寄存器版
     # ALU 上把桶形移位器写成依赖循环变量的复制，iverilog 与综合都不接受。
     'alu': 'v3',
+    # v2 = v1 + memory timing: both memories read combinationally (what the
+    # testbench does since 2026-11-04 and what the MEM/WB register implies)
+    'cpu': 'v2',
 }
 
 
@@ -572,6 +593,25 @@ def _empty_response_message(run_id, max_tokens=None):
     if meta.get('api_error'):
         return f"The model call failed: {meta['api_error']}"
     return "LLM returned empty response"
+
+
+def _model_failure_reason(generator, run_id):
+    """Why a generation step produced nothing. A failed API call (429, timeout,
+    no balance) is the cause whenever one was recorded: the provider then
+    returns its fallback text, and the generator only sees "no module in the
+    answer" (trial cpu_fix: every Gemini run read like a model failure while
+    the quota was used up). Then the output budget, then the generator's own
+    reason."""
+    from src.redact import redact_secrets
+    meta = _last_call_meta(run_id) or {}
+    own = getattr(generator, 'last_error', None)
+    if meta.get('api_error'):
+        reason = f"The model call failed: {meta['api_error']}"
+    elif meta.get('truncated') and (not own or 'empty answer' in own):
+        reason = _empty_response_message(run_id)
+    else:
+        reason = own
+    return redact_secrets(reason) if reason else None
 
 
 def _read_decisions(data, module_type=None):
@@ -1706,9 +1746,7 @@ def generate_hardware():
             # 'Generation failed' 说不出任何东西。真正的原因（429、key 失效、
             # 模型下线）此前只在服务器控制台，数据库里查不到——main01 的 14 格
             # gemini 失败就是这样，只能回头翻日志才知道是限流。
-            meta = _last_call_meta(run_id) or {}
-            reason = (getattr(generator, 'last_error', None)
-                      or meta.get('api_error'))
+            reason = _model_failure_reason(generator, run_id)
             if repair_fb_id:
                 _close_repair(repair_fb_id, 'failed')
             return jsonify({'success': False,
@@ -2423,7 +2461,7 @@ def generate_bdd():
             # 不透出来的话线上只看得到 "Generation failed"，而 Render 上看不到
             # 服务器控制台，等于把唯一的线索藏起来了。
             return jsonify({'success': False,
-                            'error': getattr(generator, 'last_error', None)
+                            'error': _model_failure_reason(generator, run_id)
                                      or 'Generation failed'}), 500
 
         feature_path_obj = Path(feature_path)
@@ -2507,8 +2545,11 @@ def get_prompt_templates(stage):
             'user_sha256': ps.sha256(doc.get('user')),
             'system_sha256': ps.sha256(doc.get('system')),
         }
-    return jsonify({'success': True, 'stage': stage,
-                    'versions': versions, 'default': 'v1', 'templates': out})
+    # the version a request without prompt_version gets (WEB_DEFAULT_PROMPT_VERSION)
+    mt = {'duv_register': 'regfile'}.get(stage, stage[4:] if stage.startswith('duv_') else None)
+    default = _web_default_prompt_version(mt) if mt else 'v1'
+    return jsonify({'success': True, 'stage': stage, 'versions': versions,
+                    'default': default if default in versions else 'v1', 'templates': out})
 
 
 @app.route('/api/prompts')
