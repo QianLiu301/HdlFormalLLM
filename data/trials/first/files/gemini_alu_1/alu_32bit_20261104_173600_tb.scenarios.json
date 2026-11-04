@@ -1,0 +1,1543 @@
+{
+ "version": 2,
+ "feature": "alu_32bit_20261104_173600.feature",
+ "module_type": "alu",
+ "oracle_source": "bdd",
+ "catalog": [
+  {
+   "id": "ALU-ADD-001",
+   "title": "Verify ADD operation",
+   "tags": [
+    "add",
+    "arithmetic"
+   ],
+   "requirements": [
+    "REQ-1"
+   ],
+   "span": [
+    654,
+    1683
+   ],
+   "operation": "ADD",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-ADD-001/r1",
+    "ALU-ADD-001/r2",
+    "ALU-ADD-001/r3",
+    "ALU-ADD-001/r4",
+    "ALU-ADD-001/r5",
+    "ALU-ADD-001/r6"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "overflow",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-SUB-001",
+   "title": "Verify SUB operation",
+   "tags": [
+    "sub",
+    "arithmetic"
+   ],
+   "requirements": [
+    "REQ-2"
+   ],
+   "span": [
+    1683,
+    2712
+   ],
+   "operation": "SUB",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-SUB-001/r1",
+    "ALU-SUB-001/r2",
+    "ALU-SUB-001/r3",
+    "ALU-SUB-001/r4",
+    "ALU-SUB-001/r5",
+    "ALU-SUB-001/r6"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "overflow",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-AND-001",
+   "title": "Verify AND operation",
+   "tags": [
+    "and",
+    "logic"
+   ],
+   "requirements": [
+    "REQ-3"
+   ],
+   "span": [
+    2712,
+    3612
+   ],
+   "operation": "AND",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-AND-001/r1",
+    "ALU-AND-001/r2",
+    "ALU-AND-001/r3",
+    "ALU-AND-001/r4",
+    "ALU-AND-001/r5",
+    "ALU-AND-001/r6"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-OR-001",
+   "title": "Verify OR operation",
+   "tags": [
+    "or",
+    "logic"
+   ],
+   "requirements": [
+    "REQ-4"
+   ],
+   "span": [
+    3612,
+    4509
+   ],
+   "operation": "OR",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-OR-001/r1",
+    "ALU-OR-001/r2",
+    "ALU-OR-001/r3",
+    "ALU-OR-001/r4",
+    "ALU-OR-001/r5",
+    "ALU-OR-001/r6"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-XOR-001",
+   "title": "Verify XOR operation",
+   "tags": [
+    "xor",
+    "logic"
+   ],
+   "requirements": [
+    "REQ-5"
+   ],
+   "span": [
+    4509,
+    5409
+   ],
+   "operation": "XOR",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-XOR-001/r1",
+    "ALU-XOR-001/r2",
+    "ALU-XOR-001/r3",
+    "ALU-XOR-001/r4",
+    "ALU-XOR-001/r5",
+    "ALU-XOR-001/r6"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-SLL-001",
+   "title": "Verify SLL operation",
+   "tags": [
+    "sll",
+    "shift"
+   ],
+   "requirements": [
+    "REQ-6"
+   ],
+   "span": [
+    5409,
+    6330
+   ],
+   "operation": "SLL",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-SLL-001/r1",
+    "ALU-SLL-001/r2",
+    "ALU-SLL-001/r3",
+    "ALU-SLL-001/r4",
+    "ALU-SLL-001/r5",
+    "ALU-SLL-001/r6",
+    "ALU-SLL-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-SRL-001",
+   "title": "Verify SRL operation",
+   "tags": [
+    "srl",
+    "shift"
+   ],
+   "requirements": [
+    "REQ-7"
+   ],
+   "span": [
+    6330,
+    7251
+   ],
+   "operation": "SRL",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-SRL-001/r1",
+    "ALU-SRL-001/r2",
+    "ALU-SRL-001/r3",
+    "ALU-SRL-001/r4",
+    "ALU-SRL-001/r5",
+    "ALU-SRL-001/r6",
+    "ALU-SRL-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-SRA-001",
+   "title": "Verify SRA operation",
+   "tags": [
+    "sra",
+    "shift"
+   ],
+   "requirements": [
+    "REQ-8"
+   ],
+   "span": [
+    7251,
+    8172
+   ],
+   "operation": "SRA",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-SRA-001/r1",
+    "ALU-SRA-001/r2",
+    "ALU-SRA-001/r3",
+    "ALU-SRA-001/r4",
+    "ALU-SRA-001/r5",
+    "ALU-SRA-001/r6",
+    "ALU-SRA-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-SLT-001",
+   "title": "Verify SLT operation (Signed Less Than)",
+   "tags": [
+    "slt",
+    "compare"
+   ],
+   "requirements": [
+    "REQ-9"
+   ],
+   "span": [
+    8172,
+    9173
+   ],
+   "operation": "SLT",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-SLT-001/r1",
+    "ALU-SLT-001/r2",
+    "ALU-SLT-001/r3",
+    "ALU-SLT-001/r4",
+    "ALU-SLT-001/r5",
+    "ALU-SLT-001/r6",
+    "ALU-SLT-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  },
+  {
+   "id": "ALU-SLTU-001",
+   "title": "Verify SLTU operation (Unsigned Less Than)",
+   "tags": [
+    "sltu",
+    "compare"
+   ],
+   "requirements": [
+    "REQ-10"
+   ],
+   "span": [
+    9173,
+    10179
+   ],
+   "operation": "SLTU",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "ALU-SLTU-001/r1",
+    "ALU-SLTU-001/r2",
+    "ALU-SLTU-001/r3",
+    "ALU-SLTU-001/r4",
+    "ALU-SLTU-001/r5",
+    "ALU-SLTU-001/r6",
+    "ALU-SLTU-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "a",
+    "b",
+    "expected_result",
+    "zero_flag",
+    "negative_flag"
+   ]
+  }
+ ],
+ "trace": {
+  "checks": {
+   "ALU-ADD-001/r1": 1,
+   "ALU-ADD-001/r2": 1,
+   "ALU-ADD-001/r3": 1,
+   "ALU-ADD-001/r4": 1,
+   "ALU-ADD-001/r5": 1,
+   "ALU-ADD-001/r6": 1,
+   "ALU-SUB-001/r1": 1,
+   "ALU-SUB-001/r2": 1,
+   "ALU-SUB-001/r3": 1,
+   "ALU-SUB-001/r4": 1,
+   "ALU-SUB-001/r5": 1,
+   "ALU-SUB-001/r6": 1,
+   "ALU-AND-001/r1": 1,
+   "ALU-AND-001/r2": 1,
+   "ALU-AND-001/r3": 1,
+   "ALU-AND-001/r4": 1,
+   "ALU-AND-001/r5": 1,
+   "ALU-AND-001/r6": 1,
+   "ALU-OR-001/r1": 1,
+   "ALU-OR-001/r2": 1,
+   "ALU-OR-001/r3": 1,
+   "ALU-OR-001/r4": 1,
+   "ALU-OR-001/r5": 1,
+   "ALU-OR-001/r6": 1,
+   "ALU-XOR-001/r1": 1,
+   "ALU-XOR-001/r2": 1,
+   "ALU-XOR-001/r3": 1,
+   "ALU-XOR-001/r4": 1,
+   "ALU-XOR-001/r5": 1,
+   "ALU-XOR-001/r6": 1,
+   "ALU-SLL-001/r1": 1,
+   "ALU-SLL-001/r2": 1,
+   "ALU-SLL-001/r3": 1,
+   "ALU-SLL-001/r4": 1,
+   "ALU-SLL-001/r5": 1,
+   "ALU-SLL-001/r6": 1,
+   "ALU-SLL-001/r7": 1,
+   "ALU-SRL-001/r1": 1,
+   "ALU-SRL-001/r2": 1,
+   "ALU-SRL-001/r3": 1,
+   "ALU-SRL-001/r4": 1,
+   "ALU-SRL-001/r5": 1,
+   "ALU-SRL-001/r6": 1,
+   "ALU-SRL-001/r7": 1,
+   "ALU-SRA-001/r1": 1,
+   "ALU-SRA-001/r2": 1,
+   "ALU-SRA-001/r3": 1,
+   "ALU-SRA-001/r4": 1,
+   "ALU-SRA-001/r5": 1,
+   "ALU-SRA-001/r6": 1,
+   "ALU-SRA-001/r7": 1,
+   "ALU-SLT-001/r1": 1,
+   "ALU-SLT-001/r2": 1,
+   "ALU-SLT-001/r3": 1,
+   "ALU-SLT-001/r4": 1,
+   "ALU-SLT-001/r5": 1,
+   "ALU-SLT-001/r6": 1,
+   "ALU-SLT-001/r7": 1,
+   "ALU-SLTU-001/r1": 1,
+   "ALU-SLTU-001/r2": 1,
+   "ALU-SLTU-001/r3": 1,
+   "ALU-SLTU-001/r4": 1,
+   "ALU-SLTU-001/r5": 1,
+   "ALU-SLTU-001/r6": 1,
+   "ALU-SLTU-001/r7": 1
+  },
+  "skipped": {},
+  "generated": [],
+  "detail": {
+   "ALU-ADD-001/r1": [
+    {
+     "test": 1,
+     "port": "result",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0000"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-ADD-001/r2": [
+    {
+     "test": 2,
+     "port": "result",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "0000"
+     },
+     "expected_bdd": 4294967294,
+     "expected_ref": 4294967294,
+     "expected_used": 4294967294,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-ADD-001/r3": [
+    {
+     "test": 3,
+     "port": "result",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "a": 2147483647,
+      "b": 1,
+      "opcode": "0000"
+     },
+     "expected_bdd": 2147483648,
+     "expected_ref": 2147483648,
+     "expected_used": 2147483648,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-ADD-001/r4": [
+    {
+     "test": 4,
+     "port": "result",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 4294967295,
+      "opcode": "0000"
+     },
+     "expected_bdd": 2147483647,
+     "expected_ref": 2147483647,
+     "expected_used": 2147483647,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-ADD-001/r5": [
+    {
+     "test": 5,
+     "port": "result",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "a": 100,
+      "b": 50,
+      "opcode": "0000"
+     },
+     "expected_bdd": 150,
+     "expected_ref": 150,
+     "expected_used": 150,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-ADD-001/r6": [
+    {
+     "test": 6,
+     "port": "result",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "a": 4294967196,
+      "b": 4294967246,
+      "opcode": "0000"
+     },
+     "expected_bdd": 4294967146,
+     "expected_ref": 4294967146,
+     "expected_used": 4294967146,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SUB-001/r1": [
+    {
+     "test": 7,
+     "port": "result",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SUB-001/r2": [
+    {
+     "test": 8,
+     "port": "result",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "0001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SUB-001/r3": [
+    {
+     "test": 9,
+     "port": "result",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "a": 2147483647,
+      "b": 4294967295,
+      "opcode": "0001"
+     },
+     "expected_bdd": 2147483648,
+     "expected_ref": 2147483648,
+     "expected_used": 2147483648,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SUB-001/r4": [
+    {
+     "test": 10,
+     "port": "result",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 1,
+      "opcode": "0001"
+     },
+     "expected_bdd": 2147483647,
+     "expected_ref": 2147483647,
+     "expected_used": 2147483647,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SUB-001/r5": [
+    {
+     "test": 11,
+     "port": "result",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "a": 100,
+      "b": 50,
+      "opcode": "0001"
+     },
+     "expected_bdd": 50,
+     "expected_ref": 50,
+     "expected_used": 50,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SUB-001/r6": [
+    {
+     "test": 12,
+     "port": "result",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "a": 4294967196,
+      "b": 4294967246,
+      "opcode": "0001"
+     },
+     "expected_bdd": 4294967290,
+     "expected_ref": 4294967246,
+     "expected_used": 4294967290,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-AND-001/r1": [
+    {
+     "test": 13,
+     "port": "result",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0010"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-AND-001/r2": [
+    {
+     "test": 14,
+     "port": "result",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "0010"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-AND-001/r3": [
+    {
+     "test": 15,
+     "port": "result",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "a": 0,
+      "b": 4294967295,
+      "opcode": "0010"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-AND-001/r4": [
+    {
+     "test": 16,
+     "port": "result",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "a": 170,
+      "b": 85,
+      "opcode": "0010"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-AND-001/r5": [
+    {
+     "test": 17,
+     "port": "result",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 4294967295,
+      "opcode": "0010"
+     },
+     "expected_bdd": 2147483648,
+     "expected_ref": 2147483648,
+     "expected_used": 2147483648,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-AND-001/r6": [
+    {
+     "test": 18,
+     "port": "result",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "a": 123456789,
+      "b": 987654321,
+      "opcode": "0010"
+     },
+     "expected_bdd": 67108865,
+     "expected_ref": 39471121,
+     "expected_used": 67108865,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-OR-001/r1": [
+    {
+     "test": 19,
+     "port": "result",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0011"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-OR-001/r2": [
+    {
+     "test": 20,
+     "port": "result",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "0011"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-OR-001/r3": [
+    {
+     "test": 21,
+     "port": "result",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "a": 0,
+      "b": 4294967295,
+      "opcode": "0011"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-OR-001/r4": [
+    {
+     "test": 22,
+     "port": "result",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "a": 170,
+      "b": 85,
+      "opcode": "0011"
+     },
+     "expected_bdd": 255,
+     "expected_ref": 255,
+     "expected_used": 255,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-OR-001/r5": [
+    {
+     "test": 23,
+     "port": "result",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 1,
+      "opcode": "0011"
+     },
+     "expected_bdd": 2147483649,
+     "expected_ref": 2147483649,
+     "expected_used": 2147483649,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-OR-001/r6": [
+    {
+     "test": 24,
+     "port": "result",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "a": 123456789,
+      "b": 987654321,
+      "opcode": "0011"
+     },
+     "expected_bdd": 1044012757,
+     "expected_ref": 1071639989,
+     "expected_used": 1044012757,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-XOR-001/r1": [
+    {
+     "test": 25,
+     "port": "result",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0100"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-XOR-001/r2": [
+    {
+     "test": 26,
+     "port": "result",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "0100"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-XOR-001/r3": [
+    {
+     "test": 27,
+     "port": "result",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "a": 0,
+      "b": 4294967295,
+      "opcode": "0100"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-XOR-001/r4": [
+    {
+     "test": 28,
+     "port": "result",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "a": 170,
+      "b": 85,
+      "opcode": "0100"
+     },
+     "expected_bdd": 255,
+     "expected_ref": 255,
+     "expected_used": 255,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-XOR-001/r5": [
+    {
+     "test": 29,
+     "port": "result",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 4294967295,
+      "opcode": "0100"
+     },
+     "expected_bdd": 2147483647,
+     "expected_ref": 2147483647,
+     "expected_used": 2147483647,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-XOR-001/r6": [
+    {
+     "test": 30,
+     "port": "result",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "a": 123456789,
+      "b": 987654321,
+      "opcode": "0100"
+     },
+     "expected_bdd": 976903892,
+     "expected_ref": 1032168868,
+     "expected_used": 976903892,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r1": [
+    {
+     "test": 31,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0101"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r2": [
+    {
+     "test": 32,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 0,
+      "opcode": "0101"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r3": [
+    {
+     "test": 33,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 1,
+      "b": 1,
+      "opcode": "0101"
+     },
+     "expected_bdd": 2,
+     "expected_ref": 2,
+     "expected_used": 2,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r4": [
+    {
+     "test": 34,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 1,
+      "b": 31,
+      "opcode": "0101"
+     },
+     "expected_bdd": 2147483648,
+     "expected_ref": 2147483648,
+     "expected_used": 2147483648,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r5": [
+    {
+     "test": 35,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 1,
+      "b": 32,
+      "opcode": "0101"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r6": [
+    {
+     "test": 36,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 1,
+      "opcode": "0101"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLL-001/r7": [
+    {
+     "test": 37,
+     "port": "result",
+     "width": 32,
+     "operation": "SLL",
+     "stimulus": {
+      "a": 12345,
+      "b": 5,
+      "opcode": "0101"
+     },
+     "expected_bdd": 395040,
+     "expected_ref": 395040,
+     "expected_used": 395040,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r1": [
+    {
+     "test": 38,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0110"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r2": [
+    {
+     "test": 39,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 0,
+      "opcode": "0110"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r3": [
+    {
+     "test": 40,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 1,
+      "opcode": "0110"
+     },
+     "expected_bdd": 2147483647,
+     "expected_ref": 2147483647,
+     "expected_used": 2147483647,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r4": [
+    {
+     "test": 41,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 1,
+      "opcode": "0110"
+     },
+     "expected_bdd": 1073741824,
+     "expected_ref": 1073741824,
+     "expected_used": 1073741824,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r5": [
+    {
+     "test": 42,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 1,
+      "b": 31,
+      "opcode": "0110"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r6": [
+    {
+     "test": 43,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 1,
+      "b": 32,
+      "opcode": "0110"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRL-001/r7": [
+    {
+     "test": 44,
+     "port": "result",
+     "width": 32,
+     "operation": "SRL",
+     "stimulus": {
+      "a": 123456789,
+      "b": 5,
+      "opcode": "0110"
+     },
+     "expected_bdd": 3858024,
+     "expected_ref": 3858024,
+     "expected_used": 3858024,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r1": [
+    {
+     "test": 45,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "0111"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r2": [
+    {
+     "test": 46,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 0,
+      "opcode": "0111"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r3": [
+    {
+     "test": 47,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 1,
+      "opcode": "0111"
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r4": [
+    {
+     "test": 48,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 1,
+      "opcode": "0111"
+     },
+     "expected_bdd": 3221225472,
+     "expected_ref": 3221225472,
+     "expected_used": 3221225472,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r5": [
+    {
+     "test": 49,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 1,
+      "b": 31,
+      "opcode": "0111"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r6": [
+    {
+     "test": 50,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 1,
+      "b": 32,
+      "opcode": "0111"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SRA-001/r7": [
+    {
+     "test": 51,
+     "port": "result",
+     "width": 32,
+     "operation": "SRA",
+     "stimulus": {
+      "a": 123456789,
+      "b": 5,
+      "opcode": "0111"
+     },
+     "expected_bdd": 3858024,
+     "expected_ref": 3858024,
+     "expected_used": 3858024,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r1": [
+    {
+     "test": 52,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "1000"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r2": [
+    {
+     "test": 53,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "1000"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r3": [
+    {
+     "test": 54,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 1,
+      "b": 0,
+      "opcode": "1000"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r4": [
+    {
+     "test": 55,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 0,
+      "b": 1,
+      "opcode": "1000"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r5": [
+    {
+     "test": 56,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 2147483647,
+      "b": 2147483648,
+      "opcode": "1000"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r6": [
+    {
+     "test": 57,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 2147483647,
+      "opcode": "1000"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLT-001/r7": [
+    {
+     "test": 58,
+     "port": "result",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 0,
+      "opcode": "1000"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r1": [
+    {
+     "test": 59,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 0,
+      "b": 0,
+      "opcode": "1001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r2": [
+    {
+     "test": 60,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 4294967295,
+      "opcode": "1001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r3": [
+    {
+     "test": 61,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 1,
+      "b": 0,
+      "opcode": "1001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r4": [
+    {
+     "test": 62,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 0,
+      "b": 1,
+      "opcode": "1001"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r5": [
+    {
+     "test": 63,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 2147483647,
+      "b": 2147483648,
+      "opcode": "1001"
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r6": [
+    {
+     "test": 64,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 2147483648,
+      "b": 2147483647,
+      "opcode": "1001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "ALU-SLTU-001/r7": [
+    {
+     "test": 65,
+     "port": "result",
+     "width": 32,
+     "operation": "SLTU",
+     "stimulus": {
+      "a": 4294967295,
+      "b": 0,
+      "opcode": "1001"
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ]
+  }
+ }
+}
