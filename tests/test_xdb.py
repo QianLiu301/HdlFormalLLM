@@ -1405,6 +1405,149 @@ def test_cpu_repair_scenarios_and_design(cpu_run, db, monkeypatch):
     assert sorted(p['who'] for p in s3['problems']) == ['scenario', 'test']
 
 
+# ================================================================ compile-error repair (D30)
+
+CPU_NOT_COMPILING = CPU_OK.replace('endmodule', "    wire bad_wire;\n    always @(*) bad_wire = 1'b0;\nendmodule", 1)
+
+
+class _ScriptedModel:
+    """Answers the first design prompt with `first`, a repair prompt with `fixed`;
+    keeps every prompt it was given."""
+    def __init__(self, first, fixed):
+        self.first, self.fixed, self.prompts = first, fixed, []
+
+    def _call_api(self, prompt, max_tokens=None, system_prompt=None, sampling=None):
+        self.prompts.append(prompt)
+        code = self.fixed if 'Repair of a previous version' in prompt else self.first
+        return '```verilog\n' + code + '\n```'
+
+
+def _duv_when_stored(db, path, tries=40):
+    import hashlib
+    import time
+    from src import xdb
+    from src.xdb import models as M
+    sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    for _ in range(tries):
+        with xdb.session_scope(db) as s:
+            d = s.scalar(sqlalchemy.select(M.Duv).where(M.Duv.artifact == sha))
+            if d is not None:
+                return {'id': d.id, 'compiles': d.compiles, 'reason': d.reason}
+        time.sleep(0.25)
+    raise AssertionError('the design never reached the database')
+
+
+def test_compile_fix_sends_the_compiler_errors_back(cpu_run, db, monkeypatch):
+    """Step 1 made a design that does not compile: its iverilog errors and its
+    code go back to the model; the new version compiles and is stored as
+    the result of that feedback."""
+    from src import experiment_logger
+    from src import xdb
+    from src.xdb import models as M
+    proj, paths, _ = cpu_run
+    c = _client((proj, paths), db, monkeypatch)
+    import main
+    model = _ScriptedModel(CPU_NOT_COMPILING, CPU_OK)
+    experiment_logger.instrument_class(_ScriptedModel)
+    monkeypatch.setattr(main.CPUGenerator, '_setup_llm', lambda self: model)
+    req = {'module_type': 'cpu', 'llm': 'deepseek', 'bitwidth': 32, 'pipeline_stages': 5,
+           'workflow_mode': 'implementation'}
+    hw1 = c.post('/api/generate-hardware', json=req).get_json()
+    assert hw1['success'] and hw1['duv_compile']['ok'] is False, hw1
+    broken = Path(hw1['filepath']).relative_to(proj).as_posix()
+    first = _duv_when_stored(db, hw1['filepath'])
+    assert first['compiles'] is False
+
+    hw2 = c.post('/api/generate-hardware', json={**req, 'run_id': hw1['run_id'],
+                                                  'compile_fix_of': {'duv_filepath': broken}}).get_json()
+    assert hw2['success'], hw2
+    assert hw2['duv_compile']['ok'] is True and hw2['repair'] is None
+    cf = hw2['compile_fix']
+    assert cf['kind'] == 'compile' and cf['errors'] >= 1 and cf['feedback_id']
+    assert any(ln.startswith('design line ') and 'l-value' in ln for ln in cf['error_lines']), cf
+    prompt = model.prompts[-1]
+    assert 'does not compile with Icarus Verilog' in prompt
+    assert 'iverilog -g2012 reports:' in prompt and 'bad_wire' in prompt      # errors + previous code
+    assert str(proj) not in prompt                                         # no server paths
+    second = _duv_when_stored(db, hw2['filepath'])
+    assert second['compiles'] is True and second['reason'] == f"feedback:{cf['feedback_id']}"
+    with xdb.session_scope(db) as s:
+        fb = s.get(M.Feedback, cf['feedback_id'])
+        assert (fb.subject_type, fb.subject_id, fb.status) == ('duv', first['id'], 'applied')
+        assert fb.proposed['action'] == 'fix_compile_error' and fb.proposed['kind'] == 'compile'
+        assert fb.result_ref == f"duv:{second['id']}"
+
+    # nothing left to fix
+    r = c.post('/api/generate-hardware', json={**req, 'compile_fix_of': {
+        'duv_filepath': Path(hw2['filepath']).relative_to(proj).as_posix()}})
+    assert r.status_code == 400 and r.get_json()['error'] == 'the design compiles: nothing to fix'
+
+
+def test_compile_fix_of_ports_the_testbench_cannot_connect(cpu_run, db, monkeypatch):
+    """The design compiles alone, but its ports are named differently from the
+    ones the testbench connects: the model is given the testbench's interface."""
+    from src import experiment_logger
+    proj, paths, _ = cpu_run
+    c = _client((proj, paths), db, monkeypatch)
+    import main
+    renamed = proj / 'output/dut/cpu_renamed.v'
+    renamed.write_text(CPU_OK.replace('rst_n', 'reset_n'), encoding='utf-8')
+    model = _ScriptedModel(CPU_OK, CPU_OK)
+    experiment_logger.instrument_class(_ScriptedModel)
+    monkeypatch.setattr(main.CPUGenerator, '_setup_llm', lambda self: model)
+    hw = c.post('/api/generate-hardware', json={
+        'module_type': 'cpu', 'llm': 'deepseek', 'bitwidth': 32, 'pipeline_stages': 5,
+        'workflow_mode': 'implementation', 'run_id': 'cpu_run',
+        'compile_fix_of': {'duv_filepath': 'output/dut/cpu_renamed.v',
+                           'testbench_path': paths['testbench']}}).get_json()
+    assert hw['success'], hw
+    assert hw['compile_fix']['kind'] == 'interface'
+    assert hw['compile_fix']['feedback_id'] is None             # this file never came from Step 1
+    assert any('rst_n' in ln for ln in hw['compile_fix']['error_lines']), hw['compile_fix']
+    prompt = model.prompts[-1]
+    assert 'the testbench cannot connect to it' in prompt
+    assert 'The testbench instantiates the design as module `riscv_cpu` with the ports clk, rst_n,' in prompt
+
+    # a design whose ports match: nothing to fix
+    r = c.post('/api/generate-hardware', json={
+        'module_type': 'cpu', 'llm': 'deepseek', 'compile_fix_of': {
+            'duv_filepath': paths['duv'], 'testbench_path': paths['testbench']}})
+    assert r.status_code == 400 and 'nothing to fix' in r.get_json()['error']
+    # paths outside the project are refused
+    r = c.post('/api/generate-hardware', json={
+        'module_type': 'cpu', 'llm': 'deepseek', 'compile_fix_of': {'duv_filepath': '../../etc/passwd'}})
+    assert r.status_code == 400
+
+
+def test_ingestion_retries_a_deadlock_victim():
+    """Two background ingestions of one run can deadlock; PostgreSQL aborts one
+    of them, which runs again. Other database errors are not retried."""
+    from sqlalchemy.exc import OperationalError
+    from src.xdb.ingest import _retry
+
+    class _PgError(Exception):
+        def __init__(self, code):
+            self.pgcode = code
+
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise OperationalError('INSERT', {}, _PgError('40P01'))
+        return 'stored'
+    assert _retry(flaky) == 'stored' and len(calls) == 3
+
+    calls.clear()
+
+    def down():
+        calls.append(1)
+        raise OperationalError('connect', {}, _PgError('08006'))   # connection failure
+    with pytest.raises(OperationalError):
+        _retry(down)
+    assert len(calls) == 1
+
+
 # ================================================================ trial runner (R1)
 
 def test_trial_runner_dry_run(rf_run, db, monkeypatch, tmp_path):
@@ -1440,6 +1583,37 @@ def test_trial_runner_dry_run(rf_run, db, monkeypatch, tmp_path):
     assert (t.out / 'runs.csv').read_text(encoding='utf-8').startswith('llm,design,rep,stage')
     with xdb.session_scope(db) as s:
         assert s.get(M.Session, rec['initial']['session_id']).note == 'trial:pytest'
+
+
+@pytest.mark.parametrize('fault', ['compile', 'interface'])
+def test_trial_runner_fixes_compile_errors(rf_run, db, monkeypatch, tmp_path, fault):
+    """--mock-fault: the first design does not compile (or names its ports
+    differently from the testbench); the runner sends the errors back once and
+    goes on with the fixed design."""
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        import main
+    from src.simulation_runner import WebSimulationRunner
+    from src.xdb import trial as TR
+    proj = tmp_path / 'proj'
+    (proj / 'output').mkdir(parents=True)
+    monkeypatch.setattr(main, 'PROJECT_ROOT', proj)
+    monkeypatch.setattr(main, 'simulation_runner', WebSimulationRunner(project_root=str(proj)))
+    monkeypatch.setenv('DATABASE_URL', db)
+    TR.install_mock()
+    monkeypatch.setattr(TR.MockLLM, 'first_fault', fault)
+    monkeypatch.setattr(TR.MockLLM, '_faulted', set())
+    t = TR.Trial(f'pytest_{fault}', step0=False, repair_rounds=1, out_root=tmp_path / 'trials',
+                 app=main.app, project_root=proj)
+    rec = t.run_one('mock', 'regfile', 1)
+    assert rec['stage'] == 'done' and rec['error'] is None, rec.get('error')
+    fixes = [r for r in rec['rounds'] if r['action'] in ('compile', 'interface')]
+    assert [(r['action'], r['ok']) for r in fixes] == [(fault, True)]
+    assert fixes[0]['errors_sent'] >= 1
+    flat = TR._flat(rec)
+    assert (flat['compile_fixes'], flat['compile_fixes_ok']) == (1, 1)
+    assert rec['initial']['verdicts']['pass'] > 0          # the fixed design was simulated
 
 
 # ================================================================ steps the testbench does not do (D29)

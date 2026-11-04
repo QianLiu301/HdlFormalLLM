@@ -201,6 +201,21 @@ none), `--no-step0`, `--model gemini=gemini-2.5-flash`, `--designs alu`.
 A real run makes about 4–8 model calls (Step 0, design, scenarios, one or two
 design repairs) and stores a few hundred KB in the database.
 
+A design that does not compile, or whose ports the testbench cannot connect,
+is sent back to the model with the compiler's messages (up to `--compile-fix N`
+attempts, default 2; 0 = off), as the buttons "Fix the compile error with …"
+(Step 1) and "Ask … to fix the design" (Step 4) do on the page. To see that
+path without an API key: `--llms mock --mock-fault compile` (or `interface`).
+
+To try the buttons in the browser without an API key, start the website with
+the mock model instead of `python main.py`, choose "Mock (no API key)" in
+Steps 0–2 (`compile`: the first design of each type does not compile;
+`interface`: its ports differ from the testbench's):
+
+```bash
+python tests/ui/mock_server.py compile
+```
+
 To share a trial (results and every generated file) through git:
 
 ```bash

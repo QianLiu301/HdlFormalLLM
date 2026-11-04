@@ -688,6 +688,88 @@ def _duv_compile_check(path):
     return {'ok': False, 'error': first}
 
 
+def _compile_report(duv_path, tb_path=None, limit=15):
+    """Every error line iverilog -g2012 reports for a design (compiled with the
+    testbench when given), file paths replaced by "design" / "testbench".
+    Returns (lines, error); [] when it compiles."""
+    import re
+    import subprocess
+    import tempfile
+    files = ([str(tb_path)] if tb_path else []) + [str(duv_path)]
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            r = subprocess.run(['iverilog', '-g2012', '-o', str(Path(tmp) / 'a.out'), *files],
+                               capture_output=True, text=True, encoding='utf-8',
+                               errors='replace', timeout=60)
+    except FileNotFoundError:
+        return None, 'iverilog is not installed on the server'
+    if r.returncode == 0:
+        return [], None
+    out = []
+    for ln in (r.stderr or '').splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith('I give up'):
+            continue
+        m = re.match(r'^(.*?):(\d+):\s*(.*)$', ln)
+        if m:
+            where = 'testbench' if tb_path and Path(m.group(1)).name == Path(tb_path).name else 'design'
+            ln = f'{where} line {m.group(2)}: {m.group(3)}'
+        out.append(ln)
+    return out[:limit] or [(r.stderr or 'compilation failed').strip()[:300]], None
+
+
+def _testbench_interface(tb_path):
+    """(module name, port names) the testbench instantiates the design with."""
+    import re
+    text = Path(tb_path).read_text(encoding='utf-8', errors='replace')
+    m = re.search(r'^\s*(\w+)\s+(?:#\s*\([^;]*?\)\s*)?dut\s*\((.*?)\);', text, re.S | re.M)
+    if not m:
+        return None, []
+    return m.group(1), re.findall(r'\.(\w+)\s*\(', m.group(2))
+
+
+def _compile_fix_feedback(spec):
+    """What goes back to the model when a design does not compile, or when the
+    testbench cannot connect to it. Returns (fix, error)."""
+    duv_path, err = run_report.safe_path((spec or {}).get('duv_filepath'), PROJECT_ROOT)
+    if err or not duv_path:
+        return None, err or 'no design file given'
+    tb_path = None
+    if spec.get('testbench_path'):
+        tb_path, err = run_report.safe_path(spec['testbench_path'], PROJECT_ROOT)
+        if err:
+            return None, err
+    errors, err = _compile_report(duv_path)
+    if err:
+        return None, err
+    kind = 'compile'
+    text = ''
+    if not errors and tb_path:
+        errors, err = _compile_report(duv_path, tb_path)
+        if err:
+            return None, err
+        kind = 'interface'
+        mod, ports = _testbench_interface(tb_path)
+        if mod:
+            text = (f"The testbench instantiates the design as module `{mod}` with the ports "
+                    f"{', '.join(ports)}.\n")
+    if not errors:
+        return None, ('the design compiles and the testbench connects to it: nothing to fix' if tb_path
+                      else 'the design compiles: nothing to fix')
+    text += 'iverilog -g2012 reports:\n' + '\n'.join(f'- {e}' for e in errors)
+    return {'kind': kind, 'text': text, 'errors': errors,
+            'previous': duv_path.read_text(encoding='utf-8', errors='replace'),
+            'duv_path': str(duv_path)}, None
+
+
+def _attach_fix(generator, fix):
+    """Hand the feedback of a repair (simulation failures or compiler errors) to a generator."""
+    if fix:
+        generator.repair_feedback = fix['text']
+        generator.repair_previous = fix.get('previous')
+        generator.repair_kind = fix.get('kind', 'simulation')
+
+
 def _chain_start(data, step):
     """本次调用是否为依赖链起点（据此决定新建还是继承 run_id）。
 
@@ -1470,7 +1552,7 @@ def generate_hardware():
     # M4 repair: regenerate the design from the failures of its last simulation
     # (src/xdb/repair.py). The new design continues the same run, so the
     # database stores it as the next version of the design, reason feedback:<id>.
-    repair, repair_fb_id = None, None
+    repair, repair_fb_id, fix = None, None, None
     if data.get('repair_of'):
         from src.xdb import repair as XR
         if module_type not in XR.DESIGN_REPAIR_TYPES:
@@ -1488,14 +1570,29 @@ def generate_hardware():
         if repair.get('run_id'):
             data = {**data, 'run_id': repair['run_id']}
         data['_version_reason'] = f'feedback:{repair_fb_id}'
+        fix = {'text': repair['text'], 'previous': repair.get('previous_verilog'), 'kind': 'simulation'}
+    elif data.get('compile_fix_of'):
+        # The design does not compile, or the testbench cannot connect to it: the
+        # compiler's errors and the code go back to the model (works without the
+        # database; with it, the fix is recorded like the other repairs).
+        fix, cerr = _compile_fix_feedback(data['compile_fix_of'])
+        if cerr:
+            return jsonify({'success': False, 'error': cerr}), 400
+        if xdb.enabled():
+            from src.xdb import repair as XR
+            repair_fb_id = XR.open_compile_feedback(fix, llm_name)
+        if repair_fb_id:
+            data = {**data, '_version_reason': f'feedback:{repair_fb_id}'}
 
     # impl-first 下 DUV 是依赖链起点，新建 run_id；spec-first 下起点是 BDD，
     # 这里改为继承前端传来的 run_id（详见 _chain_start）。
     # 与流式端点一样支持 model 覆盖（对 MODEL_OVERRIDE_PROVIDERS 生效）
     run_id, _ctx = _web_ctx(data, 'web_duv_generation', module_type,
-                            new_run=_chain_start(data, 'duv') and not repair, model_used=True)
+                            new_run=_chain_start(data, 'duv') and not fix, model_used=True)
     if repair_fb_id:
         _ctx['extra']['repair_feedback_id'] = repair_fb_id
+    if fix:
+        _ctx['extra']['repair_kind'] = fix['kind']
     _ctx['extra']['requirements_file'] = data.get('requirements_filepath') if decisions else None
     # 解释里要说明场景/设计是用哪版 prompt 生成的
     _ctx['extra']['prompt_version'] = prompt_version
@@ -1532,9 +1629,7 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
-                if repair:
-                    generator.repair_feedback = repair['text']
-                    generator.repair_previous = repair.get('previous_verilog')
+                _attach_fix(generator, fix)
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_alu(bitwidth=bitwidth, module_name='alu')
 
@@ -1553,6 +1648,7 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
+                _attach_fix(generator, fix)
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_counter(bitwidth=bitwidth, module_name='counter')
 
@@ -1572,9 +1668,7 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
-                if repair:
-                    generator.repair_feedback = repair['text']
-                    generator.repair_previous = repair.get('previous_verilog')
+                _attach_fix(generator, fix)
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_regfile(bitwidth=bitwidth, depth=depth, module_name='regfile')
 
@@ -1594,9 +1688,7 @@ def generate_hardware():
                 generator.prompt_version = prompt_version
                 generator.prompt_override = prompt_override
                 generator.system_override = system_override
-                if repair:
-                    generator.repair_feedback = repair['text']
-                    generator.repair_previous = repair.get('previous_verilog')
+                _attach_fix(generator, fix)
                 _apply_model_override(generator, llm_name, model)
                 hw_path = generator.generate_cpu(bitwidth=32, pipeline_stages=pipeline_stages, module_name='riscv_cpu')
 
@@ -1644,6 +1736,8 @@ def generate_hardware():
             'success': True,
             'repair': ({'feedback_id': repair_fb_id, 'failures': repair['count'],
                         'operations': repair['operations']} if repair else None),
+            'compile_fix': ({'feedback_id': repair_fb_id, 'kind': fix['kind'], 'errors': len(fix['errors']),
+                             'error_lines': fix['errors'][:5]} if fix and not repair else None),
             'duv_compile': duv_compile,
             'filename': hw_path_obj.name,
             'preview': content[:1000] + ('...' if len(content) > 1000 else ''),

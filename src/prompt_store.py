@@ -188,20 +188,39 @@ def decisions_block(record: Optional[dict]) -> str:
     return "\n".join(lines)
 
 
-def repair_feedback_block(feedback: Optional[str], previous: Optional[str] = None) -> str:
-    """Appended to the design prompt when the design is regenerated from the
-    failures of its last simulation (src/xdb/repair.design_feedback).
+_REPAIR_INTRO = {
+    # failures of the last simulation, judged by the reference model
+    'simulation': "A previous version of this design was simulated and made the errors "
+                  "listed below. Write a corrected version: fix these errors, keep what "
+                  "was correct, and keep the module name, the ports, their order and "
+                  "their widths exactly as they are.",
+    # the design alone does not compile
+    'compile': "A previous version of this design does not compile with Icarus Verilog "
+               "(iverilog -g2012). The compiler reported the errors listed below. Write a "
+               "corrected version: fix every error without changing what the design does, "
+               "and keep the module name, the ports, their order and their widths exactly "
+               "as they are. Use Verilog-2001 only.",
+    # the design compiles, but the testbench cannot connect to it
+    'interface': "A previous version of this design compiles, but the testbench cannot "
+                 "connect to it: its ports do not match the interface the testbench uses "
+                 "(listed below). Write a corrected version whose module name and port names "
+                 "are exactly the ones listed, keeping what the design does.",
+}
 
-    The failures are the reference model's verdicts, not the scenarios' values,
-    so a wrong scenario never turns into a design change. Empty feedback -> "".
+
+def repair_feedback_block(feedback: Optional[str], previous: Optional[str] = None,
+                          kind: str = 'simulation') -> str:
+    """Appended to the design prompt when the design is regenerated with
+    feedback: the failures of its last simulation (src/xdb/repair.design_feedback,
+    kind 'simulation'; the reference model's verdicts, so a wrong scenario never
+    turns into a design change), or the compiler's errors (kind 'compile', or
+    'interface' when the testbench could not connect to the design).
+    Empty feedback -> "".
     """
     if not (feedback or '').strip():
         return ""
     lines = ["", "", "IMPORTANT - Repair of a previous version:",
-             "A previous version of this design was simulated and made the errors "
-             "listed below. Write a corrected version: fix these errors, keep what "
-             "was correct, and keep the module name, the ports, their order and "
-             "their widths exactly as they are.", "", feedback.strip()]
+             _REPAIR_INTRO.get(kind, _REPAIR_INTRO['simulation']), "", feedback.strip()]
     if (previous or '').strip():
         lines += ["", "The previous version:", "```verilog", previous.strip(), "```"]
     lines += ["", "Return the complete corrected module.", ""]

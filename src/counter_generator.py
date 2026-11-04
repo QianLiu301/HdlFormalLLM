@@ -149,6 +149,12 @@ class CounterGenerator:
             prompt += _prompt_store.decisions_block(self.decisions)
             print(f"📌 Confirmed decisions appended to prompt "
                   f"({len(self.decisions.get('decisions') or [])} decisions)")
+        # repair: the failures of the last simulation, or the compiler's errors
+        if getattr(self, 'repair_feedback', None):
+            prompt += _prompt_store.repair_feedback_block(self.repair_feedback,
+                                                          getattr(self, 'repair_previous', None),
+                                                          getattr(self, 'repair_kind', 'simulation'))
+            print(f"🔁 Repair feedback appended to prompt ({len(self.repair_feedback)} chars)")
 
         if self.debug:
             print(f"\n📝 Prompt preview:")
@@ -644,6 +650,11 @@ Start with `module` and end with `endmodule`.
         """Save Counter to file"""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # two designs saved within one second (e.g. a quick compile fix) must
+        # not overwrite each other: the earlier version is kept
+        stamp, n = timestamp, 2
+        while (self.output_dir / f"{module_name}_{timestamp}.v").exists():
+            timestamp, n = f"{stamp}_{n}", n + 1
         filename = f"{module_name}_{timestamp}.v"
 
         modes_str = ', '.join(modes).upper()

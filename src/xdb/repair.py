@@ -464,3 +464,20 @@ def available(s, run_id: int, module_type: Optional[str]) -> Dict:
             'design_regeneration': (module_type or '') in DESIGN_REPAIR_TYPES,
             'feature_reason': feat.reason if feat else None,
             'duv_reason': duv.reason if duv else None}
+
+
+def open_compile_feedback(fix: Dict, llm: Optional[str], url=None) -> Optional[int]:
+    """Record that a design is regenerated from its compiler errors (subject: the
+    stored design version). None when that design is not in the database."""
+    sha = hashlib.sha256(Path(fix['duv_path']).read_bytes()).hexdigest()
+    with xdb.session_scope(url) as s:
+        duv = s.scalar(select(M.Duv).where(M.Duv.artifact == sha).order_by(M.Duv.id.desc()).limit(1))
+        if duv is None:
+            return None
+        row = M.Feedback(subject_type='duv', subject_id=duv.id, kind='correction', body=fix['text'],
+                         proposed={'action': 'fix_compile_error', 'kind': fix['kind'], 'llm': llm,
+                                   'errors': fix['errors']},
+                         status='open')
+        s.add(row)
+        s.flush()
+        return row.id
