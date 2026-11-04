@@ -1,0 +1,13 @@
+llm,design,rep,stage,error,seconds,step0_ok,duv_compiles,test_count,skipped_no_expected,scenarios_unmapped,steps_mapped,steps_unmapped,not_tested,initial_pass,initial_design_wrong,initial_scenario_wrong,initial_both_wrong,initial_consistent_wrong,initial_undecided,final_pass,final_design_wrong,final_scenario_wrong,final_both_wrong,final_consistent_wrong,final_undecided,initial_all_clear,final_all_clear,scenario_repairs,design_repairs,repair_failures,llm_calls,prompt_chars,response_chars,llm_seconds
+deepseek,alu,1,done,,111.1,True,True,65,0,0,64,0,0,64,0,1,0,0,0,65,0,0,0,0,0,False,True,1,0,0,3,19567,18361,58.9
+deepseek,alu,2,done,,96.8,True,True,57,0,0,64,0,0,57,0,0,0,0,0,57,0,0,0,0,0,True,True,0,0,0,3,19237,19274,70.4
+deepseek,regfile,1,done,,87.5,True,True,70,0,0,41,21,0,41,0,5,0,0,0,46,0,0,0,0,0,False,True,1,0,0,3,15233,8688,71.6
+deepseek,regfile,2,done,,93.0,True,True,15,0,0,11,5,0,0,0,0,0,0,0,0,0,0,0,0,0,True,True,0,0,0,3,14853,4440,88.7
+deepseek,cpu,1,done,,294.8,True,True,66,6,0,47,1,6,61,5,0,0,0,0,61,5,0,0,0,0,False,False,0,1,1,4,54447,30593,287.2
+deepseek,cpu,2,duv,design does not compile,162.2,True,False,,,,,,,,,,,,,,,,,,,,,0,0,0,2,16061,15394,162.1
+gemini,alu,1,done,,136.8,True,True,65,0,0,72,0,0,59,2,4,0,0,0,65,0,0,0,0,0,False,True,1,1,0,4,31018,21180,61.8
+gemini,alu,2,done,,66.7,True,True,12,0,0,78,1,0,12,0,0,0,0,0,12,0,0,0,0,0,True,True,0,0,0,3,20479,20759,50.8
+gemini,regfile,1,done,,58.6,True,True,113,0,0,53,8,7,62,0,6,0,0,0,68,0,0,0,0,0,False,True,1,0,0,3,14781,11495,40.7
+gemini,regfile,2,done,,51.1,True,True,54,0,0,36,12,0,32,0,4,0,0,0,36,0,0,0,0,0,False,True,1,0,0,3,15597,9067,37.6
+gemini,cpu,1,duv,design does not compile,51.5,True,False,,,,,,,,,,,,,,,,,,,,,0,0,0,2,18026,23136,51.4
+gemini,cpu,2,duv,design does not compile,49.8,True,False,,,,,,,,,,,,,,,,,,,,,0,0,0,2,16895,21094,49.8
