@@ -145,8 +145,12 @@ M5b done (D28, CPU: `library.cpu_operands`/`cpu_reference` judge each row as
 executed — R replaces the testbench's nominal value at ingestion; notes
 (same register twice, x0) vs. issues (scenario: unset/mismatched registers;
 testbench: offsets, SW-as-register, x29/x30) → verdict undecided; branches
-as taken 1/0; `stage_run.py cpu`). Known testbench-generator bugs (SW rows
-with rd, ignored offsets) are for a master-side fix. Next: counter, M6. Product output (explanations, UI text,
+as taken 1/0; `stage_run.py cpu`). Template testbench fixes (CPU stores with
+an rd column, load/store offsets, register/column mismatches, x29/x30, memory
+conflicts; ALU/counter rows without expected value use the reference instead
+of 0) live on the master-based branch `claude/fix-testbench-generator`
+(includes 3ab7993), merged here; `tests/test_template_testbenches.py`.
+Next: counter, M6. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
 into master.

@@ -1534,6 +1534,19 @@ class TestbenchGenerator:
             f"_generate_testbench_content: no template for module_type "
             f"{module_type!r} (generate_single should have rejected it)")
 
+    # 期望值列：模型给的列名并不统一（Expected_Result / Expected / Result /
+    # Output ...，表头已转小写）。此前只认前两种，其余一律当 0。顺序保持
+    # expected_result、result 在前，已能识别的文件生成结果不变。
+    _ALU_EXPECTED_KEYS = ('expected_result', 'result', 'expected', 'expected_output',
+                          'expected_value', 'output', 'out')
+
+    @classmethod
+    def _alu_expected(cls, scenario: Dict):
+        for k in cls._ALU_EXPECTED_KEYS:
+            if k in scenario:
+                return scenario[k]
+        return None
+
     def _generate_alu_testbench(
             self,
             spec: Dict,
@@ -1635,11 +1648,11 @@ class TestbenchGenerator:
 
         # Generate test cases
         trace = self._new_trace()
+        row_stats = {'expected_from_reference': 0, 'skipped_no_expected': 0}
         for i, scenario in enumerate(scenarios, 1):
-            tid = self._trace_tag(trace, scenario)
             a_val = scenario.get('a', scenario.get('A', 0))
             b_val = scenario.get('b', scenario.get('B', 0))
-            expected = scenario.get('expected_result', scenario.get('result', 0))
+            expected = self._alu_expected(scenario)
 
             max_val = (1 << bitwidth) - 1
             op_name = scenario.get('operation', 'ADD').upper()
@@ -1647,10 +1660,22 @@ class TestbenchGenerator:
             # oracle 的来源是受控变量，见 _reference_result 的说明。
             # 'bdd'  —— 用 BDD 写的期望值（默认）
             # 'spec' —— 由本生成器按规格重算
-            if oracle_source == 'spec':
+            #
+            # BDD 没写期望值时，此前按 0 比较：x & 0 = 0 之类的行在 golden 上
+            # 照样通过，场景看起来测过了，其实什么都没测。现在与 regfile / CPU
+            # 模板一致，改用参考模型；连参考模型也算不出的行不再生成断言。
+            if oracle_source == 'spec' or expected is None:
                 ref = self._reference_result(op_name, a_val, b_val, bitwidth)
                 if ref is not None:
+                    if expected is None:
+                        row_stats['expected_from_reference'] += 1
                     expected = ref
+            if expected is None:
+                row_stats['skipped_no_expected'] += 1
+                self._trace_skip(trace, scenario, 'the scenario states no expected result, and the '
+                                                  'operation has no reference model')
+                continue
+            tid = self._trace_tag(trace, scenario)
 
             # Get operation and convert to opcode
             op = scenario.get('opcode', scenario.get('operation', 'ADD'))
@@ -1684,7 +1709,7 @@ class TestbenchGenerator:
             exp_str = self._format_verilog_value(expected, bitwidth)
 
             ai, bi = self._as_int(a_val), self._as_int(b_val)
-            bdd_exp = self._as_int(scenario.get('expected_result', scenario.get('result')))
+            bdd_exp = self._as_int(self._alu_expected(scenario))
             ref_exp = (self._reference_result(op_name, ai, bi, bitwidth)
                        if ai is not None and bi is not None else None)
             used = self._as_int(expected)
@@ -1697,7 +1722,9 @@ class TestbenchGenerator:
                 expected_bdd=bdd_exp & max_val if bdd_exp is not None else None,
                 expected_ref=ref_exp,
                 expected_used=used & max_val if used is not None else None,
-                oracle=oracle_source if oracle_source == 'spec' and ref_exp is not None else 'bdd')
+                # 场景没写期望值时比较的是参考模型的值
+                oracle='spec' if ref_exp is not None and (oracle_source == 'spec' or bdd_exp is None)
+                else 'bdd')
 
             lines.append(f"        // Test {i}{tid}")
             lines.append(f"        a = {a_str};")
@@ -1715,6 +1742,8 @@ class TestbenchGenerator:
             lines.append(f"        end")
             lines.append("")
         quality_analysis['trace'] = trace
+
+        quality_analysis['alu_rows'] = row_stats
 
         # Summary
         lines.append(f"        // Summary")
@@ -1864,10 +1893,13 @@ class TestbenchGenerator:
                            scenario.get('initial',
                            scenario.get('value', 0)))),
                 'cycles': scenario.get('cycles', scenario.get('Cycles', 1)),
-                'expected': scenario.get('expected_value', scenario.get('Expected_Value',
-                           scenario.get('expected', 0))),
                 '_bdd_id': scenario.get('_bdd_id'),
             }
+            # 没写期望值时不再填 0：下面各模式按 initial ± cycles 自己算
+            exp = next((scenario[k] for k in ('expected_value', 'Expected_Value', 'expected')
+                        if k in scenario), None)
+            if exp is not None:
+                test_case['expected'] = exp
 
             if mode_str in ['0', '00', 'UP', 'up']:
                 up_tests.append(test_case)
@@ -2316,6 +2348,34 @@ class TestbenchGenerator:
         return {'beq': a == b, 'bne': a != b,
                 'blt': s(a) < s(b), 'bge': s(a) >= s(b)}.get(mnem)
 
+    @staticmethod
+    def _cpu_instruction_regs(text: str) -> Optional[Dict]:
+        """指令文本里实际读写的寄存器与访存偏移：{'rd', 'rs1', 'rs2', 'offset'}。
+        认不出的指令（JAL 等模板不支持的）返回 None，不做寄存器核对。"""
+        s = re.sub(r'[#;].*', '', text or '').strip().lower()
+        m = re.match(r'^([a-z]+)\s+(.*)$', s)
+        if not m:
+            return None
+        op, args = m.group(1), [a.strip() for a in m.group(2).split(',') if a.strip()]
+        reg = lambda a: int(a[1:]) if re.fullmatch(r'x\d+', a) else None
+        try:
+            if op in ('lw', 'sw') and len(args) == 2:
+                mm = re.match(r'^(-?(?:0x)?[0-9a-f]+)\s*\(\s*x(\d+)\s*\)$', args[1])
+                if not mm:
+                    return None
+                off, base = int(mm.group(1), 0), int(mm.group(2))
+                return ({'rd': reg(args[0]), 'rs1': base, 'rs2': None, 'offset': off} if op == 'lw'
+                        else {'rd': None, 'rs1': base, 'rs2': reg(args[0]), 'offset': off})
+            if op in ('beq', 'bne', 'blt', 'bge') and len(args) == 3:
+                return {'rd': None, 'rs1': reg(args[0]), 'rs2': reg(args[1]), 'offset': None}
+            if op in ('addi', 'andi', 'ori', 'xori', 'slti') and len(args) == 3:
+                return {'rd': reg(args[0]), 'rs1': reg(args[1]), 'rs2': None, 'offset': None}
+            if op in ('add', 'sub', 'and', 'or', 'xor', 'slt') and len(args) == 3:
+                return {'rd': reg(args[0]), 'rs1': reg(args[1]), 'rs2': reg(args[2]), 'offset': None}
+        except ValueError:
+            return None
+        return None
+
     def _generate_cpu_testbench(
             self,
             spec: Dict,
@@ -2379,8 +2439,22 @@ class TestbenchGenerator:
         checks: List[Dict] = []      # (slot, expected, label)
         stats = {'arith': 0, 'memory': 0, 'branch': 0,
                  'skipped_unparsable': 0, 'skipped_unsupported': 0,
-                 'skipped_imm_too_large': 0}
+                 'skipped_imm_too_large': 0, 'skipped_register_mismatch': 0,
+                 'skipped_reserved_register': 0, 'skipped_bad_address': 0,
+                 'skipped_memory_conflict': 0}
         dmem_init: List[Tuple[int, int]] = []
+        # 数据内存的每个字被哪一行用过：('lw', 初值) 或 ('sw',)。结果在整段
+        # 程序跑完后才读，所以同一地址被两行写、或先被写再被读，前一行的检查
+        # 看到的就不是它自己的结果
+        mem_use: Dict[int, Tuple] = {}
+
+        def mem_word(addr: int, sc: Dict) -> Optional[int]:
+            """字地址；未对齐、或落在结果槽位区的地址返回 None（该行跳过）。"""
+            addr &= 0xFFF                     # testbench 的 dmem 按 addr[11:2] 寻址
+            if addr & 3 or RESULT_BASE <= addr < RESULT_BASE + 4 * len(scenarios):
+                skip(sc, 'skipped_bad_address')
+                return None
+            return addr // 4
 
         trace = self._new_trace()
         _SKIP_REASON = {
@@ -2389,6 +2463,13 @@ class TestbenchGenerator:
                                      '(-2048..2047); the spec has no LUI',
             'skipped_unsupported': 'instruction/column combination not '
                                    'supported by the CPU template',
+            'skipped_register_mismatch': 'the instruction uses other registers than the '
+                                         'rs1/rs2/rd columns',
+            'skipped_reserved_register': 'it uses x29 or x30, which the testbench needs for itself',
+            'skipped_bad_address': "the memory address is not word-aligned or lies in the "
+                                   "testbench's result area",
+            'skipped_memory_conflict': 'another example uses the same memory word, and results '
+                                       'are read after the whole program has run',
         }
 
         def skip(sc, key):
@@ -2435,6 +2516,23 @@ class TestbenchGenerator:
                 skip(sc, 'skipped_imm_too_large')
                 continue
 
+            # 指令实际读写的寄存器必须就是各列预置 / 观测的那些：列写 rs1=x1、
+            # 指令却是 add x3, x4, x5 时，被测指令读的是没预置过的寄存器，存出去
+            # 的也可能不是它写的那个——这一行测的是别的东西。x29/x30 留给
+            # testbench 自己用（marker、结果地址）。
+            regs = self._cpu_instruction_regs(text)
+            if regs is not None:
+                used = {r for r in (regs['rd'], regs['rs1'], regs['rs2']) if r is not None}
+                if (used | {r for r in (rs1, rs2, rd) if r is not None}) & {29, TMP_ADDR_REG}:
+                    skip(sc, 'skipped_reserved_register')
+                    continue
+                if ((regs['rs1'] is not None and regs['rs1'] != rs1)
+                        or (regs['rs2'] is not None and regs['rs2'] != rs2)
+                        or (regs['rd'] is not None and rd is not None and regs['rd'] != rd)):
+                    skip(sc, 'skipped_register_mismatch')
+                    continue
+            offset = (regs or {}).get('offset') or 0
+
             # ---- 分支：让它跳过后面那条 store ----
             if mnem in ('beq', 'bne', 'blt', 'bge'):
                 taken = sc.get('taken')
@@ -2476,24 +2574,37 @@ class TestbenchGenerator:
                                    oracle='spec' if (oracle_source == 'spec' or taken is None) else 'bdd')
                 continue
 
+            # ---- sw：结果直接落在 rs1 + offset 指向的地址 ----
+            # 按助记符判断，不看 rd 列：prompt 自己的格式里 store 行写 rd = 0，
+            # 此前因此走了「存寄存器」的路径，检查的是 x0，正确的 CPU 也必然失败
+            if mnem == 'sw':
+                if v1 is None or v2 is None:
+                    skip(sc, 'skipped_unsupported')
+                    continue
+                word = mem_word(v1 + offset, sc)
+                if word is None:
+                    continue
+                if mem_use.get(word, ('',))[0] == 'sw':
+                    skip(sc, 'skipped_memory_conflict')
+                    continue
+                mem_use[word] = ('sw',)
+                words += pre + [NOP, NOP, NOP]
+                words.append(encoded)
+                words += [NOP, NOP, NOP]
+                exp = _int(sc.get('expected'))
+                if oracle_source == 'spec' or exp is None:
+                    exp = v2
+                checks.append({'tid': self._trace_tag(trace, sc), 'slot': word, 'expected': exp,
+                               'label': text.strip()})
+                stats['memory'] += 1
+                self._trace_detail(trace, sc, port='mem', width=bitwidth, operation='SW',
+                                   stimulus={**stim, 'path': 'memory', 'offset_applied': True},
+                                   expected_bdd=b_exp, expected_ref=v2, expected_used=exp & M32,
+                                   oracle='bdd' if (oracle_source != 'spec' and b_exp is not None) else 'spec')
+                continue
+
             # ---- 写寄存器的指令：SW 出去再读 ----
             if rd is None:
-                # sw：结果直接落在 rs1_value 指向的地址
-                if mnem == 'sw' and v1 is not None and v2 is not None:
-                    words += pre + [NOP, NOP, NOP]
-                    words.append(encoded)
-                    words += [NOP, NOP, NOP]
-                    exp = _int(sc.get('expected'))
-                    if oracle_source == 'spec' or exp is None:
-                        exp = v2
-                    checks.append({'tid': self._trace_tag(trace, sc), 'slot': (v1 & 0x3FF) // 4, 'expected': exp,
-                                   'label': text.strip()})
-                    stats['memory'] += 1
-                    self._trace_detail(trace, sc, port='mem', width=bitwidth, operation='SW',
-                                       stimulus={**stim, 'path': 'memory'},
-                                       expected_bdd=b_exp, expected_ref=v2, expected_used=exp & M32,
-                                       oracle='bdd' if (oracle_source != 'spec' and b_exp is not None) else 'spec')
-                    continue
                 skip(sc, 'skipped_unsupported')
                 continue
 
@@ -2508,7 +2619,14 @@ class TestbenchGenerator:
                 if v1 is None or mv is None:
                     skip(sc, 'skipped_unsupported')
                     continue
-                dmem_init.append(((v1 & 0x3FF) // 4, mv))
+                word = mem_word(v1 + offset, sc)   # 此前忽略了 offset
+                if word is None:
+                    continue
+                if word in mem_use and mem_use[word] != ('lw', mv):
+                    skip(sc, 'skipped_memory_conflict')
+                    continue
+                mem_use[word] = ('lw', mv)
+                dmem_init.append((word, mv))
                 if oracle_source == 'spec' or exp is None:
                     exp = mv
                 stats['memory'] += 1
@@ -2540,7 +2658,8 @@ class TestbenchGenerator:
             nominal = (_int(sc.get('mem_value')) if mnem == 'lw'
                        else self._rv32i_reference(mnem, v1 or 0, v2 or 0, imm))
             self._trace_detail(trace, sc, port='rd', width=bitwidth, operation=mnem.upper(),
-                               stimulus={**stim, 'path': 'register', 'imm': imm},
+                               stimulus={**stim, 'path': 'register', 'imm': imm,
+                                         **({'offset_applied': True} if mnem == 'lw' else {})},
                                expected_bdd=b_exp, expected_ref=nominal, expected_used=exp & M32,
                                oracle='bdd' if (oracle_source != 'spec' and b_exp is not None) else 'spec')
 

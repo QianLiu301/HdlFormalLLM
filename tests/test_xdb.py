@@ -1370,9 +1370,10 @@ def test_regfile_repair_scenarios_and_design(rf_run, db, monkeypatch):
 # Every Examples row runs as its own short program (ADDI loads the operands, the
 # instruction runs, SW stores the result). CPU_FEATURE has: two plain scenario
 # mistakes (SUB 10-30 expects 20; BLT -5<3 expects "no"), a row that gives x1
-# two values, a row that writes x0, an LW with an offset and a prompt-format SW
-# row (both beyond what the testbench can check). CPU_BUGGY compares SLT/SLTI
-# unsigned.
+# two values, a row that writes x0, a row whose instruction writes another
+# register than its rd column (the testbench skips it), an LW with an offset and
+# a prompt-format SW row (both checked correctly since the template fix).
+# CPU_BUGGY compares SLT/SLTI unsigned.
 
 CPU_FEATURE = """Feature: RISC-V CPU Verification (5-stage pipeline)
   As a hardware verification engineer
@@ -1397,6 +1398,7 @@ CPU_FEATURE = """Feature: RISC-V CPU Verification (5-stage pipeline)
       | addi x3, x1, 100 | 1   | 50        | 0   | 0         | 3  | 150      |
       | add x3, x1, x1   | 1   | 5         | 1   | 7         | 3  | 12       |
       | addi x0, x1, 5   | 1   | 10        | 0   | 0         | 0  | 15       |
+      | add x5, x1, x2   | 1   | 10        | 2   | 20        | 3  | 30       |
 
   @logical @req_1
   Scenario Outline: Bitwise instructions
@@ -1606,7 +1608,8 @@ def test_cpu_reference_judges_a_row_as_executed():
     assert x0['value'] == 0 and [n['kind'] for n in x0['notes']] == ['x0_dest']
     assert ref(row('add x3, x1, x0', rs2=0, rs2_value=5))['notes'][0]['kind'] == 'x0_value'
     kinds = lambda r: [(i['kind'], i['fault']) for i in r['issues']]
-    assert kinds(ref(row('lw x3, 4(x1)', mem_value=5))) == [('offset', 'test')]
+    assert kinds(ref(row('lw x3, 4(x1)', mem_value=5))) == [('offset', 'test')]      # testbench before the fix
+    assert ref(row('lw x3, 4(x1)', mem_value=5, offset_applied=True))['issues'] == []
     assert kinds(ref(row('sw x2, 0(x1)', rd=0))) == [('store_checked_as_register', 'test')]
     assert ref(row('sw x2, 0(x1)', rd=None, path='memory'))['value'] == 20
     assert kinds(ref(row('add x5, x1, x2'))) == [('rd_mismatch', 'scenario')]
@@ -1633,7 +1636,7 @@ def test_cpu_steps_are_all_mapped(cpu_run, db):
 def test_cpu_verdicts_problems_and_requirements(cpu_run, db):
     from src.xdb.explain import summarize_run
     proj, paths, res = cpu_run
-    assert res['verdicts'] == {'pass': 11, 'scenario_wrong': 4, 'design_wrong': 2, 'undecided': 2}
+    assert res['verdicts'] == {'pass': 13, 'scenario_wrong': 4, 'design_wrong': 2}
     s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
     probs = {p['title']: (p['who'], p['detail']) for p in s['problems']}
     assert list(probs)[:2] == ['The design executes SLT wrong', 'The design executes SLTI wrong']
@@ -1643,15 +1646,16 @@ def test_cpu_verdicts_problems_and_requirements(cpu_run, db):
     assert 'the scenario says not taken, but it is taken' in probs['A scenario expects the wrong BLT decision'][1]
     assert 'gives x1 two values, 5 and 7' in probs['A scenario expects a wrong ADD result'][1]
     assert 'writes x0, which always stays 0' in probs['A scenario expects a wrong ADDI result'][1]
-    who, detail = probs['The testbench cannot check 2 examples']
-    assert who == 'test' and 'ignores the offset 4 of LW' in detail
+    who, detail = probs['Partly tested: “Instructions that write a register”']
+    assert who == 'test' and detail == ('1 of its examples could not be turned into tests (e.g. the '
+                                        'instruction uses other registers than the rs1/rs2/rd columns).')
     for title, (_, detail) in probs.items():
         assert 'CPU-' not in title + detail and 'BDD:' not in detail
     assert s['overview']['checked'][0].startswith('19 instructions were simulated')
     st = {r['req_key']: (r['status'], r['subject']) for r in s['requirements']}
     assert st == {'REQ-1': ('fail', None), 'REQ-2': ('fail', None), 'REQ-3': ('verified', None),
                   'REQ-4': ('fail', 'taken')}
-    assert next(r for r in s['requirements'] if r['req_key'] == 'REQ-3')['unchecked'] == 2   # LW offset, SW
+    assert next(r for r in s['requirements'] if r['req_key'] == 'REQ-3')['unchecked'] == 0
     assert s['repairs']['scenario_values'] == 3 and s['repairs']['design_failures'] == 2
 
 
@@ -1671,11 +1675,11 @@ def test_cpu_local_explanations(cpu_run, db):
     assert br[0].startswith('The scenario is wrong, not the design. It says the branch is not taken, but it is taken')
     assert br[1] == 'Why taken: BLT is taken when rs1 < rs2 as signed numbers; here -5 < 3 is true.'
     sw = explain_check('CPU-MEMORY-001/r3', sim_run_id=run, url=db)
-    assert sw['structure']['verdict'] == 'undecided'
-    assert sw['plain']['lines'] == ['This example cannot be checked as written: the testbench checks register x0 '
-                                    'instead of the memory the store writes. This is a limitation of the '
-                                    'testbench, not a fault of the design or the scenario.']
-    assert sw['structure']['stimulus']['tb_reference'] is None
+    assert sw['structure']['verdict'] == 'pass'               # checked in memory since the template fix
+    assert sw['plain']['lines'] == ['Correct: the stored word is 1980, as the scenario expects.']
+    assert sw['structure']['stimulus']['tb_reference'] == 1980
+    lw = explain_check('CPU-MEMORY-001/r2', sim_run_id=run, url=db)
+    assert lw['structure']['verdict'] == 'pass' and lw['structure']['cpu']['issues'] == []
 
 
 def test_cpu_repair_scenarios_and_design(cpu_run, db, monkeypatch):
@@ -1693,7 +1697,7 @@ def test_cpu_repair_scenarios_and_design(cpu_run, db, monkeypatch):
                        testbench_path=r['testbench_path'], log_file=r['simulation']['log_file'])
     assert c.post('/api/run-report', json=body2).get_json()['success']
     s2 = _summary_when_ready(c, body2)
-    assert s2['verdicts'] == {'pass': 14, 'scenario_wrong': 1, 'design_wrong': 2, 'undecided': 2}
+    assert s2['verdicts'] == {'pass': 16, 'scenario_wrong': 1, 'design_wrong': 2, 'not_tested': 1}
 
     fb = c.post('/api/repair/design-feedback', json=body2).get_json()
     assert fb['success'] and fb['count'] == 2 and fb['operations'] == ['SLT', 'SLTI']
@@ -1720,5 +1724,6 @@ def test_cpu_repair_scenarios_and_design(cpu_run, db, monkeypatch):
                        log_file=rr['simulation']['log_file'])
     assert c.post('/api/run-report', json=body3).get_json()['success']
     s3 = _summary_when_ready(c, body3)
-    assert s3['verdicts'] == {'pass': 16, 'scenario_wrong': 1, 'undecided': 2}
+    assert s3['verdicts'] == {'pass': 18, 'scenario_wrong': 1, 'not_tested': 1}
+    # left: the row that gives x1 two values, and the row the testbench skips
     assert sorted(p['who'] for p in s3['problems']) == ['scenario', 'test']
