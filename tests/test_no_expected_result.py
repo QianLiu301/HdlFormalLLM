@@ -263,8 +263,10 @@ def test_counter_default_cases_unchanged_without_bdd_rows():
 # not alter a single byte. On master (85a55ef) the value was db809ca2...b047;
 # on bdx-explainability the testbench also carries the scenario tags
 # ([BDD:...]), so the value is that branch's output before this change was
-# merged (8cddb13), checked identical for all ablation variants.
-VARIANT_A_SHA256 = 'aa829d26d92b8b28b46b6aef7350d6d9f2a6c3b47b62a776ce3ac84535cf334b'
+# merged (8cddb13), checked identical for all ablation variants. Since
+# 2026-11-04 the file's last row (SLTU, no final newline) is no longer dropped,
+# which adds one test (68); 8cddb13 gave aa829d26...f334b with 67.
+VARIANT_A_SHA256 = 'd41476e11d919fcea4388e140907adfad1e6e824069f392ca34cbe6405c2a6f6'
 
 
 def test_ablation_variant_a_byte_identical_to_master(tmp_path, monkeypatch):
@@ -274,9 +276,9 @@ def test_ablation_variant_a_byte_identical_to_master(tmp_path, monkeypatch):
     assert res['success']
     data = Path(res['filepath']).read_bytes()
     assert hashlib.sha256(data).hexdigest() == VARIANT_A_SHA256
-    assert res['test_count'] == 67
+    assert res['test_count'] == 68
     ev = res['expected_values']
-    assert (ev['rows'], ev['asserted'], ev['skipped_no_expected']) == (67, 67, 0)
+    assert (ev['rows'], ev['asserted'], ev['skipped_no_expected']) == (68, 68, 0)
 
 
 # ------------------------------------------- register file and CPU (same rule)

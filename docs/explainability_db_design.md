@@ -609,9 +609,10 @@ Return the complete corrected module.
 
 Measured in the tests (`tests/test_xdb.py`, the Gemini feature with an
 injected SLTU bug): scenario correction changes exactly SUB r7, SRA r5 and
-the planted ADD r7 zero flag; the rerun has verdicts {pass 64, design_wrong 3}
+the planted ADD r7 zero flag; the rerun has verdicts {pass 64, design_wrong 4}
 and no scenario problem. Design regeneration (fake model returning the fixed
-SLTU) gives {pass 65, scenario_wrong 2}. Browser check:
+SLTU) gives {pass 66, scenario_wrong 2} (68 checks: since 2026-11-04 the parser keeps the
+last Examples row of a file without a final newline, which adds SLTU row 7). Browser check:
 `tests/ui/repair_flow.js` runs both buttons in sequence and ends with
 "No problems found".
 

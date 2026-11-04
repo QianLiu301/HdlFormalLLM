@@ -213,3 +213,16 @@ def test_prompt_example_passes_on_a_correct_cpu(tmp_path):
     r = _generate(tmp_path, HEADER + _outline('mixed', rows), CPU_DUT)
     lines = _run(tmp_path, r['filepath'], CPU)
     assert len(lines) == 7 and not any('FAIL' in l for l in lines), lines
+
+
+def test_last_examples_row_is_kept_without_a_final_newline(tmp_path):
+    """The web's BDD generator saves features without a final newline; the
+    Examples regex needed one, so the last row of every such file was lost."""
+    feature = HEADER + _outline('arith', ['add x3, x1, x2 | 1 | 10 | 2 | 20 | 3 | 0 | 30',
+                                          'sub x3, x1, x2 | 1 | 30 | 2 | 10 | 3 | 0 | 20'])
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    with_nl = _generate(tmp_path / 'a', feature, CPU_DUT)
+    without = _generate(tmp_path / 'b', feature.rstrip('\n'), CPU_DUT)
+    count = lambda r: Path(r['filepath']).read_text(encoding='utf-8').count('total = total + 1;')
+    assert count(with_nl) == count(without) == 2

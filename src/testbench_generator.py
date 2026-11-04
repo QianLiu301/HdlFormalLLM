@@ -452,6 +452,11 @@ class FeatureParser:
         """Parse a .feature file"""
         with open(self.feature_file, 'r', encoding='utf-8') as f:
             content = f.read()
+        # Examples 行的正则以换行结尾。网页生成的 feature 文件末尾没有换行
+        # （生成器 strip 过），于是最后一个场景的最后一行被静默丢掉。补一个
+        # 换行：位置偏移不变，结尾本来有换行的文件结果逐字节相同。
+        if content and not content.endswith('\n'):
+            content += '\n'
 
         # Detect bitwidth
         bitwidth_match = re.search(r'(\d+)[-_]?bit', content, re.IGNORECASE)

@@ -157,7 +157,13 @@ row without expected value is not asserted — ALU/counter, and since
 register/column mismatches, x29/x30, bad addresses, memory conflicts skipped
 with a reason; `tests/test_template_testbenches.py`). Papers are decided
 later (user, 2026-11-04: build website features first); candidate papers,
-evidence and the feature roadmap R1–R7 are in `docs/research_outline.md`. Product output (explanations, UI text,
+evidence and the feature roadmap R1–R7 are in `docs/research_outline.md`.
+R1 done: batch trial runner `python -m src.xdb.trial run --llms … --designs …
+--reps N --tag T` (drives the web endpoints in-process, stores runs in the DB
+as `trial:<tag>`, writes output/trials/<tag>/summary.md|runs.csv|runs.jsonl;
+`--llms mock` = canned samples from `src/xdb/samples.py`, no API). Its dry
+run found that the testbench parser dropped the last Examples row of files
+without a final newline (all web-generated features); fixed 2026-11-04. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon;
 `service postgresql start` if the container restarted).

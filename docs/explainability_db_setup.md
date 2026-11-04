@@ -165,7 +165,43 @@ NODE_PATH=$(npm root -g) node tests/ui/repair_flow.js /tmp/ui
 The staging script writes files named `xdb_ui_*` under `output/`; delete
 them afterwards if you like (`output/` is not in git).
 
-## 6. Explanations in the terminal
+## 6. Batch trials (many runs without the browser)
+
+To find out how the website copes with real model output, run the whole flow
+many times: Step 0 (defaults accepted), Steps 1–4, the explanations, then the
+repairs the Problems card offers (up to two rounds). Every run is stored in the
+database like a web run; its session is marked `trial:<tag>`.
+
+First a dry run with the built-in mock model (no API key, no cost, about 15 s):
+
+```bash
+python -m src.xdb.trial run --llms mock --tag dryrun
+```
+
+Then real models, for example two providers, all three design types, two runs each:
+
+```bash
+python -m src.xdb.trial run --llms deepseek,gemini --designs alu,regfile,cpu --reps 2 --tag first
+```
+
+Read the result:
+
+```bash
+open output/trials/first/summary.md
+```
+
+`output/trials/<tag>/` holds `summary.md` (per model × design type: how far
+the runs got, the verdict shares, how many scenario steps the rule library
+could read, how many runs were clear before and after repair, the problems
+seen and the steps that could not be read), `runs.csv` (one row per run),
+`runs.jsonl` (everything, per run), `logs/` (the server output of each run)
+and `server.log`. An interrupted trial continues where it stopped when the
+same command is run again. Options: `--reps N`, `--repair N` (rounds, 0 =
+none), `--no-step0`, `--model gemini=gemini-2.5-flash`, `--designs alu`.
+A real run makes about 4–8 model calls (Step 0, design, scenarios, one or two
+design repairs) and stores a few hundred KB in the database.
+
+## 6a. Explanations in the terminal
 
 The same explanations can be printed:
 
