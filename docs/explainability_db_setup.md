@@ -201,6 +201,12 @@ none), `--no-step0`, `--model gemini=gemini-2.5-flash`, `--designs alu`.
 A real run makes about 4–8 model calls (Step 0, design, scenarios, one or two
 design repairs) and stores a few hundred KB in the database.
 
+To share a trial (results and every generated file) through git:
+
+```bash
+python -m src.xdb.trial export --tag first --to data/trials/first/files
+```
+
 ## 6a. Explanations in the terminal
 
 The same explanations can be printed:

@@ -416,6 +416,24 @@ class TestQualityAnalyzer:
 ALU_LIKE_TYPES = ('alu', 'alu_comb')
 
 
+def _table_cells(row: str) -> List[str]:
+    """Cells of one Gherkin table row with empty cells kept in place.
+
+    此前按 `if col.strip()` 过滤空单元格，模型留空一格（比如某个标志位列）
+    整行就因列数对不上被当成 malformed 丢掉——一次实测 74 行里丢了 51 行。
+    没有空单元格的行结果与以前完全相同。
+    """
+    s = row.strip()
+    if s.startswith('|'):
+        s = s[1:]
+    if s.endswith('|'):
+        s = s[:-1]
+    return [c.strip() for c in s.split('|')]
+
+
+EMPTY_OPERAND = 'the row leaves an operand empty'
+
+
 class FeatureParser:
     """Parse .feature files and extract test scenarios"""
 
@@ -694,13 +712,13 @@ class FeatureParser:
                 if len(rows) < 2:
                     continue
 
-                header = [col.strip().lower() for col in rows[0].split('|') if col.strip()]
+                header = [col.lower() for col in _table_cells(rows[0])]
                 # 记下表头：结果页要指出哪些列 testbench 根本没比较（比如标志位）
                 entry.setdefault('columns', [])
                 entry['columns'] += [h for h in header if h not in entry['columns']]
 
                 for row in rows[1:]:
-                    cols = [col.strip() for col in row.split('|') if col.strip()]
+                    cols = _table_cells(row)
                     row_no += 1
 
                     if len(cols) != len(header):
@@ -714,6 +732,11 @@ class FeatureParser:
                     for col_name, col_value in zip(header, cols):
                         # 跳过 opcode 列，使用标准映射表
                         if col_name.lower() == 'opcode':
+                            continue
+                        # 空单元格：这一列在这行没有值。记下来，由各模板决定
+                        # 这一行还能不能测（缺操作数就不能，缺标志位无所谓）
+                        if col_value == '':
+                            scenario.setdefault('_empty', []).append(col_name)
                             continue
 
                         parsed_value = self._parse_value(col_value)
@@ -949,12 +972,12 @@ class FeatureParser:
             rows = [row.strip() for row in match.group(1).strip().split('\n')]
             if len(rows) < 2:
                 continue
-            header = [col.strip().lower() for col in rows[0].split('|') if col.strip()]
+            header = [col.lower() for col in _table_cells(rows[0])]
             if 'operation' not in header:
                 continue
             k = header.index('operation')
             for row in rows[1:]:
-                cols = [col.strip() for col in row.split('|') if col.strip()]
+                cols = _table_cells(row)
                 if len(cols) == len(header) and self._get_alu_operation(cols[k], '')[0]:
                     return True
         return False
@@ -1394,8 +1417,9 @@ class TestbenchGenerator:
                 'content': tb_content[:2000] + ('...' if len(tb_content) > 2000 else ''),
                 'full_content': tb_content,
                 # 没有期望值、未生成断言的行不计入
-                'test_count': len(spec['scenarios']) - (
-                    quality_analysis.get('expected_values') or {}).get('skipped_no_expected', 0),
+                'test_count': len(spec['scenarios'])
+                - (quality_analysis.get('expected_values') or {}).get('skipped_no_expected', 0)
+                - (quality_analysis.get('expected_values') or {}).get('skipped_empty_operand', 0),
                 # 这里不返回 'llm'：testbench 由确定性模板编译而成，没有 LLM 参与。
                 # llm_name 只是 BDD 文件所在目录名（即生成 BDD 的那个 LLM），
                 # 用来组织输出目录；把它当作 testbench 的作者会造成误导。
@@ -1632,6 +1656,11 @@ class TestbenchGenerator:
         trace = self._new_trace()
         scenarios, expected_by_row = [], []
         for row_no, scenario in enumerate(all_rows, 1):
+            if {c.lower() for c in scenario.get('_empty', [])} & {'a', 'b'}:
+                # 空操作数以前会被当成 0 —— 那是工具编出来的激励
+                ev['skipped_empty_operand'] = ev.get('skipped_empty_operand', 0) + 1
+                self._trace_skip(trace, scenario, EMPTY_OPERAND)
+                continue
             expected = self._first_present(scenario, self.ALU_EXPECTED_KEYS)
             # oracle 的来源是受控变量，见 _reference_result 的说明。
             # 'bdd'  —— 用 BDD 写的期望值（默认）
@@ -1867,6 +1896,10 @@ class TestbenchGenerator:
 
             # UPDOWN 的检查是范围检查，不用期望值，所以这类行照旧生成；
             # UP/DOWN 行没有期望值就不生成断言。
+            if {c.lower() for c in scenario.get('_empty', [])} & {'initial_value', 'initial', 'value', 'cycles'}:
+                ev['skipped_empty_operand'] = ev.get('skipped_empty_operand', 0) + 1
+                self._trace_skip(trace, scenario, EMPTY_OPERAND)
+                continue
             expected = self._first_present(scenario, self.COUNTER_EXPECTED_KEYS)
             if expected is None and not is_updown:
                 if mode_str in ['1', '01', 'DOWN', 'down']:

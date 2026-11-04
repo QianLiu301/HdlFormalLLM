@@ -43,8 +43,8 @@ ALU_STEPS: List[Dict] = [
      'patterns': [_p(r'^(?:I have )?(?:the )?(?:operand|input|shift amount) B (?:=|is|equals|of) {B}$')],
      'port': 'b', 'expr': 'b == {B}'},
     {'key': 'ALU.A.OP', 'role': 'action', 'template': 'operation <OP> (opcode <CODE>)',
-     'patterns': [_p(r'^I (?:perform|execute|apply) (?:the )?(?P<OP>[A-Z]+) operation'
-                     r'(?: with opcode (?P<CODE>[01]{4}))?$')],
+     'patterns': [_p(r'^I (?:perform|execute|apply) (?:the )?(?P<OP><[^>]+>|[A-Z]+) operation'
+                     r'(?: with opcode (?P<CODE><[^>]+>|[01]{4}))?$')],
      'port': 'opcode', 'expr': "opcode == 4'b{CODE}"},
     {'key': 'ALU.Q.RESULT', 'role': 'outcome', 'template': 'result = <R>',
      'patterns': [_p(r'^the (?:result|output) (?:should be|should equal|is|equals) {R}$')],
@@ -117,25 +117,60 @@ RF_STEPS: List[Dict] = [
      'port': None, 'expr': None},
     {'key': 'RF.P.STATE', 'role': 'context', 'template': 'state carried over from the rows before',
      'patterns': [_p(r'^the register file is (?:ready|initiali[sz]ed|idle|out of reset)$'),
-                  _p(r'^the register file holds (?:earlier|previous|prior) writes$'),
+                  _p(r'^the register file holds (?:all )?(?:earlier|previous|prior|current) writes$'),
+                  _p(r'^the register file holds values from (?:earlier|previous|prior) writes$'),
+                  _p(r'^the register file has completed (?:the )?(?:simultaneous |previous |earlier )?'
+                     r'operations$'),
+                  _p(r'^the register file has two (?:independent )?read ports and a single write port$'),
                   _p(r'^(?:the )?registers hold (?:values|data)$'),
-                  _p(r'^reset has (?:completed|been applied|finished|been released)$'),
+                  _p(r'^reset has (?:completed|been applied|finished|been released)(?: after (?:the )?writes)?$'),
                   _p(r'^register 0 is hardwired(?: to (?:zero|0))?$')],
      'port': None, 'expr': None},
     {'key': 'RF.A.WRITE', 'role': 'action', 'template': 'write <DATA> to register <ADDR>',
-     'patterns': [_p(r'^I write {DATA} (?:to|into) ' + _REG + r'{ADDR}$')],
+     'patterns': [_p(r'^I write {DATA} (?:to|into) ' + _REG + r'{ADDR}'
+                     r'(?: with write enable (?:asserted|enabled|high|on))?'
+                     r'(?: (?:on|at) the (?:rising|next) (?:clock )?edge)?$')],
      'port': 'wdata', 'value': 'DATA', 'expr': 'wen && waddr == {ADDR} && wdata == {DATA}'},
     {'key': 'RF.A.READ', 'role': 'action', 'template': 'read register <ADDR>',
-     'patterns': [_p(r'^I read (?:from )?' + _REG + r'{ADDR}(?: (?:on|through|via) (?:read )?port 1)?$')],
+     'patterns': [_p(r'^I read (?:from )?' + _REG + r'{ADDR}(?: (?:on|through|via|from) (?:read )?port (?:1|A))?$')],
      'port': 'raddr1', 'value': 'ADDR', 'expr': 'raddr1 == {ADDR}'},
+    # What a scenario may ask for but the web testbench does not do. Steps with
+    # executable=False make every check of their scenario undecided: the
+    # testbench ran something else than the scenario describes, so neither
+    # side can be blamed from that simulation.
+    {'key': 'RF.A.WRITE_DISABLED', 'role': 'action', 'template': 'write with write enable off',
+     'patterns': [_p(r'^I (?:attempt to |try to )?write .+ with write enable (?:deasserted|disabled|low|off|0)$'),
+                  _p(r'^I disable (?:the )?write(?: enable)? and (?:attempt to |try to )?write .+$'),
+                  _p(r'^(?:the )?write enable is (?:deasserted|disabled|low|off|0)$')],
+     'port': None, 'expr': None, 'executable': False,
+     'why': 'the testbench always writes with write enable on'},
+    {'key': 'RF.A.SAME_CYCLE', 'role': 'action', 'template': 'write and read in the same clock cycle',
+     'patterns': [_p(r'^I simultaneously write .+ and read .+$'),
+                  _p(r'^I write .+ (?:while|and at the same time) read(?:ing)? .+$'),
+                  _p(r'^I read .+ (?:while|and at the same time) writ(?:ing|e) .+$')],
+     'port': None, 'expr': None, 'executable': False,
+     'why': 'the testbench reads only after a write has taken effect, never in the same clock cycle'},
+    {'key': 'RF.A.READ_PORT2', 'role': 'action', 'template': 'read through read port 2',
+     'patterns': [_p(r'^I read (?:from )?' + _REG + r'.+ (?:on|through|via|from) (?:read )?port (?:2|B)$')],
+     'port': None, 'expr': None, 'executable': False,
+     'why': 'the testbench reads only through read port 1'},
+    {'key': 'RF.P.PRELOAD', 'role': 'context', 'template': 'register <ADDR> holds a given value',
+     'patterns': [_p(r'^register {ADDR} (?:initially )?(?:holds|contains)(?: the)?(?: value)? {V}$')],
+     'port': None, 'expr': None, 'executable': False,
+     'why': 'the testbench does not preload registers; a register holds what the earlier rows wrote'},
+    {'key': 'RF.P.IN_RESET', 'role': 'context', 'template': 'reset is held',
+     'patterns': [_p(r'^(?:the )?reset is (?:active|held|still asserted)$'),
+                  _p(r'^the register file is (?:under|in) (?:active )?reset$')],
+     'port': None, 'expr': None, 'executable': False,
+     'why': 'the testbench does not hold reset while it reads; a reset row only pulses reset'},
     {'key': 'RF.A.RESET', 'role': 'action', 'template': 'assert reset',
      'patterns': [_p(r'^(?:the )?reset is (?:asserted|applied)$'),
                   _p(r'^I (?:assert|apply) (?:the )?reset$')],
      'port': 'rst_n', 'expr': 'rst_n == 0'},
     {'key': 'RF.Q.RDATA', 'role': 'outcome', 'template': 'read data = <R>',
-     'patterns': [_p(r'^the (?:value|read data|data|output|read value) should (?:be|equal) {R}$'),
+     'patterns': [_p(r'^the (?:value|read data|data|output|read value) should (?:still )?(?:be|equal|remain) {R}$'),
                   _p(r'^I should (?:read|get|see) {R}$'),
-                  _p(r'^register {ADDR} should (?:contain|hold|read) {R}$')],
+                  _p(r'^(?:the value in )?register {ADDR} should (?:still )?(?:contain|hold|read|be|remain) {R}$')],
      'port': 'rdata1', 'value': 'R', 'expr': 'rdata1 == {R}'},
     {'key': 'RF.Q.CLEARED', 'role': 'outcome', 'template': 'register <ADDR> holds 0',
      'patterns': [_p(r'^register {ADDR} is cleared$'),
@@ -244,8 +279,9 @@ CPU_STEPS: List[Dict] = [
                   _p(r'^branch taken should be {T}$')],
      'port': 'taken', 'value': 'T', 'expr': 'taken == {T}'},
     {'key': 'CPU.Q.MEM', 'role': 'outcome', 'template': 'memory at <ADDR> = <R>',
-     'patterns': [_p(r'^(?:the )?memory at (?:address )?{ADDR} should (?:contain|hold|be) {R}$')],
-     'port': 'mem', 'value': 'R', 'expr': 'dmem[{ADDR}] == {R}'},
+     'patterns': [_p(r'^(?:the )?memory at (?:address )?{ADDR} should (?:contain|hold|be) {R}$'),
+                  _p(r'^(?:the )?memory at that address should (?:contain|hold|be) {R}$')],
+     'port': 'mem', 'value': 'R', 'expr': 'dmem[addr] == {R}'},
 ]
 
 _CPU_VALUE_OPS = {
@@ -414,6 +450,12 @@ LIBRARIES = {'alu': {'steps': ALU_STEPS, 'rules': ALU_RULES, 'flags': FLAG_RULES
 LIBRARIES['alu_comb'] = LIBRARIES['alu']
 
 
+def not_executable(key: Optional[str]) -> Optional[str]:
+    """Why the web testbench does not do what a canonical step says, or None."""
+    st = step_by_key(key)
+    return st.get('why') if st and st.get('executable') is False else None
+
+
 def step_by_key(key: Optional[str]) -> Optional[Dict]:
     for lib in LIBRARIES.values():
         for st in lib['steps']:
@@ -442,6 +484,8 @@ def map_step(module_type: str, text: str) -> Optional[Tuple[Dict, Dict]]:
     if not lib:
         return None
     s = re.sub(r'\s+', ' ', text.strip())
+    # models annotate steps with the requirements they serve: "... (REQ-7, REQ-8)"
+    s = re.sub(r'\s*\((?:REQ-\d+[,;\s]*)+\)$', '', s, flags=re.I)
     for step in lib['steps']:
         for rx in step['patterns']:
             m = rx.match(s)

@@ -7,7 +7,7 @@ Unmatched steps get a step_mapping row with canonical_step_id NULL, so
 (competency question Q18), not a guess.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import select
 
@@ -76,6 +76,37 @@ def map_scenario(s, scenario_id: int, module_type: Optional[str],
             n['unmapped'] += 1
     s.flush()
     return n
+
+
+UNKNOWN_ACTION = 'the tool does not recognise this step, so it cannot tell whether the testbench did it'
+
+
+def blocked_steps(s, scenario_id: int) -> List[Dict]:
+    """Given/When steps of a scenario that the web testbench does not do: steps
+    the library marks as not executable (e.g. a write with write enable off),
+    and action (When) steps no rule recognises. A check of such a scenario
+    shows what the testbench did, not what the scenario says, so it cannot
+    decide whether the design or the scenario is wrong (design doc D29)."""
+    rows = s.execute(select(M.ScenarioStep, M.StepMapping, M.CanonicalStep)
+                     .outerjoin(M.StepMapping, (M.StepMapping.scenario_id == M.ScenarioStep.scenario_id)
+                                & (M.StepMapping.position == M.ScenarioStep.position)
+                                & (M.StepMapping.method == METHOD))
+                     .outerjoin(M.CanonicalStep, M.CanonicalStep.id == M.StepMapping.canonical_step_id)
+                     .where(M.ScenarioStep.scenario_id == scenario_id)
+                     .order_by(M.ScenarioStep.position)).all()
+    out, in_when = [], False
+    for st, sm, cs in rows:
+        if st.keyword in ('Given', 'When', 'Then'):
+            in_when = st.keyword == 'When'
+        if st.role != 'P':
+            continue
+        why = L.not_executable((cs.params or {}).get('key') if cs else None)
+        if why:
+            out.append({'text': f'{st.keyword} {st.surface_text}', 'why': why, 'kind': 'not_executable'})
+        elif sm is not None and sm.canonical_step_id is None and in_when:
+            out.append({'text': f'{st.keyword} {st.surface_text}', 'why': UNKNOWN_ACTION,
+                        'kind': 'unknown_action'})
+    return out
 
 
 def remap_all(s) -> Dict[str, int]:

@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.8'   # v1.8: RV32I CPU (rows judged as executed, setup issues)
+ALGORITHM = 'bdx_v1.9'   # v1.9: steps the testbench does not do make a check undecided
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -186,7 +186,7 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
                  if c} if run else set())
     scen, failing, untested = [], [], []
     main_ports_checked, main_n, probe_n = set(tb_ports), 0, 0
-    has_reference = bool((L.library_for(design.module_type if design else None) or {}).get('reference'))
+    lib_present = bool(L.library_for(design.module_type if design else None))
     unchecked = 0
     for link, sc in links:
         counts: Dict[str, int] = {}
@@ -197,8 +197,8 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
         for ci, cr in res:
             if cr.status == 'setup':
                 continue                 # a write or reset row checks nothing by itself
-            if cr.verdict == 'undecided' and has_reference:
-                unchecked += 1           # the example cannot be checked as written (see cpu_reference)
+            if cr.verdict == 'undecided' and lib_present:
+                unchecked += 1           # the example cannot be checked as written (D28, D29)
                 continue
             main_ports_checked.add(ci.port)
             if subject and ci.port and ci.port != subject:
@@ -377,6 +377,8 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
         rule = (L.library_for(mt) or {}).get('rules', {}).get((ci.operation or '').upper())
         rule_val = (L.apply_rule(mt, ci.operation, stim.get('a'), stim.get('b'), width)
                     if rule and width else None)
+        from src.xdb import mapping as _mapping
+        blocked = _mapping.blocked_steps(s, sc.id) if sc is not None and L.library_for(mt) else []
         history, cpu = None, None
         if (L.library_for(mt) or {}).get('reference') and stim:
             cpu = L.cpu_reference(stim)
@@ -453,6 +455,7 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
             'verdict': cr.verdict if cr else None,
             'values': {'observed': O, 'expected_bdd': B, 'expected_ref': R, 'width': width},
             'operation': ci.operation, 'module_type': mt, 'history': history, 'cpu': cpu,
+            'blocked': blocked,
             'scenario': {'P': [x for x in steps if x['role'] == 'P'],
                          'Q': [x for x in steps if x['role'] == 'Q']},
             'stimulus': stim, 'stimulus_differs': differs,
@@ -1322,11 +1325,28 @@ def _plain_local_cpu(st: Dict) -> Dict:
     return {'title': _cpu_example(stim), 'verdict': v, 'lines': lines}
 
 
+def _blocked_line(b: Dict) -> str:
+    return f"the scenario says “{b['text']}”, but {b['why']}"
+
+
 def plain_local(st: Dict) -> Dict:
+    if st.get('blocked'):
+        mt = st.get('module_type')
+        base = (_plain_local_cpu if _is_cpu(mt) else _plain_local_stateful if _stateful(mt)
+                else _plain_local_combinational)(dict(st, blocked=None))
+        lines = [f"This example cannot be checked as written: {_blocked_line(st['blocked'][0])}.",
+                 'So this simulation cannot show whether the design or the scenario is right; '
+                 'it is not used to judge either.']
+        lines += [f"Also: {_blocked_line(b)}." for b in st['blocked'][1:3]]
+        return {'title': base['title'], 'verdict': st.get('verdict'), 'lines': lines}
     if _is_cpu(st.get('module_type')):
         return _plain_local_cpu(st)
     if _stateful(st.get('module_type')):
         return _plain_local_stateful(st)
+    return _plain_local_combinational(st)
+
+
+def _plain_local_combinational(st: Dict) -> Dict:
     v, vals, w = st.get('verdict'), st['values'], st['values'].get('width')
     O, B, R = vals.get('observed'), vals.get('expected_bdd'), vals.get('expected_ref')
     title = _inputs(st.get('operation'), st.get('stimulus'), w)
@@ -1514,12 +1534,42 @@ def _cpu_problem(v, op, n, m, ci, B, R, O) -> Tuple[str, str]:
         (f' {notes}' if notes else '') + ' The design is right.'
 
 
-def _cpu_unchecked(main) -> List[Dict]:
+def _blocked_problems(s, main) -> List[Dict]:
+    """Examples whose scenario asks for something the testbench does not do (D29)."""
+    from src.xdb import mapping as _mapping
+    cache: Dict[int, List[Dict]] = {}
+    hits = []
+    for ci, cr in main:
+        if not ci.tag.startswith('BDD:') or cr.verdict != 'undecided' or not ci.scenario_id:
+            continue
+        if ci.scenario_id not in cache:
+            cache[ci.scenario_id] = _mapping.blocked_steps(s, ci.scenario_id)
+        if cache[ci.scenario_id]:
+            hits.append(ci)
+    if not hits:
+        return []
+    first = hits[0]
+    sc = s.get(M.Scenario, first.scenario_id)
+    n_sc = len({ci.scenario_id for ci in hits})
+    b = cache[first.scenario_id][0]
+    return [{'severity': 'warning', 'who': 'test',
+             'title': ('The testbench cannot run one example as the scenario describes it' if len(hits) == 1
+                       else f'The testbench cannot run {len(hits)} examples as the scenarios describe them'),
+             'detail': f"E.g. “{sc.title}”: {_blocked_line(b)}."
+                       + (f' ({n_sc} scenarios.)' if n_sc > 1 else '')
+                       + ' These results are not used to judge the design or the scenarios.',
+             'explain': {'kind': 'check', 'tag': first.tag}}]
+
+
+def _cpu_unchecked(s, main) -> List[Dict]:
     """Examples that ran but cannot mean what they say (library: cpu_reference issues)."""
+    from src.xdb import mapping as _mapping
     groups: Dict[str, List] = {}
     for ci, cr in main:
         if not ci.tag.startswith('BDD:') or cr.verdict != 'undecided' or not ci.stimulus:
             continue
+        if ci.scenario_id and _mapping.blocked_steps(s, ci.scenario_id):
+            continue                                   # reported with the blocked examples
         ref = L.cpu_reference(ci.stimulus)
         if ref['issues']:
             groups.setdefault(ref['issues'][0]['fault'], []).append((ci, ref['issues'][0]))
@@ -1607,8 +1657,9 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
         probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                       'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
 
+    probs += _blocked_problems(s, main)
     if _is_cpu(mt):
-        probs += _cpu_unchecked(main)
+        probs += _cpu_unchecked(s, main)
         n_bad = sum(len(x) for (v_, _), x in by_op.items() if v_ in ('design_wrong', 'both_wrong'))
         bad_ops = {op_ for (v_, op_) in by_op if v_ in ('design_wrong', 'both_wrong')}
         n_all = sum(total_op.values())

@@ -159,6 +159,7 @@ class Trial:
         self.client = app.test_client()
         self.root = Path(project_root or ROOT)
         self._log = None
+        self._files: Optional[List[str]] = None
 
     # -- plumbing
     def _rel(self, path) -> Optional[str]:
@@ -187,6 +188,9 @@ class Trial:
 
     def _summary(self, body: Dict) -> Optional[Dict]:
         """Ask for the run report (stores the run), then wait for the summary."""
+        if self._files is not None:
+            self._files += [body.get(k) for k in ('requirements_filepath', 'bdd_filepath', 'duv_filepath',
+                                                  'testbench_path', 'log_file') if body.get(k)]
         rep = self._post('/api/run-report', body)
         if not rep.get('success'):
             return {'error': rep.get('error') or 'run report failed'}
@@ -222,7 +226,9 @@ class Trial:
                                         if tag.startswith('GEN:') and c.get('status') == 'fail'),
                 'problems': [{'who': p['who'], 'title': p['title']} for p in probs],
                 'problem_counts': (s.get('overview') or {}).get('counts'),
-                'all_clear': not any(p['who'] in ('design', 'scenario') for p in probs),
+                # clear = something was checked and neither side is wrong (a run without a
+                # single check is not clear, it is untested)
+                'all_clear': bool(v) and not any(p['who'] in ('design', 'scenario') for p in probs),
                 'requirements': {r['req_key']: r['status'] for r in s.get('requirements') or []},
                 'repairs': s.get('repairs')}
 
@@ -285,6 +291,7 @@ class Trial:
         desc = DESCRIPTIONS[design](BITWIDTH)
         run_ids: List[str] = []
         t_start = time.time()
+        self._files = []
         with open(self.out / 'logs' / f'{name}.log', 'w', encoding='utf-8') as self._log:
             try:
                 self._flow(rec, llm, model, design, cfg, desc, run_ids)
@@ -295,6 +302,12 @@ class Trial:
             finally:
                 self._log = None
         rec['seconds'] = round(time.time() - t_start, 1)
+        rec['files'] = [f for f in dict.fromkeys(self._files) if f]
+        for k in ('duv', 'bdd'):                          # also when the run stopped before simulation
+            f = (rec.get(k) or {}).get('file')
+            if f and f not in rec['files']:
+                rec['files'].append(f)
+        self._files = None
         rec.update(self._llm_usage(run_ids))
         return rec
 
@@ -517,6 +530,45 @@ def write_outputs(out: Path, records: List[Dict]) -> str:
     return text
 
 
+def export(out: Path, dest: Path, root: Path = ROOT) -> int:
+    """Copy every file of every run into dest/<model>_<design>_<rep>/ (to share a trial).
+
+    Runs recorded before 2026-11-05 have no file list; for them the design and
+    feature files are taken, with the feature's corrected versions and the
+    testbenches and logs named after them."""
+    import shutil
+    n = 0
+    for r in load(out):
+        files = list(r.get('files') or [])
+        if not files:
+            for k in ('duv', 'bdd'):
+                f = (r.get(k) or {}).get('file')
+                if f:
+                    files.append(f)
+            bdd = (r.get('bdd') or {}).get('file')
+            if bdd:
+                stem = Path(bdd).stem
+                files += [p.relative_to(root).as_posix() for p in (root / bdd).parent.glob(f'{stem}_fix*.feature')]
+                for tb in (root / 'output' / 'testbench').rglob(f'{stem}*_tb.*'):
+                    files.append(tb.relative_to(root).as_posix())
+                    files += [lg.relative_to(root).as_posix()
+                              for lg in (root / 'output' / 'results').glob(f'{Path(tb.name).stem.split(".")[0]}_*.log')]
+        # each testbench's scenario index (what every assertion checks)
+        files += [str(Path(f).with_name(Path(f).stem + '.scenarios.json')) for f in files if f.endswith('_tb.v')]
+        target = dest / f"{r['llm']}_{r['design']}_{r['rep']}"
+        for f in dict.fromkeys(files):
+            src = root / f
+            if src.is_file():
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, target / src.name)
+                n += 1
+        if (out / 'logs' / f"{target.name}.log").is_file():
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(out / 'logs' / f"{target.name}.log", target / 'server.log')
+            n += 1
+    return n
+
+
 def load(out: Path) -> List[Dict]:
     p = out / 'runs.jsonl'
     return [json.loads(l) for l in p.read_text(encoding='utf-8').splitlines() if l.strip()] if p.exists() else []
@@ -538,7 +590,18 @@ def main(argv=None):
     r.add_argument('--tag', default=None, help='name of this trial (default: date and time)')
     s = sub.add_parser('summary', help='print the summary of an earlier trial')
     s.add_argument('--tag', required=True)
+    e = sub.add_parser('export', help='copy the files of every run of a trial into one folder')
+    e.add_argument('--tag', required=True)
+    e.add_argument('--to', required=True, help='destination folder, e.g. data/trials/<tag>/files')
     args = ap.parse_args(argv)
+
+    if args.cmd == 'export':
+        out = ROOT / 'output' / 'trials' / args.tag
+        if not load(out):
+            sys.exit(f'no runs found in {out}')
+        n = export(out, ROOT / args.to)
+        print(f'copied {n} files to {args.to}')
+        return
 
     if args.cmd == 'summary':
         out = ROOT / 'output' / 'trials' / args.tag

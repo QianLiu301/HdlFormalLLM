@@ -22,9 +22,14 @@ _ROLE = {'Given': 'P', 'When': 'P', 'Then': 'Q'}
 
 
 def _cells(line: str) -> List[str]:
-    # Same rule as TestbenchGenerator._extract_scenarios (empty cells dropped),
+    # Same rule as testbench_generator._table_cells (empty cells kept in place),
     # so a row the generator counts as malformed is malformed here too.
-    return [c.strip() for c in line.split('|') if c.strip()]
+    s = line.strip()
+    if s.startswith('|'):
+        s = s[1:]
+    if s.endswith('|'):
+        s = s[:-1]
+    return [c.strip() for c in s.split('|')]
 
 
 def parse_steps(lines: List[str]) -> List[Dict]:

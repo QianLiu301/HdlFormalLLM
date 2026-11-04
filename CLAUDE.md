@@ -163,7 +163,13 @@ R1 done: batch trial runner `python -m src.xdb.trial run --llms … --designs �
 as `trial:<tag>`, writes output/trials/<tag>/summary.md|runs.csv|runs.jsonl;
 `--llms mock` = canned samples from `src/xdb/samples.py`, no API). Its dry
 run found that the testbench parser dropped the last Examples row of files
-without a final newline (all web-generated features); fixed 2026-11-04. Product output (explanations, UI text,
+without a final newline (all web-generated features); fixed 2026-11-04.
+First real trial (data/trials/first, design doc §6g) → D29: checks of a
+scenario with a Given/When step the testbench does not do (library steps
+`executable: False`, `library.not_executable`, `mapping.blocked_steps`; or an
+unrecognised When step) are undecided, reported as testbench limits, never
+repaired; parser keeps blank table cells (`testbench_generator._table_cells`,
+empty operand → skipped `EMPTY_OPERAND`); trial `export` copies run files. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon;
 `service postgresql start` if the container restarted).
