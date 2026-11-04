@@ -1,0 +1,2248 @@
+{
+ "version": 2,
+ "feature": "regfile_32bit_32x_20261104_173916.feature",
+ "module_type": "regfile",
+ "oracle_source": "bdd",
+ "catalog": [
+  {
+   "id": "RF-WRITE-001",
+   "title": "Write values into registers",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-2"
+   ],
+   "span": [
+    698,
+    1113
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-001/r1",
+    "RF-WRITE-001/r2",
+    "RF-WRITE-001/r3",
+    "RF-WRITE-001/r4",
+    "RF-WRITE-001/r5",
+    "RF-WRITE-001/r6",
+    "RF-WRITE-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-READ-001",
+   "title": "Read back values written earlier",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1"
+   ],
+   "span": [
+    1113,
+    1542
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-001/r1",
+    "RF-READ-001/r2",
+    "RF-READ-001/r3",
+    "RF-READ-001/r4",
+    "RF-READ-001/r5",
+    "RF-READ-001/r6",
+    "RF-READ-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE_READ-001",
+   "title": "Write and immediately read back",
+   "tags": [
+    "write_read"
+   ],
+   "requirements": [
+    "REQ-1",
+    "REQ-2"
+   ],
+   "span": [
+    1542,
+    2117
+   ],
+   "operation": "write_read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE_READ-001/r1",
+    "RF-WRITE_READ-001/r2",
+    "RF-WRITE_READ-001/r3",
+    "RF-WRITE_READ-001/r4",
+    "RF-WRITE_READ-001/r5",
+    "RF-WRITE_READ-001/r6",
+    "RF-WRITE_READ-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE-002",
+   "title": "Writes to register 0 are ignored",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-5"
+   ],
+   "span": [
+    2117,
+    2482
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-002/r1",
+    "RF-WRITE-002/r2",
+    "RF-WRITE-002/r3",
+    "RF-WRITE-002/r4",
+    "RF-WRITE-002/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-READ-002",
+   "title": "Register 0 always reads as zero",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-4"
+   ],
+   "span": [
+    2482,
+    2827
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-002/r1",
+    "RF-READ-002/r2",
+    "RF-READ-002/r3",
+    "RF-READ-002/r4",
+    "RF-READ-002/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE-003",
+   "title": "Write more values, including a double write",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-2"
+   ],
+   "span": [
+    2827,
+    3271
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-003/r1",
+    "RF-WRITE-003/r2",
+    "RF-WRITE-003/r3",
+    "RF-WRITE-003/r4",
+    "RF-WRITE-003/r5",
+    "RF-WRITE-003/r6",
+    "RF-WRITE-003/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-READ-003",
+   "title": "Read all values after additional writes",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1"
+   ],
+   "span": [
+    3271,
+    4075
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-003/r1",
+    "RF-READ-003/r2",
+    "RF-READ-003/r3",
+    "RF-READ-003/r4",
+    "RF-READ-003/r5",
+    "RF-READ-003/r6",
+    "RF-READ-003/r7",
+    "RF-READ-003/r8",
+    "RF-READ-003/r9",
+    "RF-READ-003/r10",
+    "RF-READ-003/r11",
+    "RF-READ-003/r12",
+    "RF-READ-003/r13",
+    "RF-READ-003/r14",
+    "RF-READ-003/r15",
+    "RF-READ-003/r16",
+    "RF-READ-003/r17",
+    "RF-READ-003/r18",
+    "RF-READ-003/r19",
+    "RF-READ-003/r20"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE-004",
+   "title": "Write a third time to a register",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-2"
+   ],
+   "span": [
+    4075,
+    4451
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-004/r1",
+    "RF-WRITE-004/r2",
+    "RF-WRITE-004/r3",
+    "RF-WRITE-004/r4",
+    "RF-WRITE-004/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-READ-004",
+   "title": "Read the register written a third time",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1"
+   ],
+   "span": [
+    4451,
+    4834
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-004/r1",
+    "RF-READ-004/r2",
+    "RF-READ-004/r3",
+    "RF-READ-004/r4",
+    "RF-READ-004/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-RESET-001",
+   "title": "Reset clears every register",
+   "tags": [
+    "reset"
+   ],
+   "requirements": [
+    "REQ-6"
+   ],
+   "span": [
+    4834,
+    5129
+   ],
+   "operation": "reset",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-RESET-001/r1",
+    "RF-RESET-001/r2",
+    "RF-RESET-001/r3",
+    "RF-RESET-001/r4",
+    "RF-RESET-001/r5",
+    "RF-RESET-001/r6",
+    "RF-RESET-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr"
+   ]
+  },
+  {
+   "id": "RF-READ-005",
+   "title": "Everything reads zero after reset",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1",
+    "REQ-6"
+   ],
+   "span": [
+    5129,
+    5531
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-005/r1",
+    "RF-READ-005/r2",
+    "RF-READ-005/r3",
+    "RF-READ-005/r4",
+    "RF-READ-005/r5",
+    "RF-READ-005/r6",
+    "RF-READ-005/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE-005",
+   "title": "Write to registers while reset is active",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-2",
+    "REQ-3"
+   ],
+   "span": [
+    5531,
+    5979
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-005/r1",
+    "RF-WRITE-005/r2",
+    "RF-WRITE-005/r3",
+    "RF-WRITE-005/r4",
+    "RF-WRITE-005/r5",
+    "RF-WRITE-005/r6",
+    "RF-WRITE-005/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-READ-006",
+   "title": "Verify register states after write during reset",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1",
+    "REQ-3",
+    "REQ-4",
+    "REQ-6"
+   ],
+   "span": [
+    5979,
+    6500
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-006/r1",
+    "RF-READ-006/r2",
+    "RF-READ-006/r3",
+    "RF-READ-006/r4",
+    "RF-READ-006/r5",
+    "RF-READ-006/r6",
+    "RF-READ-006/r7",
+    "RF-READ-006/r8",
+    "RF-READ-006/r9",
+    "RF-READ-006/r10"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE_READ-002",
+   "title": "Read-before-write behavior (simultaneous read/write)",
+   "tags": [
+    "write_read"
+   ],
+   "requirements": [
+    "REQ-7"
+   ],
+   "span": [
+    6500,
+    7243
+   ],
+   "operation": "write_read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE_READ-002/r1",
+    "RF-WRITE_READ-002/r2",
+    "RF-WRITE_READ-002/r3",
+    "RF-WRITE_READ-002/r4",
+    "RF-WRITE_READ-002/r5",
+    "RF-WRITE_READ-002/r6",
+    "RF-WRITE_READ-002/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "initial_data",
+    "data",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-READ-007",
+   "title": "Verify written value after read-before-write",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1",
+    "REQ-2"
+   ],
+   "span": [
+    7243,
+    7707
+   ],
+   "operation": "read",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-READ-007/r1",
+    "RF-READ-007/r2",
+    "RF-READ-007/r3",
+    "RF-READ-007/r4",
+    "RF-READ-007/r5",
+    "RF-READ-007/r6",
+    "RF-READ-007/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "expected"
+   ]
+  }
+ ],
+ "trace": {
+  "checks": {
+   "RF-READ-001/r1": 1,
+   "RF-READ-001/r2": 1,
+   "RF-READ-001/r3": 1,
+   "RF-READ-001/r4": 1,
+   "RF-READ-001/r5": 1,
+   "RF-READ-001/r6": 1,
+   "RF-READ-001/r7": 1,
+   "RF-WRITE_READ-001/r1": 1,
+   "RF-WRITE_READ-001/r2": 1,
+   "RF-WRITE_READ-001/r3": 1,
+   "RF-WRITE_READ-001/r4": 1,
+   "RF-WRITE_READ-001/r5": 1,
+   "RF-WRITE_READ-001/r6": 1,
+   "RF-WRITE_READ-001/r7": 1,
+   "RF-READ-002/r1": 1,
+   "RF-READ-002/r2": 1,
+   "RF-READ-002/r3": 1,
+   "RF-READ-002/r4": 1,
+   "RF-READ-002/r5": 1,
+   "RF-READ-003/r1": 1,
+   "RF-READ-003/r2": 1,
+   "RF-READ-003/r3": 1,
+   "RF-READ-003/r4": 1,
+   "RF-READ-003/r5": 1,
+   "RF-READ-003/r6": 1,
+   "RF-READ-003/r7": 1,
+   "RF-READ-003/r8": 1,
+   "RF-READ-003/r9": 1,
+   "RF-READ-003/r10": 1,
+   "RF-READ-003/r11": 1,
+   "RF-READ-003/r12": 1,
+   "RF-READ-003/r13": 1,
+   "RF-READ-003/r14": 1,
+   "RF-READ-003/r15": 1,
+   "RF-READ-003/r16": 1,
+   "RF-READ-003/r17": 1,
+   "RF-READ-003/r18": 1,
+   "RF-READ-003/r19": 1,
+   "RF-READ-003/r20": 1,
+   "RF-READ-004/r1": 1,
+   "RF-READ-004/r2": 1,
+   "RF-READ-004/r3": 1,
+   "RF-READ-004/r4": 1,
+   "RF-READ-004/r5": 1,
+   "RF-READ-005/r1": 1,
+   "RF-READ-005/r2": 1,
+   "RF-READ-005/r3": 1,
+   "RF-READ-005/r4": 1,
+   "RF-READ-005/r5": 1,
+   "RF-READ-005/r6": 1,
+   "RF-READ-005/r7": 1,
+   "RF-READ-006/r1": 1,
+   "RF-READ-006/r2": 1,
+   "RF-READ-006/r3": 1,
+   "RF-READ-006/r4": 1,
+   "RF-READ-006/r5": 1,
+   "RF-READ-006/r6": 1,
+   "RF-READ-006/r7": 1,
+   "RF-READ-006/r8": 1,
+   "RF-READ-006/r9": 1,
+   "RF-READ-006/r10": 1,
+   "RF-READ-007/r1": 1,
+   "RF-READ-007/r2": 1,
+   "RF-READ-007/r3": 1,
+   "RF-READ-007/r4": 1,
+   "RF-READ-007/r5": 1,
+   "RF-READ-007/r6": 1,
+   "RF-READ-007/r7": 1
+  },
+  "skipped": {
+   "RF-WRITE_READ-002/r1": "no data column could be identified",
+   "RF-WRITE_READ-002/r2": "no data column could be identified",
+   "RF-WRITE_READ-002/r3": "no data column could be identified",
+   "RF-WRITE_READ-002/r4": "no data column could be identified",
+   "RF-WRITE_READ-002/r5": "no data column could be identified",
+   "RF-WRITE_READ-002/r6": "no data column could be identified",
+   "RF-WRITE_READ-002/r7": "no data column could be identified"
+  },
+  "generated": [
+   {
+    "id": "RF-R0",
+    "label": "register 0 reads as 0 after a write"
+   }
+  ],
+  "detail": {
+   "RF-WRITE-001/r1": [
+    {
+     "test": 1,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 1,
+      "data": 100
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r2": [
+    {
+     "test": 2,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 2,
+      "data": 255
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r3": [
+    {
+     "test": 3,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 3,
+      "data": 12345
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r4": [
+    {
+     "test": 4,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 4,
+      "data": 987654321
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r5": [
+    {
+     "test": 5,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 5,
+      "data": 4294967295
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r6": [
+    {
+     "test": 6,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 6,
+      "data": 1
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r7": [
+    {
+     "test": 7,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 7,
+      "data": 16777215
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-READ-001/r1": [
+    {
+     "test": 8,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 1
+     },
+     "expected_bdd": 100,
+     "expected_ref": 100,
+     "expected_used": 100,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-001/r2": [
+    {
+     "test": 9,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 2
+     },
+     "expected_bdd": 255,
+     "expected_ref": 255,
+     "expected_used": 255,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-001/r3": [
+    {
+     "test": 10,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 3
+     },
+     "expected_bdd": 12345,
+     "expected_ref": 12345,
+     "expected_used": 12345,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-001/r4": [
+    {
+     "test": 11,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 4
+     },
+     "expected_bdd": 987654321,
+     "expected_ref": 987654321,
+     "expected_used": 987654321,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-001/r5": [
+    {
+     "test": 12,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 5
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-001/r6": [
+    {
+     "test": 13,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 6
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-001/r7": [
+    {
+     "test": 14,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 7
+     },
+     "expected_bdd": 16777215,
+     "expected_ref": 16777215,
+     "expected_used": 16777215,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r1": [
+    {
+     "test": 15,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 8,
+      "data": 42
+     },
+     "expected_bdd": 42,
+     "expected_ref": 42,
+     "expected_used": 42,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r2": [
+    {
+     "test": 16,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 9,
+      "data": 1024
+     },
+     "expected_bdd": 1024,
+     "expected_ref": 1024,
+     "expected_used": 1024,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r3": [
+    {
+     "test": 17,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 10,
+      "data": 65535
+     },
+     "expected_bdd": 65535,
+     "expected_ref": 65535,
+     "expected_used": 65535,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r4": [
+    {
+     "test": 18,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 11,
+      "data": 2147483647
+     },
+     "expected_bdd": 2147483647,
+     "expected_ref": 2147483647,
+     "expected_used": 2147483647,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r5": [
+    {
+     "test": 19,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 12,
+      "data": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r6": [
+    {
+     "test": 20,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 13,
+      "data": 13579
+     },
+     "expected_bdd": 13579,
+     "expected_ref": 13579,
+     "expected_used": 13579,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE_READ-001/r7": [
+    {
+     "test": 21,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "WRITE_READ",
+     "stimulus": {
+      "addr": 14,
+      "data": 24680
+     },
+     "expected_bdd": 24680,
+     "expected_ref": 24680,
+     "expected_used": 24680,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE-002/r1": [
+    {
+     "test": 22,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 0,
+      "data": 123
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r2": [
+    {
+     "test": 23,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 0,
+      "data": 45678
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r3": [
+    {
+     "test": 24,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 0,
+      "data": 987654321
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r4": [
+    {
+     "test": 25,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 0,
+      "data": 4294967295
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r5": [
+    {
+     "test": 26,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 0,
+      "data": 1
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-READ-002/r1": [
+    {
+     "test": 27,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-002/r2": [
+    {
+     "test": 28,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-002/r3": [
+    {
+     "test": 29,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-002/r4": [
+    {
+     "test": 30,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-002/r5": [
+    {
+     "test": 31,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE-003/r1": [
+    {
+     "test": 32,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 15,
+      "data": 111
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r2": [
+    {
+     "test": 33,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 16,
+      "data": 222
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r3": [
+    {
+     "test": 34,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 17,
+      "data": 333
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r4": [
+    {
+     "test": 35,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 1,
+      "data": 500
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r5": [
+    {
+     "test": 36,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 18,
+      "data": 444
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r6": [
+    {
+     "test": 37,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 19,
+      "data": 555
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r7": [
+    {
+     "test": 38,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 20,
+      "data": 666
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-READ-003/r1": [
+    {
+     "test": 39,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 1
+     },
+     "expected_bdd": 500,
+     "expected_ref": 500,
+     "expected_used": 500,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r2": [
+    {
+     "test": 40,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 2
+     },
+     "expected_bdd": 255,
+     "expected_ref": 255,
+     "expected_used": 255,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r3": [
+    {
+     "test": 41,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 3
+     },
+     "expected_bdd": 12345,
+     "expected_ref": 12345,
+     "expected_used": 12345,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r4": [
+    {
+     "test": 42,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 4
+     },
+     "expected_bdd": 987654321,
+     "expected_ref": 987654321,
+     "expected_used": 987654321,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r5": [
+    {
+     "test": 43,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 5
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r6": [
+    {
+     "test": 44,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 6
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r7": [
+    {
+     "test": 45,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 7
+     },
+     "expected_bdd": 16777215,
+     "expected_ref": 16777215,
+     "expected_used": 16777215,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r8": [
+    {
+     "test": 46,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 8
+     },
+     "expected_bdd": 42,
+     "expected_ref": 42,
+     "expected_used": 42,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r9": [
+    {
+     "test": 47,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 9
+     },
+     "expected_bdd": 1024,
+     "expected_ref": 1024,
+     "expected_used": 1024,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r10": [
+    {
+     "test": 48,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 10
+     },
+     "expected_bdd": 65535,
+     "expected_ref": 65535,
+     "expected_used": 65535,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r11": [
+    {
+     "test": 49,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 11
+     },
+     "expected_bdd": 2147483647,
+     "expected_ref": 2147483647,
+     "expected_used": 2147483647,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r12": [
+    {
+     "test": 50,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 12
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r13": [
+    {
+     "test": 51,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 13
+     },
+     "expected_bdd": 13579,
+     "expected_ref": 13579,
+     "expected_used": 13579,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r14": [
+    {
+     "test": 52,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 14
+     },
+     "expected_bdd": 24680,
+     "expected_ref": 24680,
+     "expected_used": 24680,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r15": [
+    {
+     "test": 53,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 15
+     },
+     "expected_bdd": 111,
+     "expected_ref": 111,
+     "expected_used": 111,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r16": [
+    {
+     "test": 54,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 16
+     },
+     "expected_bdd": 222,
+     "expected_ref": 222,
+     "expected_used": 222,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r17": [
+    {
+     "test": 55,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 17
+     },
+     "expected_bdd": 333,
+     "expected_ref": 333,
+     "expected_used": 333,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r18": [
+    {
+     "test": 56,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 18
+     },
+     "expected_bdd": 444,
+     "expected_ref": 444,
+     "expected_used": 444,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r19": [
+    {
+     "test": 57,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 19
+     },
+     "expected_bdd": 555,
+     "expected_ref": 555,
+     "expected_used": 555,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-003/r20": [
+    {
+     "test": 58,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 20
+     },
+     "expected_bdd": 666,
+     "expected_ref": 666,
+     "expected_used": 666,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE-004/r1": [
+    {
+     "test": 59,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 1,
+      "data": 777
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-004/r2": [
+    {
+     "test": 60,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 21,
+      "data": 888
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-004/r3": [
+    {
+     "test": 61,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 22,
+      "data": 999
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-004/r4": [
+    {
+     "test": 62,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 23,
+      "data": 1010
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-004/r5": [
+    {
+     "test": 63,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 24,
+      "data": 1111
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-READ-004/r1": [
+    {
+     "test": 64,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 1
+     },
+     "expected_bdd": 777,
+     "expected_ref": 777,
+     "expected_used": 777,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-004/r2": [
+    {
+     "test": 65,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 21
+     },
+     "expected_bdd": 888,
+     "expected_ref": 888,
+     "expected_used": 888,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-004/r3": [
+    {
+     "test": 66,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 22
+     },
+     "expected_bdd": 999,
+     "expected_ref": 999,
+     "expected_used": 999,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-004/r4": [
+    {
+     "test": 67,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 23
+     },
+     "expected_bdd": 1010,
+     "expected_ref": 1010,
+     "expected_used": 1010,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-004/r5": [
+    {
+     "test": 68,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 24
+     },
+     "expected_bdd": 1111,
+     "expected_ref": 1111,
+     "expected_used": 1111,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-RESET-001/r1": [
+    {
+     "test": 69,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-RESET-001/r2": [
+    {
+     "test": 70,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-RESET-001/r3": [
+    {
+     "test": 71,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-RESET-001/r4": [
+    {
+     "test": 72,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-RESET-001/r5": [
+    {
+     "test": 73,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-RESET-001/r6": [
+    {
+     "test": 74,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-RESET-001/r7": [
+    {
+     "test": 75,
+     "port": null,
+     "width": 32,
+     "operation": "RESET",
+     "stimulus": {},
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-READ-005/r1": [
+    {
+     "test": 76,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 1
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-005/r2": [
+    {
+     "test": 77,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 2
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-005/r3": [
+    {
+     "test": 78,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 3
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-005/r4": [
+    {
+     "test": 79,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 4
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-005/r5": [
+    {
+     "test": 80,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 5
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-005/r6": [
+    {
+     "test": 81,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 6
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-005/r7": [
+    {
+     "test": 82,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 7
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-WRITE-005/r1": [
+    {
+     "test": 83,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 1,
+      "data": 1000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-005/r2": [
+    {
+     "test": 84,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 2,
+      "data": 2000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-005/r3": [
+    {
+     "test": 85,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 3,
+      "data": 3000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-005/r4": [
+    {
+     "test": 86,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 4,
+      "data": 4000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-005/r5": [
+    {
+     "test": 87,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 0,
+      "data": 5000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-005/r6": [
+    {
+     "test": 88,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 5,
+      "data": 6000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-005/r7": [
+    {
+     "test": 89,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 6,
+      "data": 7000
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-READ-006/r1": [
+    {
+     "test": 90,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 1
+     },
+     "expected_bdd": 1000,
+     "expected_ref": 1000,
+     "expected_used": 1000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r2": [
+    {
+     "test": 91,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 2
+     },
+     "expected_bdd": 2000,
+     "expected_ref": 2000,
+     "expected_used": 2000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r3": [
+    {
+     "test": 92,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 3
+     },
+     "expected_bdd": 3000,
+     "expected_ref": 3000,
+     "expected_used": 3000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r4": [
+    {
+     "test": 93,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 4
+     },
+     "expected_bdd": 4000,
+     "expected_ref": 4000,
+     "expected_used": 4000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r5": [
+    {
+     "test": 94,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 0
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r6": [
+    {
+     "test": 95,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 5
+     },
+     "expected_bdd": 6000,
+     "expected_ref": 6000,
+     "expected_used": 6000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r7": [
+    {
+     "test": 96,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 6
+     },
+     "expected_bdd": 7000,
+     "expected_ref": 7000,
+     "expected_used": 7000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r8": [
+    {
+     "test": 97,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 7
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r9": [
+    {
+     "test": 98,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 8
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-006/r10": [
+    {
+     "test": 99,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 9
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r1": [
+    {
+     "test": 107,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 25
+     },
+     "expected_bdd": 20,
+     "expected_ref": 0,
+     "expected_used": 20,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r2": [
+    {
+     "test": 108,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 26
+     },
+     "expected_bdd": 200,
+     "expected_ref": 0,
+     "expected_used": 200,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r3": [
+    {
+     "test": 109,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 27
+     },
+     "expected_bdd": 2000,
+     "expected_ref": 0,
+     "expected_used": 2000,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r4": [
+    {
+     "test": 110,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 28
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r5": [
+    {
+     "test": 111,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 29
+     },
+     "expected_bdd": 6666,
+     "expected_ref": 0,
+     "expected_used": 6666,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r6": [
+    {
+     "test": 112,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 30
+     },
+     "expected_bdd": 789012,
+     "expected_ref": 0,
+     "expected_used": 789012,
+     "oracle": "bdd"
+    }
+   ],
+   "RF-READ-007/r7": [
+    {
+     "test": 113,
+     "port": "rdata1",
+     "width": 32,
+     "operation": "READ",
+     "stimulus": {
+      "addr": 31
+     },
+     "expected_bdd": 321098,
+     "expected_ref": 0,
+     "expected_used": 321098,
+     "oracle": "bdd"
+    }
+   ]
+  },
+  "setup": {
+   "RF-WRITE-001/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r5": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r6": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r7": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r5": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r5": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r6": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r7": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-004/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-004/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-004/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-004/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-004/r5": "write (verified by later reads, no check of its own)",
+   "RF-RESET-001/r1": "reset (no check of its own)",
+   "RF-RESET-001/r2": "reset (no check of its own)",
+   "RF-RESET-001/r3": "reset (no check of its own)",
+   "RF-RESET-001/r4": "reset (no check of its own)",
+   "RF-RESET-001/r5": "reset (no check of its own)",
+   "RF-RESET-001/r6": "reset (no check of its own)",
+   "RF-RESET-001/r7": "reset (no check of its own)",
+   "RF-WRITE-005/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-005/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-005/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-005/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-005/r5": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-005/r6": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-005/r7": "write (verified by later reads, no check of its own)"
+  }
+ }
+}

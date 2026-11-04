@@ -1,0 +1,388 @@
+{
+ "version": 2,
+ "feature": "regfile_32bit_32x_20261104_172730.feature",
+ "module_type": "regfile",
+ "oracle_source": "bdd",
+ "catalog": [
+  {
+   "id": "RF-WRITE-001",
+   "title": "Write values into registers with write enable asserted",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-4"
+   ],
+   "span": [
+    700,
+    1138
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-001/r1",
+    "RF-WRITE-001/r2",
+    "RF-WRITE-001/r3",
+    "RF-WRITE-001/r4",
+    "RF-WRITE-001/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-WRITE-002",
+   "title": "No register changes when write enable is deasserted",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-5"
+   ],
+   "span": [
+    1138,
+    1647
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-002/r1",
+    "RF-WRITE-002/r2",
+    "RF-WRITE-002/r3",
+    "RF-WRITE-002/r4",
+    "RF-WRITE-002/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data",
+    "expected"
+   ]
+  },
+  {
+   "id": "RF-WRITE-003",
+   "title": "First write to register 10 plus other writes",
+   "tags": [
+    "write"
+   ],
+   "requirements": [
+    "REQ-4"
+   ],
+   "span": [
+    1647,
+    2075
+   ],
+   "operation": "write",
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "RF-WRITE-003/r1",
+    "RF-WRITE-003/r2",
+    "RF-WRITE-003/r3",
+    "RF-WRITE-003/r4",
+    "RF-WRITE-003/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "addr",
+    "data"
+   ]
+  },
+  {
+   "id": "RF-READ-001",
+   "title": "Read back first write to register 10 and other registers",
+   "tags": [
+    "read"
+   ],
+   "requirements": [
+    "REQ-1"
+   ],
+   "span": [
+    2075,
+    2342
+   ],
+   "operation": "read",
+   "status": "no_examples",
+   "reason": "no Examples rows",
+   "rows": [],
+   "rows_malformed": [],
+   "rows_unmapped": []
+  }
+ ],
+ "trace": {
+  "checks": {},
+  "skipped": {},
+  "generated": [
+   {
+    "id": "RF-R0",
+    "label": "register 0 reads as 0 after a write"
+   }
+  ],
+  "detail": {
+   "RF-WRITE-001/r1": [
+    {
+     "test": 1,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 1,
+      "data": 100
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r2": [
+    {
+     "test": 2,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 2,
+      "data": 255
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r3": [
+    {
+     "test": 3,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 3,
+      "data": 4294967295
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r4": [
+    {
+     "test": 4,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 4,
+      "data": 0
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-001/r5": [
+    {
+     "test": 5,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 5,
+      "data": 305419896
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r1": [
+    {
+     "test": 6,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 1,
+      "data": 999
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r2": [
+    {
+     "test": 7,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 2,
+      "data": 111
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r3": [
+    {
+     "test": 8,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 3,
+      "data": 222
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r4": [
+    {
+     "test": 9,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 4,
+      "data": 333
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-002/r5": [
+    {
+     "test": 10,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 5,
+      "data": 444
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r1": [
+    {
+     "test": 11,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 10,
+      "data": 2863311530
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r2": [
+    {
+     "test": 12,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 11,
+      "data": 1111
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r3": [
+    {
+     "test": 13,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 12,
+      "data": 2222
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r4": [
+    {
+     "test": 14,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 13,
+      "data": 3333
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ],
+   "RF-WRITE-003/r5": [
+    {
+     "test": 15,
+     "port": null,
+     "width": 32,
+     "operation": "WRITE",
+     "stimulus": {
+      "addr": 14,
+      "data": 4444
+     },
+     "expected_bdd": null,
+     "expected_ref": null,
+     "expected_used": null,
+     "oracle": null
+    }
+   ]
+  },
+  "setup": {
+   "RF-WRITE-001/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-001/r5": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-002/r5": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r1": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r2": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r3": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r4": "write (verified by later reads, no check of its own)",
+   "RF-WRITE-003/r5": "write (verified by later reads, no check of its own)"
+  }
+ }
+}
