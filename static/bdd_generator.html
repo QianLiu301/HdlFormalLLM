@@ -2886,6 +2886,7 @@
         // 所以换模块类型时要重新拉取。
         // ============================================================
         const PROMPT_TPL = {};      // stage -> {versions, templates}
+        const PROMPT_VER = {};   // stage -> version chosen in the menu
         const PROMPT_ERR = {};      // stage -> 取不到模板的原因（服务器给的说明）
         const PROMPT_EDITS = {};    // step -> {stage, user, system}
 
@@ -2936,7 +2937,8 @@
 
             const edit = PROMPT_EDITS[step];
             const custom = !!(edit && edit.stage === stage);
-            const ver = (custom && edit.version) || 'v1';
+            // the version chosen in the menu, else the server's default for this design type
+            const ver = (custom && edit.version) || PROMPT_VER[stage] || info.default || 'v1';
             const tpl = info.templates[ver] || {};
             const sysText = custom ? edit.system : (tpl.system || '');
             const userText = custom ? edit.user : (tpl.user || '');
@@ -3008,6 +3010,7 @@
 
         function onPromptVersionChange(step) {
             const v = document.getElementById(`${step}-prompt-version`).value;
+            PROMPT_VER[promptStageFor(step)] = v;    // kept when the panel is drawn again
             if (PROMPT_EDITS[step]) PROMPT_EDITS[step].version = v;
             renderPromptPanel(step);
         }
@@ -3019,7 +3022,8 @@
                 renderPromptPanel(step);
                 return;
             }
-            const ver = (document.getElementById(`${step}-prompt-version`) || {}).value || 'v1';
+            const ver = (document.getElementById(`${step}-prompt-version`) || {}).value
+                || (PROMPT_TPL[stage] || {}).default || 'v1';
             const tpl = (PROMPT_TPL[stage] || {}).templates[ver] || {};
             PROMPT_EDITS[step] = {stage, version: ver,
                                   system: tpl.system || '', user: tpl.user || ''};
@@ -3044,8 +3048,10 @@
         function promptPayload(step) {
             const stage = promptStageFor(step);
             const e = PROMPT_EDITS[step];
-            const ver = (document.getElementById(`${step}-prompt-version`) || {}).value || 'v1';
-            if (!e || e.stage !== stage) return {prompt_version: ver};
+            const ver = (document.getElementById(`${step}-prompt-version`) || {}).value
+                || (PROMPT_TPL[stage] || {}).default;
+            // no panel yet: the server picks its default version for this design type
+            if (!e || e.stage !== stage) return ver ? {prompt_version: ver} : {};
             // templates 也要兜底：服务器缺 PyYAML 时 PROMPT_TPL[stage] 整个不存在，
             // 少一层 || {} 就会在这里抛 TypeError，把整次生成一起带崩
             const tpl = ((PROMPT_TPL[stage] || {}).templates || {})[e.version || ver] || {};

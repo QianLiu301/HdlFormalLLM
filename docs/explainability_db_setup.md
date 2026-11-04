@@ -222,6 +222,25 @@ To share a trial (results and every generated file) through git:
 python -m src.xdb.trial export --tag first --to data/trials/first/files
 ```
 
+## 6b. Keeping keys out of git
+
+Once per clone, let git refuse commits that contain credentials:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook (`tools/check_secrets.py`) refuses `.env*`, `config/llm_config.json`
+and any added line that holds a key configured on this machine or looks like
+one. To check every tracked file: `python tools/check_secrets.py --all`.
+Trial outputs are redacted when they are written, and the server redacts its
+error messages. Still, add only what you mean to share
+(`git add data/trials/<tag>`) and look at `git status` before committing.
+
+If a key ever reaches GitHub, deleting the file is not enough (it stays in the
+history): revoke the key at the provider and put the new one into
+`config/llm_config.json` or `.env`.
+
 ## 6a. Explanations in the terminal
 
 The same explanations can be printed:

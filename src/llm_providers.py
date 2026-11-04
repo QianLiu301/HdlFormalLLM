@@ -65,6 +65,12 @@ except ImportError:
             pass
 
 
+try:
+    from src.redact import redact_secrets
+except ImportError:
+    from redact import redact_secrets
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers"""
 
@@ -334,9 +340,18 @@ class LLMProvider(ABC):
         main01 因此出现「日志里 45 次 429，数据库里 0 条错误」。
         """
         try:
-            _record_meta(api_error=f'{type(exc).__name__}: {exc}'[:300],
+            # never store a key: requests puts the whole URL into its messages
+            _record_meta(api_error=redact_secrets(f'{type(exc).__name__}: {exc}')[:300],
                          api_error_status=getattr(
                              getattr(exc, 'response', None), 'status_code', None))
+        except Exception:
+            pass
+
+    def _note_api_failure(self, message: str, status: Optional[int] = None) -> None:
+        """Like _note_api_error, for failures that are not exceptions (an HTTP
+        status, a timeout after the last retry)."""
+        try:
+            _record_meta(api_error=redact_secrets(message)[:300], api_error_status=status)
         except Exception:
             pass
 
@@ -488,7 +503,8 @@ class GeminiProvider(LLMProvider):
         model_name = self.model if "gemini" in self.model else "gemini-2.0-flash-exp"
         max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
         print(f"🔷 [Gemini] Calling REST API - Model: {model_name}, max_tokens: {max_tokens}")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+        # the key goes in a header: a URL ends up in error messages and logs
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
         # 采样参数进 generationConfig；默认 temperature=0.4（代码生成用低随机性）
         gen_config = {"maxOutputTokens": max_tokens}
@@ -508,7 +524,8 @@ class GeminiProvider(LLMProvider):
 
         try:
             proxies = self._get_proxies()
-            response = requests.post(url, json=payload, timeout=60, proxies=proxies)
+            response = requests.post(url, json=payload, headers={'x-goog-api-key': self.api_key},
+                                     timeout=60, proxies=proxies)
             response.raise_for_status()
             result = response.json()
             self._record_response_meta(result)
@@ -533,7 +550,7 @@ class GeminiProvider(LLMProvider):
         print(f"🔷 [Gemini] Calling Stream API - Model: {self.model}, max_tokens: {max_tokens}")
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}"
-            f":streamGenerateContent?alt=sse&key={self.api_key}"
+            f":streamGenerateContent?alt=sse"
         )
  
         gen_config = {"maxOutputTokens": max_tokens}
@@ -553,6 +570,7 @@ class GeminiProvider(LLMProvider):
             response = requests.post(
                 url,
                 json=payload,
+                headers={'x-goog-api-key': self.api_key},
                 proxies=proxies,
                 stream=True,
                 timeout=300  # 增大超时
@@ -864,6 +882,11 @@ class DeepSeekProvider(LLMProvider):
     # 与 Gemini 的 THINKING_BUDGET 同样是「保留推理但设上限」，两家口径一致。
     REASONING_EFFORT = 'low'
 
+    # (connect, read) seconds. A reasoning model writing a CPU (20 kB of
+    # Verilog) needs more than a minute; with 60 s every attempt of such a
+    # call timed out (trial cpu_fix, 2026-11-04: 3 x 60 s, then the fallback).
+    TIMEOUT = (15, 300)
+
     def _reasoning_config(self) -> Dict:
         m = (self.model or '').lower()
         return {'reasoning_effort': self.REASONING_EFFORT} if 'v4' in m else {}
@@ -959,7 +982,8 @@ class DeepSeekProvider(LLMProvider):
 
                 # 🆕 添加代理支持
                 proxies = self._get_proxies()
-                response = requests.post(self.api_url, headers=headers, json=payload, timeout=60, proxies=proxies)
+                response = requests.post(self.api_url, headers=headers, json=payload,
+                                         timeout=self.TIMEOUT, proxies=proxies)
 
                 # ============================================================
                 # 调试信息：响应状态
@@ -1002,8 +1026,15 @@ class DeepSeekProvider(LLMProvider):
                     error_detail = response.text
                     print(f"   ❌ [ERROR] API request failed: Status {response.status_code}")
                     print(f"   ❌ [ERROR] Error detail: {error_detail[:200]}")  # 只显示前200字符
+                    # 4xx other than 429 (bad key, no balance, bad request) does not
+                    # change on a retry
+                    final = (attempt >= max_retries - 1
+                             or (400 <= response.status_code < 500 and response.status_code != 429))
+                    if final:
+                        self._note_api_failure(f'HTTP {response.status_code} from DeepSeek: '
+                                               f'{error_detail[:200]}', response.status_code)
 
-                    if attempt < max_retries - 1:
+                    if not final:
                         print(f"   ⏳ [DEBUG] Waiting {retry_delay}s before retry...")
                         time.sleep(retry_delay)
                         retry_delay *= 2  # 指数退避
@@ -1013,13 +1044,17 @@ class DeepSeekProvider(LLMProvider):
                         return self._fallback_description(prompt)
 
             except requests.exceptions.Timeout:
-                print(f"   ❌ [ERROR] Request timeout (60s)")
-                if attempt < max_retries - 1:
+                print(f"   ❌ [ERROR] Request timeout ({self.TIMEOUT[1]}s)")
+                # one more try at most: a request that ran into the long timeout
+                # usually does so again
+                if attempt < 1:
                     print(f"   🔄 [DEBUG] Retrying after timeout...")
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 else:
                     print(f"   ⚠️  [WARN] Timeout after all retries, returning fallback")
+                    self._note_api_failure(f'Timeout: no answer from DeepSeek within {self.TIMEOUT[1]} s '
+                                           f'({attempt + 1} attempts)')
                     return self._fallback_description(prompt)
 
             except requests.exceptions.RequestException as e:
@@ -1030,6 +1065,7 @@ class DeepSeekProvider(LLMProvider):
                     retry_delay *= 2
                 else:
                     print(f"   ⚠️  [WARN] Network error after all retries, returning fallback")
+                    self._note_api_error(e)
                     return self._fallback_description(prompt)
 
             except Exception as e:

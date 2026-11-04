@@ -2849,10 +2849,15 @@ class TestbenchGenerator:
         A('')
         A('    initial clk = 0;')
         A('    always #5 clk = ~clk;')
+        # Both memories read combinationally, the data memory writes at the clock
+        # edge: the textbook five-stage pipeline the CPU prompt describes (its
+        # MEM/WB register stores dmem_rdata), stated in prompts/duv_cpu/v2. A
+        # registered read made every load of such a design return the word of
+        # the previous bus address (trials first and cpu_fix, 2026-11-04).
         A('    always @(*) imem_data = imem[imem_addr[11:2]];')
+        A('    always @(*) dmem_rdata = dmem[dmem_addr[11:2]];')
         A('    always @(posedge clk) begin')
         A('        if (dmem_wen) dmem[dmem_addr[11:2]] <= dmem_wdata;')
-        A('        dmem_rdata <= dmem[dmem_addr[11:2]];')
         A('    end')
         A('')
         A('    initial begin')

@@ -512,11 +512,33 @@ class Trial:
 
 # ----------------------------------------------------------------- reporting
 
+# A run that stopped because the provider did not answer (rate limit, quota,
+# timeout, network, no balance) says nothing about the model; it is retried
+# when the same trial command runs again, and the summary counts it apart.
+_API_FAILURE = re.compile(r'The model call failed|\b429\b|Too Many Requests|RESOURCE_EXHAUSTED|quota|rate.?limit'
+                          r'|Timeout|timed out|HTTP 5\d\d|\b50[234]\b|ConnectionError|Max retries exceeded'
+                          r'|Insufficient Balance|\b402\b', re.I)
+
+
+def failure_kind(rec: Dict) -> Optional[str]:
+    """None (the run finished), 'api' (the provider did not answer), 'tool'
+    (an exception in this code) or 'model' (the answer was unusable)."""
+    err = rec.get('error')
+    if not err:
+        return None
+    if _API_FAILURE.search(err):
+        return 'api'
+    if re.match(r'^[A-Z]\w*(Error|Exception)\b', err):
+        return 'tool'
+    return 'model'
+
+
 def _flat(rec: Dict) -> Dict:
     i, f = rec.get('initial') or {}, rec.get('final') or {}
     iv, fv = i.get('verdicts') or {}, f.get('verdicts') or {}
     row = {'llm': rec['llm'], 'design': rec['design'], 'rep': rec['rep'], 'stage': rec['stage'],
-           'error': (rec.get('error') or '')[:200], 'seconds': rec.get('seconds'),
+           'error': (rec.get('error') or '')[:200], 'failure': failure_kind(rec) or '',
+           'seconds': rec.get('seconds'),
            'step0_ok': (rec.get('step0') or {}).get('ok'),
            'duv_compiles': (rec.get('duv') or {}).get('compiles'),
            'test_count': (rec.get('tb') or {}).get('test_count'),
@@ -561,7 +583,12 @@ def summarize(records: List[Dict]) -> str:
         drep = sum(1 for r in ok for x in r.get('rounds') or [] if x['action'] == 'design')
         cfix = [x for r in rs for x in r.get('rounds') or [] if x['action'] in ('compile', 'interface')]
         cfix_txt = f"{sum(1 for x in cfix if x['ok'])}/{len(cfix)}" if cfix else '—'
-        errors = sorted({(r.get('error') or '').split(':')[0] for r in rs if r.get('error')})
+        stops: Dict[str, int] = {}
+        for r in rs:
+            if r.get('error'):
+                k = (r['error'].split(':')[0] or 'error') + (' (API)' if failure_kind(r) == 'api' else '')
+                stops[k] = stops.get(k, 0) + 1
+        errors = [f'{k} ×{v}' for k, v in sorted(stops.items())]
         lines.append(f"| {llm} | {design} | {len(rs)} | {len(ok)} | {n} | {pct(tot['pass'])} "
                      f"| {pct(tot['design_wrong'])} | {pct(tot['scenario_wrong'])} "
                      f"| {pct(tot['both_wrong'] + tot['consistent_wrong'] + tot['undecided'])} "
@@ -570,6 +597,12 @@ def summarize(records: List[Dict]) -> str:
                      f"| {', '.join(e for e in errors if e) or '—'} |")
     unread = sorted({t for r in records for t in (r.get('initial') or {}).get('unmapped_examples') or []})
     out = ['# Trial summary', '', *lines]
+    lost = [r for r in records if failure_kind(r) == 'api']
+    if lost:
+        out += ['', f'{len(lost)} run(s) stopped because the provider did not answer (marked "(API)" under '
+                    'errors: rate limit, quota, timeout, network, balance). They say nothing about the model; '
+                    'running the same trial command again retries them.']
+        out += [f"- {r['llm']} {r['design']} #{r['rep']}: {r['error'][:160]}" for r in lost]
     if unread:
         out += ['', 'Scenario steps the rule library could not read (up to 20 per run):', '']
         out += [f'- `{t}`' for t in unread[:60]]
@@ -585,6 +618,10 @@ def summarize(records: List[Dict]) -> str:
 
 
 def write_outputs(out: Path, records: List[Dict]) -> str:
+    # these files are meant to be shared (data/trials/ in git): no credential
+    # may be in them, e.g. a key inside a request URL quoted by an error message
+    from src.redact import redact_obj
+    records = redact_obj(records)
     with open(out / 'runs.jsonl', 'w', encoding='utf-8') as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + '\n')
@@ -701,16 +738,19 @@ def main(argv=None):
         install_mock()            # after the app import: main loads llm_providers by its short name
         MockLLM.first_fault = args.mock_fault
     records = load(trial.out)
-    done = {(r['llm'], r['design'], r['rep']) for r in records}
+    done = {(r['llm'], r['design'], r['rep']) for r in records if failure_kind(r) != 'api'}
+    retry = sum(1 for r in records if failure_kind(r) == 'api')
     plan = [(l, d, k) for l in llms for d in designs for k in range(1, args.reps + 1) if (l, d, k) not in done]
     say = lambda s, end='\n': print(s, end=end, file=sys.__stdout__, flush=True)
-    say(f'trial {tag}: {len(plan)} runs ({len(done)} already done) -> {trial.out}')
+    say(f'trial {tag}: {len(plan)} runs ({len(done)} already done'
+        + (f', {retry} retried after an API failure' if retry else '') + f') -> {trial.out}')
     # everything the server and its background threads print goes to server.log
     with open(trial.out / 'server.log', 'a', encoding='utf-8') as server_log, \
             contextlib.redirect_stdout(server_log):
         for n, (llm, design, rep) in enumerate(plan, 1):
             say(f'[{n}/{len(plan)}] {llm} {design} #{rep} ... ', end='')
             rec = trial.run_one(llm, design, rep, model=models.get(llm))
+            records = [r for r in records if (r['llm'], r['design'], r['rep']) != (llm, design, rep)]
             records.append(rec)
             write_outputs(trial.out, records)             # keep results if the trial is interrupted
             v = (rec.get('initial') or {}).get('verdicts') or {}
@@ -718,7 +758,8 @@ def main(argv=None):
                       f"{sum(v.values())} checks, design wrong {v.get('design_wrong', 0)}, scenario wrong "
                       f"{v.get('scenario_wrong', 0)}; after repair: "
                       f"{'clear' if (rec.get('final') or {}).get('all_clear') else 'problems left'}")
-            say(f'{status} ({rec.get("seconds")} s)')
+            from src.redact import redact_secrets
+            say(f'{redact_secrets(status)} ({rec.get("seconds")} s)')
         time.sleep(2)                                     # let the last background writes finish
     say('')
     say(write_outputs(trial.out, records))
