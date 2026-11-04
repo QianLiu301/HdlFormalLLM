@@ -89,8 +89,25 @@ VERDICTS = ('pass', 'design_wrong', 'scenario_wrong', 'both_wrong', 'consistent_
 class MockLLM:
     """Answers every prompt of the flow with the canned samples
     (src/xdb/samples.py): a design with a known bug, scenarios with known
-    mistakes, the fixed design when asked for a repair. For dry runs only."""
+    mistakes, the fixed design when asked for a repair. For dry runs only.
+
+    first_fault = 'compile' | 'interface' makes the first design of each type
+    not compile, or use other port names, so the compile fixes run too."""
     model = 'mock'
+    first_fault: Optional[str] = None
+    _faulted: set = set()
+
+    @classmethod
+    def _fault(cls, kind: str, design: str) -> str:
+        if not cls.first_fault or kind in cls._faulted:
+            return design
+        cls._faulted.add(kind)
+        if cls.first_fault == 'compile':
+            # a wire driven from an always block: Icarus rejects it
+            # ('not a valid l-value'), the error class seen in real runs
+            return design.replace('endmodule', "    wire bad_wire;\n    always @(*) bad_wire = 1'b0;\nendmodule", 1)
+        # other port names: the testbench cannot connect
+        return design.replace('wen', 'we_n').replace('rst_n', 'reset_n').replace('opcode', 'op')
 
     @staticmethod
     def _kind(prompt: str) -> str:
@@ -111,7 +128,8 @@ class MockLLM:
             return json.dumps({'requirements': [r['text'] for r in rec['requirements']], 'questions': []})
         if 'Gherkin' in prompt:
             return {'alu': S.alu_feature(), 'regfile': S.RF_FEATURE, 'cpu': S.CPU_FEATURE}[kind]
-        return '```verilog\n' + {'alu': S.ALU, 'regfile': S.RF_BUGGY, 'cpu': S.CPU_BUGGY}[kind] + '\n```'
+        return '```verilog\n' + self._fault(kind, {'alu': S.ALU, 'regfile': S.RF_BUGGY, 'cpu': S.CPU_BUGGY}[kind]) \
+            + '\n```'
 
 
 def install_mock():
@@ -145,10 +163,12 @@ def install_mock():
 
 class Trial:
     def __init__(self, tag: str, step0: bool = True, repair_rounds: int = 2, wait: float = 120.0,
+                 compile_fix: int = 2,
                  out_root: Optional[Path] = None, app=None, project_root: Optional[Path] = None):
         self.tag = tag
         self.step0 = step0
         self.repair_rounds = repair_rounds
+        self.compile_fix = compile_fix
         self.wait = wait
         self.out = (out_root or ROOT / 'output' / 'trials') / tag
         (self.out / 'logs').mkdir(parents=True, exist_ok=True)
@@ -348,6 +368,23 @@ class Trial:
             rec['error'] = f"design: {hw.get('error')}"
             return
         duv = rec['duv']['file']
+        # a design that does not compile goes back to the model with the compiler's messages
+        k = 0
+        while dc.get('ok') is False and k < self.compile_fix:
+            k += 1
+            fx = self._post('/api/generate-hardware', {**common, **extra, 'input': '', 'run_id': run_id,
+                                                       'compile_fix_of': {'duv_filepath': duv}})
+            run_ids.append(fx.get('run_id'))
+            step = {'round': k, 'action': 'compile', 'ok': bool(fx.get('success')), 'error': fx.get('error'),
+                    'errors_sent': (fx.get('compile_fix') or {}).get('errors')}
+            if fx.get('success'):
+                dc = fx.get('duv_compile') or {}
+                duv = self._rel(fx.get('filepath'))
+                step.update(ok=dc.get('ok') is not False, compile_error=dc.get('error'))
+            rec['rounds'].append(step)
+            if not fx.get('success'):
+                break
+        rec['duv'].update(compile_fixes=k, compiles_in_the_end=dc.get('ok'), final_file=duv)
         if dc.get('ok') is False:
             rec['error'] = 'design does not compile'
             return
@@ -382,6 +419,32 @@ class Trial:
                                                  'run_id': run_id, 'workflow_mode': 'implementation'})
         rec['sim'] = {'ok': bool(sim.get('success')), 'error': sim.get('error') or sim.get('errors'),
                       'total': sim.get('total_tests'), 'passed': sim.get('passed_tests')}
+        # the testbench cannot connect to the design (e.g. other port names): the model
+        # gets the compiler's messages and the ports the testbench uses
+        k = 0
+        while not sim.get('success') and 'Compilation failed' in str(rec['sim']['error']) and k < self.compile_fix:
+            k += 1
+            fx = self._post('/api/generate-hardware', {**common, **extra, 'input': '', 'run_id': run_id,
+                                                       'compile_fix_of': {'duv_filepath': duv,
+                                                                          'testbench_path': tb_path}})
+            run_ids.append(fx.get('run_id'))
+            step = {'round': k, 'action': 'interface', 'ok': False, 'error': fx.get('error'),
+                    'errors_sent': (fx.get('compile_fix') or {}).get('errors')}
+            if fx.get('success') and (fx.get('duv_compile') or {}).get('ok') is not False:
+                duv = self._rel(fx.get('filepath'))
+                rr = self._post('/api/repair/rerun', {'bdd_filepath': feature, 'duv_filepath': duv,
+                                                      'run_id': run_id, 'workflow_mode': 'implementation',
+                                                      'dut_info': dut_info})
+                if rr.get('success'):
+                    tb_path, sim = rr['testbench_path'], rr.get('simulation') or {}
+                    rec['sim'] = {'ok': bool(sim.get('success')), 'error': sim.get('error') or sim.get('errors'),
+                                  'total': sim.get('total_tests'), 'passed': sim.get('passed_tests')}
+                    step['ok'] = bool(sim.get('success'))
+                else:
+                    step['error'] = rr.get('error')
+            rec['rounds'].append(step)
+            if not fx.get('success'):
+                break
         if not sim.get('success'):
             rec['error'] = f"simulation: {rec['sim']['error']}"
             return
@@ -467,6 +530,9 @@ def _flat(rec: Dict) -> Dict:
         row[f'final_{k}'] = fv.get(k)
     row.update({'initial_all_clear': i.get('all_clear'), 'final_all_clear': f.get('all_clear'),
                 'scenario_repairs': sum(1 for r in rec.get('rounds') or [] if r['action'] == 'scenarios'),
+                'compile_fixes': sum(1 for r in rec.get('rounds') or [] if r['action'] in ('compile', 'interface')),
+                'compile_fixes_ok': sum(1 for r in rec.get('rounds') or []
+                                        if r['action'] in ('compile', 'interface') and r['ok']),
                 'design_repairs': sum(1 for r in rec.get('rounds') or [] if r['action'] == 'design'),
                 'repair_failures': sum(1 for r in rec.get('rounds') or [] if not r['ok']),
                 'llm_calls': rec.get('llm_calls'), 'prompt_chars': rec.get('prompt_chars'),
@@ -479,8 +545,9 @@ def summarize(records: List[Dict]) -> str:
     for r in records:
         groups.setdefault((r['llm'], r['design']), []).append(r)
     lines = ['| model | design | runs | reached explanations | checks | pass | design wrong | scenario wrong '
-             '| other | steps read | skipped rows | clear at start | clear at end | design repairs | errors |',
-             '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
+             '| other | steps read | skipped rows | clear at start | clear at end | design repairs '
+             '| compile fixes | errors |',
+             '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
     for (llm, design), rs in sorted(groups.items()):
         ok = [r for r in rs if r.get('initial') and not (r['initial'] or {}).get('error')]
         tot = {k: sum((r['initial']['verdicts'] or {}).get(k, 0) for r in ok) for k in VERDICTS}
@@ -492,12 +559,14 @@ def summarize(records: List[Dict]) -> str:
         clear0 = sum(1 for r in ok if r['initial'].get('all_clear'))
         clear1 = sum(1 for r in ok if (r.get('final') or {}).get('all_clear'))
         drep = sum(1 for r in ok for x in r.get('rounds') or [] if x['action'] == 'design')
+        cfix = [x for r in rs for x in r.get('rounds') or [] if x['action'] in ('compile', 'interface')]
+        cfix_txt = f"{sum(1 for x in cfix if x['ok'])}/{len(cfix)}" if cfix else '—'
         errors = sorted({(r.get('error') or '').split(':')[0] for r in rs if r.get('error')})
         lines.append(f"| {llm} | {design} | {len(rs)} | {len(ok)} | {n} | {pct(tot['pass'])} "
                      f"| {pct(tot['design_wrong'])} | {pct(tot['scenario_wrong'])} "
                      f"| {pct(tot['both_wrong'] + tot['consistent_wrong'] + tot['undecided'])} "
                      f"| {f'{100 * mapped / (mapped + unmapped):.0f}%' if mapped + unmapped else '—'} "
-                     f"| {skipped} | {clear0}/{len(ok)} | {clear1}/{len(ok)} | {drep} "
+                     f"| {skipped} | {clear0}/{len(ok)} | {clear1}/{len(ok)} | {drep} | {cfix_txt} "
                      f"| {', '.join(e for e in errors if e) or '—'} |")
     unread = sorted({t for r in records for t in (r.get('initial') or {}).get('unmapped_examples') or []})
     out = ['# Trial summary', '', *lines]
@@ -584,6 +653,11 @@ def main(argv=None):
     r.add_argument('--designs', default=','.join(DESIGNS), help='alu,regfile,cpu (default: all three)')
     r.add_argument('--reps', type=int, default=1)
     r.add_argument('--repair', type=int, default=2, help='repair rounds per run (0 = none)')
+    r.add_argument('--mock-fault', choices=('compile', 'interface'), default=None,
+                   help="with --llms mock: the first design of each type does not compile ('compile') "
+                        "or uses other port names ('interface')")
+    r.add_argument('--compile-fix', type=int, default=2,
+                   help='attempts to let the model fix a design that does not compile (0 = none)')
     r.add_argument('--no-step0', action='store_true', help='skip the requirements step')
     r.add_argument('--model', action='append', default=[], metavar='LLM=MODEL',
                    help='model for a provider, e.g. gemini=gemini-2.5-flash (repeatable)')
@@ -622,9 +696,10 @@ def main(argv=None):
         sys.exit(f'unknown design type(s): {", ".join(bad)} (choose from {", ".join(DESIGNS)})')
     models = dict(m.split('=', 1) for m in args.model if '=' in m)
     tag = args.tag or datetime.now().strftime('trial_%Y%m%d_%H%M%S')
-    trial = Trial(tag, step0=not args.no_step0, repair_rounds=args.repair)
+    trial = Trial(tag, step0=not args.no_step0, repair_rounds=args.repair, compile_fix=args.compile_fix)
     if 'mock' in llms:
         install_mock()            # after the app import: main loads llm_providers by its short name
+        MockLLM.first_fault = args.mock_fault
     records = load(trial.out)
     done = {(r['llm'], r['design'], r['rep']) for r in records}
     plan = [(l, d, k) for l in llms for d in designs for k in range(1, args.reps + 1) if (l, d, k) not in done]

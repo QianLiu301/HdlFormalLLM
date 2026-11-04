@@ -148,7 +148,8 @@ class RegFileGenerator:
         # M4 repair: the failures of the last simulation, judged by the reference model
         if getattr(self, 'repair_feedback', None):
             prompt += _prompt_store.repair_feedback_block(self.repair_feedback,
-                                                          getattr(self, 'repair_previous', None))
+                                                          getattr(self, 'repair_previous', None),
+                                                          getattr(self, 'repair_kind', 'simulation'))
             print(f"🔁 Repair feedback appended to prompt ({len(self.repair_feedback)} chars)")
 
         if self.debug:
@@ -176,6 +177,7 @@ class RegFileGenerator:
 
             if not response:
                 print(f"❌ LLM returned empty response")
+                self.last_error = 'The model returned an empty answer (often: it spent its output budget on reasoning).'
                 return None
 
             print(f"✅ Received response ({len(response)} chars)")
@@ -198,7 +200,9 @@ class RegFileGenerator:
 
             if not verilog_code:
                 print(f"❌ Could not extract valid Verilog code")
-                print(f"   Raw response preview: {response[:200]}...")
+                print(f"   Raw response preview: {(response or '')[:200]}...")
+                self.last_error = (f'The model\'s answer ({len(response or "")} characters) contained no complete '
+                                   f'Verilog module (it may have been cut off).')
                 return None
 
             # Fix common syntax errors (missing begin/end in case branches)
@@ -220,6 +224,7 @@ class RegFileGenerator:
             print(f"❌ Generation failed: {e}")
             import traceback
             traceback.print_exc()
+            self.last_error = f'{type(e).__name__}: {e}'
             return None
 
     def _create_regfile_prompt(self, bitwidth: int, depth: int, module_name: str) -> str:
@@ -633,6 +638,11 @@ Start with `module` and end with `endmodule`.
         """Save Register File to file"""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # two designs saved within one second (e.g. a quick compile fix) must
+        # not overwrite each other: the earlier version is kept
+        stamp, n = timestamp, 2
+        while (self.output_dir / f"{module_name}_{depth}x_{timestamp}.v").exists():
+            timestamp, n = f"{stamp}_{n}", n + 1
         filename = f"{module_name}_{depth}x_{timestamp}.v"
 
         header = f"""//==============================================================================

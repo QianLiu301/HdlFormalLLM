@@ -169,7 +169,7 @@ scenario with a Given/When step the testbench does not do (library steps
 `executable: False`, `library.not_executable`, `mapping.blocked_steps`; or an
 unrecognised When step) are undecided, reported as testbench limits, never
 repaired; parser keeps blank table cells (`testbench_generator._table_cells`,
-empty operand → skipped `EMPTY_OPERAND`); trial `export` copies run files. Product output (explanations, UI text,
+empty operand → skipped `EMPTY_OPERAND`); trial `export` copies run files. D30 compile-error repair: `compile_fix_of {duv_filepath, testbench_path?}` in /api/generate-hardware (`main._compile_fix_feedback`: kind 'compile' = design alone fails iverilog -g2012, 'interface' = only fails with the testbench, ports from its `dut` instance; `prompt_store._REPAIR_INTRO[kind]`; any design type, DB optional; with DB a feedback row `fix_compile_error` via `repair.open_compile_feedback`); UI buttons in Step 1 (`renderDuvCompile`) and Step 4 (`offerSimFix`, then /api/repair/rerun); trial `--compile-fix N`, mock `--mock-fault compile|interface`; browser check `tests/ui/compile_fix.js` with `tests/ui/mock_server.py` (app + mock model). Ingestion retries deadlock victims (`ingest._retry`); generator file names are unique within one second. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
 (need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon;
 `service postgresql start` if the container restarted).

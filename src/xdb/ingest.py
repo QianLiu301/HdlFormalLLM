@@ -26,12 +26,13 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Optional
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src import xdb
 from src.xdb import gherkin
@@ -342,13 +343,31 @@ def _upsert_feature(s, sess, sha, text, data, calls) -> M.Feature:
     return row
 
 
-def _retry(fn, *a, **kw):
-    """Steps of one run may be ingested concurrently (background threads); the
-    loser of a race on a unique key simply runs again and finds the row."""
-    try:
-        return fn(*a, **kw)
-    except IntegrityError:
-        return fn(*a, **kw)
+# PostgreSQL SQLSTATEs of a transaction that lost a race and may simply run again
+_TRANSIENT_PGCODES = {'40P01',   # deadlock_detected
+                      '40001'}   # serialization_failure
+
+
+def _transient(exc: Exception) -> bool:
+    if isinstance(exc, IntegrityError):
+        return True
+    if isinstance(exc, OperationalError):
+        return getattr(getattr(exc, 'orig', None), 'pgcode', None) in _TRANSIENT_PGCODES
+    return False
+
+
+def _retry(fn, *a, attempts: int = 4, **kw):
+    """Steps of one run may be ingested concurrently (background threads). The
+    loser of a race on a unique key, or the victim of a deadlock between two
+    such transactions, runs again (its transaction was rolled back as a whole)
+    and finds the rows the winner wrote. Other errors are raised at once."""
+    for i in range(attempts):
+        try:
+            return fn(*a, **kw)
+        except (IntegrityError, OperationalError) as exc:
+            if not _transient(exc) or i == attempts - 1:
+                raise
+            time.sleep(0.05 * (2 ** i))
 
 
 def ingest_duv(project_root, path, run_id: Optional[str], data: Dict, meta: Optional[Dict] = None,

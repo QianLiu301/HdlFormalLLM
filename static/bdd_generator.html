@@ -834,6 +834,13 @@
         .compile-status { margin-top: 8px; padding: 8px 10px; border-radius: 6px;
                           font-size: 12px; line-height: 1.6; }
         .compile-ok  { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+        .fix-row { margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .fix-row .btn { flex: 0 0 auto; }
+        .fix-status { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+        .fix-status.err { color: var(--error); }
+        .fix-status.ok { color: var(--accent); font-weight: 600; }
+        .compile-fix { margin-top: 8px; padding: 10px 12px; border-radius: 8px; background: #fef2f2;
+                       border: 1px solid #fecaca; font-size: 13px; line-height: 1.5; }
         .compile-bad { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
         .compile-status code { display: block; margin-top: 4px; font-size: 11px;
                                font-family: 'JetBrains Mono', monospace;
@@ -2064,6 +2071,8 @@
             </div>
 
             <div class="error-message" id="sim-error"></div>
+            <!-- the testbench could not be compiled with the design: offer to let the model fix the design -->
+            <div class="compile-fix" id="sim-fix" style="display: none;"></div>
 
             <button class="btn btn-primary" style="background: var(--error);" id="sim-btn"
                     onclick="runSimulationByMode()">
@@ -3103,11 +3112,129 @@
                 el.textContent = '✓ Compiles standalone (iverilog -g2012)';
             } else {
                 el.className = 'compile-status compile-bad';
+                const llm = ((resp && resp.llm) || document.getElementById('hw-llm').value || '').toUpperCase();
                 el.innerHTML = '✗ This design does not compile — the failure is in '
                     + 'Step 1, not in simulation.<br><code>'
                     + (c.error || '').replace(/[<>&]/g, ch =>
                         ({'<': '&lt;', '>': '&gt;', '&': '&amp;'}[ch]))
-                    + '</code>';
+                    + '</code>'
+                    + `<div class="fix-row"><button class="btn btn-secondary btn-sm" onclick="fixCompileError('hw')">`
+                    + `Fix the compile error with ${escapeHtml(llm)}</button>`
+                    + `<span class="fix-status" id="hw-fix-status">Sends the compiler's messages and the design `
+                    + `back to the model, which writes a corrected version.</span></div>`;
+            }
+        }
+
+        // ============================================================
+        // Compile-error repair: the compiler's messages and the current design go
+        // back to the model (Step 1), or, when the testbench cannot connect to the
+        // design, also the ports the testbench uses (Step 4). Works without the
+        // explainability database; with it the fix is stored as a new version.
+        // ============================================================
+        let compileFixBusy = false;
+
+        function fixLlm() {
+            return (currentDUT && currentDUT.source !== 'upload' && currentDUT.llm)
+                || document.getElementById('hw-llm').value;
+        }
+
+        function tbFilePath() {
+            return currentTbFilename ? `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}` : null;
+        }
+
+        function setFixStatus(where, msg, kind) {
+            const el = document.getElementById(`${where}-fix-status`);
+            if (!el) return;
+            el.className = 'fix-status' + (kind ? ' ' + kind : '');
+            el.textContent = msg;
+        }
+
+        function offerSimFix(message) {
+            const box = document.getElementById('sim-fix');
+            if (!box) return;
+            if (!currentDUT || !/Compilation failed|error:/i.test(message || '')) {
+                box.style.display = 'none';
+                return;
+            }
+            const L = escapeHtml(fixLlm().toUpperCase());
+            box.innerHTML = 'The testbench could not be compiled together with the design (see the error above). '
+                + 'Usually the design\'s ports do not match the ones the testbench uses.'
+                + `<div class="fix-row"><button class="btn btn-secondary btn-sm" onclick="fixCompileError('sim')">`
+                + `Ask ${L} to fix the design</button><span class="fix-status" id="sim-fix-status">`
+                + `Sends the compiler's messages, the ports the testbench uses and the design to the model, `
+                + `then generates the testbench again and simulates.</span></div>`;
+            box.style.display = 'block';
+        }
+
+        async function fixCompileError(where) {
+            if (compileFixBusy || !currentDUT) return;
+            const llm = fixLlm();
+            const L = llm.toUpperCase();
+            const what = where === 'sim' ? 'the design so that the testbench can connect to it' : 'the compile error';
+            if (!confirm(`Ask ${L} to fix ${what}?\n\nThe compiler's messages and the current design are sent to `
+                         + `the model. This calls the ${L} API. The new design is saved as a new file; the current `
+                         + 'one is kept.' + (where === 'sim' ? ' Then the testbench is generated again and simulated.' : ''))) return;
+            compileFixBusy = true;
+            setFixStatus(where, `Asking ${L} to fix the design…`);
+            try {
+                const hwLlm = document.getElementById('hw-llm').value;
+                const model = (hwLlm === llm && (llm === 'openai' || llm === 'gemini'))
+                    ? document.getElementById('hw-model').value : null;
+                const payload = {
+                    module_type: currentDUT.moduleType, llm, model,
+                    bitwidth: parseInt(currentDUT.bitwidth), depth: parseInt(currentDUT.depth),
+                    pipeline_stages: parseInt(currentDUT.pipelineStages), input: '',
+                    workflow_mode: currentWorkflowMode, sampling: collectSampling('hw'), ...promptPayload('hw'),
+                    session_id: getSessionId(), run_id: currentRunId,
+                    compile_fix_of: { duv_filepath: dutFilePath(),
+                                      testbench_path: where === 'sim' ? tbFilePath() : undefined }
+                };
+                if (currentWorkflowMode === 'specification' && currentBDD && currentBDD.filepath) {
+                    payload.bdd_filepath = currentBDD.filepath;
+                }
+                const reqErr = attachRequirements(payload);
+                if (reqErr) throw new Error(reqErr);
+                const hw = await (await fetch('/api/generate-hardware', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                })).json();
+                if (!hw.success) throw new Error(hw.error || 'The design could not be fixed');
+                adoptRunId(hw.run_id);
+                currentDUT = { ...currentDUT, filename: hw.filename, llm: hw.llm || llm, source: 'llm', savedPath: null };
+                currentHwFilename = hw.filename;
+                document.getElementById('hw-filename').textContent = hw.filename;
+                document.getElementById('hw-info').textContent = `Fixed by ${L} (compile errors)`;
+                document.getElementById('hw-preview').textContent = hw.full_content;
+                renderDuvCompile(hw);
+                if (hw.duv_compile && hw.duv_compile.ok === false) {
+                    const msg = `${L} returned a design that still does not compile (${hw.duv_compile.error}). `
+                        + `It is saved as ${hw.filename}; you can try again.`;
+                    setFixStatus('hw', msg, 'err');
+                    if (where === 'sim') setFixStatus('sim', msg, 'err');
+                    return;
+                }
+                if (where === 'hw') {
+                    setFixStatus('hw', `Fixed by ${L}: the new design ${hw.filename} compiles.`, 'ok');
+                    return;
+                }
+                setFixStatus('sim', 'Simulating the new design…');
+                const rr = await (await fetch('/api/repair/rerun', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bdd_filepath: currentBDD.filepath, duv_filepath: dutFilePath(),
+                                           run_id: currentRunId, session_id: getSessionId(),
+                                           workflow_mode: currentWorkflowMode, dut_info: dutInfoForRerun() })
+                })).json();
+                if (!rr.success) throw new Error(rr.error || 'The new design could not be simulated');
+                hideError('sim');
+                document.getElementById('sim-fix').style.display = 'none';
+                repairNotice = { html: `<strong>Design fixed by ${escapeHtml(L)}.</strong> The testbench could not `
+                    + `connect to the previous design; ${escapeHtml(L)} wrote a new one, ${escapeHtml(hw.filename)}, `
+                    + 'and it was simulated.' };
+                showRepairedRun(rr);
+            } catch (e) {
+                setFixStatus(where, e.message || String(e), 'err');
+            } finally {
+                compileFixBusy = false;
             }
         }
 
@@ -5833,6 +5960,7 @@
             }
 
             hideError('sim');
+            document.getElementById('sim-fix').style.display = 'none';
             setSimLoading(true);
             updateStepStatus(4, 'in-progress');
             repairNotice = null;
@@ -5873,6 +6001,7 @@
 
             } catch (error) {
                 showError('sim', error.message);
+                offerSimFix(error.message);
                 updateStepStatus(4, 'pending');
             } finally {
                 setSimLoading(false);
