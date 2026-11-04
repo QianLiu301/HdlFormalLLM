@@ -688,7 +688,7 @@ def _duv_compile_check(path):
     return {'ok': False, 'error': first}
 
 
-def _compile_report(duv_path, tb_path=None, limit=15):
+def _compile_report(duv_path, tb_path=None, limit=40):
     """Every error line iverilog -g2012 reports for a design (compiled with the
     testbench when given), file paths replaced by "design" / "testbench".
     Returns (lines, error); [] when it compiles."""
@@ -708,14 +708,21 @@ def _compile_report(duv_path, tb_path=None, limit=15):
     out = []
     for ln in (r.stderr or '').splitlines():
         ln = ln.strip()
-        if not ln or ln.startswith('I give up'):
+        # the closing count no longer matches once repeated lines are dropped
+        if not ln or ln.startswith('I give up') or re.match(r'^\d+ error\(s\)', ln):
             continue
         m = re.match(r'^(.*?):(\d+):\s*(.*)$', ln)
         if m:
             where = 'testbench' if tb_path and Path(m.group(1)).name == Path(tb_path).name else 'design'
-            ln = f'{where} line {m.group(2)}: {m.group(3)}'
-        out.append(ln)
-    return out[:limit] or [(r.stderr or 'compilation failed').strip()[:300]], None
+            # iverilog's follow-up lines (": ... declared here") start with a colon
+            ln = f'{where} line {m.group(2)}: {m.group(3).lstrip(": ")}'
+        if ln not in out:             # the same error is often reported once per use
+            out.append(ln)
+    if not out:
+        return [(r.stderr or 'compilation failed').strip()[:300]], None
+    if len(out) > limit:
+        out = out[:limit] + [f'... and {len(out) - limit} more error lines']
+    return out, None
 
 
 def _testbench_interface(tb_path):
