@@ -91,7 +91,10 @@ download CSV/ZIP from the dashboard after important runs.
 
 ## Conventions
 
-- Development branch pattern: `claude/*` feature branches, merged to `master`.
+- Branches (user decision 2026-11-04): **`bdx-explainability` is the working
+  main branch.** Fixes made on other branches (`claude/*`) are merged into it;
+  master is updated from it later, when the user decides. Commit and push
+  there; do not push to master.
 - User (钱柳/QianLiu301) now works on **macOS (zsh, Terminal)**; project at
   `~/PycharmProjects/HdlFormalLLM`. Give Mac commands only (bash/zsh syntax,
   Homebrew, `open`, Cmd shortcuts) — no PowerShell. Earlier work was on Windows,
@@ -145,15 +148,16 @@ M5b done (D28, CPU: `library.cpu_operands`/`cpu_reference` judge each row as
 executed — R replaces the testbench's nominal value at ingestion; notes
 (same register twice, x0) vs. issues (scenario: unset/mismatched registers;
 testbench: offsets, SW-as-register, x29/x30) → verdict undecided; branches
-as taken 1/0; `stage_run.py cpu`). Template testbench fixes (CPU stores with
-an rd column, load/store offsets, register/column mismatches, x29/x30, memory
-conflicts; ALU/counter rows without expected value use the reference instead
-of 0) live on the master-based branch `claude/fix-testbench-generator`
-(includes 3ab7993), merged here; `tests/test_template_testbenches.py`.
-Next: counter, M6. Product output (explanations, UI text,
+as taken 1/0; `stage_run.py cpu`). Template testbench fixes merged here:
+3ab7993 (no operation guessed from English words in titles), ab9960a (an
+ALU/counter row without expected value is not asserted; reason
+`TestbenchGenerator.NO_EXPECTED_RESULT`, `tests/test_no_expected_result.py`),
+41d90a9 (CPU: stores with an rd column checked in memory, load/store offsets,
+register/column mismatches, x29/x30, bad addresses, memory conflicts skipped
+with a reason; `tests/test_template_testbenches.py`). Next: counter, M6. Product output (explanations, UI text,
 stored rule text) is **English only** — no Chinese; chat with the user stays Chinese. Setup: `docs/explainability_db_setup.md`; tests: `tests/test_xdb.py`
-(need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon). This branch is never merged
-into master.
+(need a wipeable local Postgres via `XDB_TEST_URL` + iverilog — never Neon;
+`service postgresql start` if the container restarted).
 
 ## Next steps (agreed plan)
 

@@ -6,7 +6,7 @@ engine, Step-4 explanations, repair; see `explainability_db_setup.md`).
 Counter and M6 pending. The ORM models in
 `src/xdb/models.py` and the migrations are the authoritative schema; §5 shows
 the v0.2 baseline and §5a the v0.3 changes. Branch: `bdx-explainability`
-(never merged into `master`).
+(the working main branch; fixes from other branches are merged into it).
 
 Goal: add explainability to the HdlFormalLLM website. Every generated item
 (requirement, BDD scenario, step, check, simulation verdict, explanation,
@@ -684,11 +684,12 @@ unsigned), 19 checks:
 
 The LW and SW rows were bugs of the testbench generator: offsets were
 ignored and a store row with an rd column was checked against x0. They are
-fixed on the master-based branch `claude/fix-testbench-generator` (together
-with: rows whose instruction names other registers than the columns, x29/x30,
-unaligned or result-area addresses and contended memory words are skipped with
-a reason; an ALU/counter row without an expected value uses the reference
-model instead of 0), merged here. Testbenches of features without such rows
+fixed in commit 41d90a9 (together with: rows whose instruction names other
+registers than the columns, x29/x30, unaligned or result-area addresses and
+contended memory words are skipped with a reason), merged here. An ALU/counter
+row without an expected value is no longer checked against 0 but skipped
+(ab9960a, reason "scenario states no expected result", shown as "Partly
+tested"). Testbenches of features without such rows
 are byte-identical. For testbenches generated before the fix, `cpu_reference`
 still reports the ignored offset and the store checked as a register as
 testbench issues (`stimulus.offset_applied` / `path` tell the two apart).

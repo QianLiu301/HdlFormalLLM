@@ -1106,6 +1106,18 @@ class TestbenchGenerator:
                     "reported success. Re-generate the BDD — and on a deployment, "
                     "check the provider's API key and *_MODEL environment variables.")
 
+        # 行都读到了，但没有一行写了期望值（generate_single 在模板之后才知道）
+        if st.get('rows_without_expected'):
+            n = st['rows_without_expected']
+            return (f"No assertion could be generated from {name}. All {n} Examples "
+                    f"rows that were read state no expected result (no "
+                    f"Expected_Result / Result column for an ALU, no Expected_Value / "
+                    f"Expected column for a counter's UP/DOWN rows). A row without an "
+                    f"expected value is not turned into a check against 0, because "
+                    f"that passes on any design whose output happens to be 0. Add the "
+                    f"expected-result column to the Examples tables, or re-generate "
+                    f"the BDD.")
+
         if st.get('outlines_total', 0) == 0 and st.get('scenarios_plain', 0) > 0:
             return (head + f"It has {st['scenarios_plain']} plain 'Scenario:' blocks "
                     "but no 'Scenario Outline:' with an Examples table. This "
@@ -1319,6 +1331,18 @@ class TestbenchGenerator:
                 spec, module_name, llm_name, module_type, oracle_source=oracle_source
             )
 
+            # 每一行都因没有期望值而被跳过时，testbench 里没有一条来自 BDD 的
+            # 断言；写出来只会在任何设计上 PASS，所以报错而不是写文件。
+            ev = quality_analysis.get('expected_values')
+            if ev and ev['skipped_no_expected'] and not ev['asserted']:
+                stats = dict(spec.get('parse_stats') or {})
+                stats['rows_without_expected'] = ev['skipped_no_expected']
+                return {'success': False,
+                        'error': self._explain_no_scenarios(
+                            dict(spec, parse_stats=stats), bdd_path),
+                        'parse_stats': stats,
+                        'expected_values': ev}
+
             # Save testbench
             with open(tb_path, 'w', encoding='utf-8') as f:
                 f.write(tb_content)
@@ -1362,7 +1386,9 @@ class TestbenchGenerator:
                 'quality_report_path': str(quality_report_path),
                 'content': tb_content[:2000] + ('...' if len(tb_content) > 2000 else ''),
                 'full_content': tb_content,
-                'test_count': len(spec['scenarios']),
+                # 没有期望值、未生成断言的行不计入
+                'test_count': len(spec['scenarios']) - (
+                    quality_analysis.get('expected_values') or {}).get('skipped_no_expected', 0),
                 # 这里不返回 'llm'：testbench 由确定性模板编译而成，没有 LLM 参与。
                 # llm_name 只是 BDD 文件所在目录名（即生成 BDD 的那个 LLM），
                 # 用来组织输出目录；把它当作 testbench 的作者会造成误导。
@@ -1374,6 +1400,8 @@ class TestbenchGenerator:
                 # 解析过程中丢掉了什么。以前是静默的，现在是可用的质量信号。
                 'parse_stats': spec.get('parse_stats', {}),
                 'scenario_catalog': spec.get('scenario_catalog', []),
+                # ALU / counter: 有多少行因没有期望值而没生成断言（逐行原因在内）
+                'expected_values': quality_analysis.get('expected_values'),
             }
 
         except Exception as e:
@@ -1381,6 +1409,51 @@ class TestbenchGenerator:
             if self.debug:
                 traceback.print_exc()
             return {'success': False, 'error': str(e)}
+
+    # ------------------------------------------------------------------
+    # Rows that state no expected result
+    # ------------------------------------------------------------------
+    # 此前 ALU / counter 模板在行里没有期望值列时默认期望 0：`x & 0`、为假的
+    # SLTU 这类输出恰好为 0 的行会在任何设计上通过，既抬高 test count 又稀释
+    # mutation score。现在这样的行不生成断言，只记下原因。
+    #
+    # The reason text is shared with the explainability trace (trace['skipped']);
+    # keep it exactly as is.
+    NO_EXPECTED_RESULT = 'scenario states no expected result'
+
+    # Columns that count as "the expected result", exactly the ones the
+    # templates read (the parser lower-cases headers). Not widened on purpose.
+    ALU_EXPECTED_KEYS = ('expected_result', 'result')
+    COUNTER_EXPECTED_KEYS = ('expected_value', 'Expected_Value', 'expected')
+
+    @staticmethod
+    def _first_present(scenario: Dict, keys) -> Optional[object]:
+        """Value of the first key present in the row, or None if none is."""
+        for k in keys:
+            if k in scenario:
+                return scenario[k]
+        return None
+
+    @staticmethod
+    def _new_expected_values_stats(rows: int) -> Dict:
+        return {
+            'rows': rows,                  # BDD rows handed to the template
+            'asserted': 0,                 # rows that became an assertion
+            'skipped_no_expected': 0,      # rows skipped: no expected value
+            'skipped': [],                 # [{'row', 'operation'/'mode', 'reason'}]
+        }
+
+    def _skip_no_expected(self, ev: Dict, row_no: int, scenario: Dict):
+        """Record a BDD row that produced no assertion because it has no expected value.
+
+        row_no is the 1-based index into spec['scenarios'].
+        """
+        ev['skipped_no_expected'] += 1
+        entry = {'row': row_no, 'reason': self.NO_EXPECTED_RESULT}
+        for k in ('operation', 'mode'):
+            if k in scenario:
+                entry[k] = scenario[k]
+        ev['skipped'].append(entry)
 
     @staticmethod
     def _reference_result(op: str, a: int, b: int, w: int):
@@ -1534,19 +1607,6 @@ class TestbenchGenerator:
             f"_generate_testbench_content: no template for module_type "
             f"{module_type!r} (generate_single should have rejected it)")
 
-    # 期望值列：模型给的列名并不统一（Expected_Result / Expected / Result /
-    # Output ...，表头已转小写）。此前只认前两种，其余一律当 0。顺序保持
-    # expected_result、result 在前，已能识别的文件生成结果不变。
-    _ALU_EXPECTED_KEYS = ('expected_result', 'result', 'expected', 'expected_output',
-                          'expected_value', 'output', 'out')
-
-    @classmethod
-    def _alu_expected(cls, scenario: Dict):
-        for k in cls._ALU_EXPECTED_KEYS:
-            if k in scenario:
-                return scenario[k]
-        return None
-
     def _generate_alu_testbench(
             self,
             spec: Dict,
@@ -1556,11 +1616,38 @@ class TestbenchGenerator:
     ) -> Tuple[str, Dict]:
         """Generate ALU testbench"""
         bitwidth = spec['bitwidth']
-        scenarios = spec['scenarios']
+        all_rows = spec['scenarios']
+
+        # 先定每一行的期望值，没有期望值的行不生成断言（见 NO_EXPECTED_RESULT）。
+        # 必须在质量分析和编号之前做：被跳过的行既不占 Test 编号，也不计入
+        # 覆盖率，否则 test count 和 quality score 都会把它们算进去。
+        ev = self._new_expected_values_stats(len(all_rows))
+        trace = self._new_trace()
+        scenarios, expected_by_row = [], []
+        for row_no, scenario in enumerate(all_rows, 1):
+            expected = self._first_present(scenario, self.ALU_EXPECTED_KEYS)
+            # oracle 的来源是受控变量，见 _reference_result 的说明。
+            # 'bdd'  —— 用 BDD 写的期望值（默认）
+            # 'spec' —— 由本生成器按规格重算；参考模型不认识的操作仍用 BDD 的值
+            if oracle_source == 'spec':
+                ref = self._reference_result(
+                    scenario.get('operation', 'ADD').upper(),
+                    scenario.get('a', scenario.get('A', 0)),
+                    scenario.get('b', scenario.get('B', 0)), bitwidth)
+                if ref is not None:
+                    expected = ref
+            if expected is None:
+                self._skip_no_expected(ev, row_no, scenario)
+                self._trace_skip(trace, scenario, self.NO_EXPECTED_RESULT)
+                continue
+            ev['asserted'] += 1
+            scenarios.append(scenario)
+            expected_by_row.append(expected)
 
         # Quality analysis
         analyzer = TestQualityAnalyzer(bitwidth=bitwidth, module_type='alu')
         quality_analysis = analyzer.analyze(scenarios, spec.get('operations'))
+        quality_analysis['expected_values'] = ev
 
         lines = []
         lines.append(f"// ==========================================================================")
@@ -1647,35 +1734,13 @@ class TestbenchGenerator:
         lines.append("")
 
         # Generate test cases
-        trace = self._new_trace()
-        row_stats = {'expected_from_reference': 0, 'skipped_no_expected': 0}
-        for i, scenario in enumerate(scenarios, 1):
+        for i, (scenario, expected) in enumerate(zip(scenarios, expected_by_row), 1):
+            tid = self._trace_tag(trace, scenario)
             a_val = scenario.get('a', scenario.get('A', 0))
             b_val = scenario.get('b', scenario.get('B', 0))
-            expected = self._alu_expected(scenario)
 
             max_val = (1 << bitwidth) - 1
             op_name = scenario.get('operation', 'ADD').upper()
-
-            # oracle 的来源是受控变量，见 _reference_result 的说明。
-            # 'bdd'  —— 用 BDD 写的期望值（默认）
-            # 'spec' —— 由本生成器按规格重算
-            #
-            # BDD 没写期望值时，此前按 0 比较：x & 0 = 0 之类的行在 golden 上
-            # 照样通过，场景看起来测过了，其实什么都没测。现在与 regfile / CPU
-            # 模板一致，改用参考模型；连参考模型也算不出的行不再生成断言。
-            if oracle_source == 'spec' or expected is None:
-                ref = self._reference_result(op_name, a_val, b_val, bitwidth)
-                if ref is not None:
-                    if expected is None:
-                        row_stats['expected_from_reference'] += 1
-                    expected = ref
-            if expected is None:
-                row_stats['skipped_no_expected'] += 1
-                self._trace_skip(trace, scenario, 'the scenario states no expected result, and the '
-                                                  'operation has no reference model')
-                continue
-            tid = self._trace_tag(trace, scenario)
 
             # Get operation and convert to opcode
             op = scenario.get('opcode', scenario.get('operation', 'ADD'))
@@ -1709,7 +1774,7 @@ class TestbenchGenerator:
             exp_str = self._format_verilog_value(expected, bitwidth)
 
             ai, bi = self._as_int(a_val), self._as_int(b_val)
-            bdd_exp = self._as_int(self._alu_expected(scenario))
+            bdd_exp = self._as_int(self._first_present(scenario, self.ALU_EXPECTED_KEYS))
             ref_exp = (self._reference_result(op_name, ai, bi, bitwidth)
                        if ai is not None and bi is not None else None)
             used = self._as_int(expected)
@@ -1722,9 +1787,7 @@ class TestbenchGenerator:
                 expected_bdd=bdd_exp & max_val if bdd_exp is not None else None,
                 expected_ref=ref_exp,
                 expected_used=used & max_val if used is not None else None,
-                # 场景没写期望值时比较的是参考模型的值
-                oracle='spec' if ref_exp is not None and (oracle_source == 'spec' or bdd_exp is None)
-                else 'bdd')
+                oracle=oracle_source if oracle_source == 'spec' and ref_exp is not None else 'bdd')
 
             lines.append(f"        // Test {i}{tid}")
             lines.append(f"        a = {a_str};")
@@ -1742,8 +1805,6 @@ class TestbenchGenerator:
             lines.append(f"        end")
             lines.append("")
         quality_analysis['trace'] = trace
-
-        quality_analysis['alu_rows'] = row_stats
 
         # Summary
         lines.append(f"        // Summary")
@@ -1775,11 +1836,61 @@ class TestbenchGenerator:
     ) -> Tuple[str, Dict]:
         """Generate Counter testbench with proper test cases"""
         bitwidth = spec['bitwidth']
-        scenarios = spec['scenarios']
+        all_rows = spec['scenarios']
         max_value = (1 << bitwidth) - 1
+
+        # 先分组并剔除没有期望值的行（见 NO_EXPECTED_RESULT），再做质量分析，
+        # 这样 header 里的 Test Cases 与 quality score 只计真正生成了检查的行。
+        ev = self._new_expected_values_stats(len(all_rows))
+        trace = self._new_trace()
+        trace['weak'] = {}
+        scenarios = []
+
+        # Group scenarios by mode
+        up_tests = []
+        down_tests = []
+        updown_tests = []
+        # BDD 给了某模式的行、但全部因无期望值被跳过时，不再用生成器的默认
+        # 用例顶上：那会把生成器自己写的测试记在 BDD 头上。
+        down_had_rows = False
+
+        for row_no, scenario in enumerate(all_rows, 1):
+            mode_str = str(scenario.get('mode', scenario.get('Mode', '00')))
+            is_updown = mode_str in ['2', '10', 'UPDOWN', 'updown', 'UP-DOWN', 'up-down']
+
+            # UPDOWN 的检查是范围检查，不用期望值，所以这类行照旧生成；
+            # UP/DOWN 行没有期望值就不生成断言。
+            expected = self._first_present(scenario, self.COUNTER_EXPECTED_KEYS)
+            if expected is None and not is_updown:
+                if mode_str in ['1', '01', 'DOWN', 'down']:
+                    down_had_rows = True
+                self._skip_no_expected(ev, row_no, scenario)
+                self._trace_skip(trace, scenario, self.NO_EXPECTED_RESULT)
+                continue
+            ev['asserted'] += 1
+            scenarios.append(scenario)
+
+            test_case = {
+                'initial': scenario.get('initial_value', scenario.get('Initial_Value',
+                           scenario.get('initial',
+                           scenario.get('value', 0)))),
+                'cycles': scenario.get('cycles', scenario.get('Cycles', 1)),
+                'expected': expected,
+                '_bdd_id': scenario.get('_bdd_id'),
+            }
+
+            if mode_str in ['0', '00', 'UP', 'up']:
+                up_tests.append(test_case)
+            elif mode_str in ['1', '01', 'DOWN', 'down']:
+                down_tests.append(test_case)
+            elif is_updown:
+                updown_tests.append(test_case)
+            else:
+                up_tests.append(test_case)
 
         analyzer = TestQualityAnalyzer(bitwidth=bitwidth, module_type='counter')
         quality_analysis = analyzer.analyze(scenarios)
+        quality_analysis['expected_values'] = ev
 
         lines = []
         lines.append(f"// ==========================================================================")
@@ -1869,8 +1980,6 @@ class TestbenchGenerator:
 
         # Generate test cases based on scenarios
         test_num = 0
-        trace = self._new_trace()
-        trace['weak'] = {}
 
         def _tid(tc, mode, n):
             """BDD 行用它的编号；BDD 没给这一模式、由生成器补的默认用例标 GEN。"""
@@ -1880,38 +1989,9 @@ class TestbenchGenerator:
                                    f'{mode} default: initial={tc.get("initial")}, '
                                    f'cycles={tc.get("cycles")}')
 
-        # Group scenarios by mode
-        up_tests = []
-        down_tests = []
-        updown_tests = []
-
-        for scenario in scenarios:
-            mode_str = str(scenario.get('mode', scenario.get('Mode', '00')))
-
-            test_case = {
-                'initial': scenario.get('initial_value', scenario.get('Initial_Value',
-                           scenario.get('initial',
-                           scenario.get('value', 0)))),
-                'cycles': scenario.get('cycles', scenario.get('Cycles', 1)),
-                '_bdd_id': scenario.get('_bdd_id'),
-            }
-            # 没写期望值时不再填 0：下面各模式按 initial ± cycles 自己算
-            exp = next((scenario[k] for k in ('expected_value', 'Expected_Value', 'expected')
-                        if k in scenario), None)
-            if exp is not None:
-                test_case['expected'] = exp
-
-            if mode_str in ['0', '00', 'UP', 'up']:
-                up_tests.append(test_case)
-            elif mode_str in ['1', '01', 'DOWN', 'down']:
-                down_tests.append(test_case)
-            elif mode_str in ['2', '10', 'UPDOWN', 'updown', 'UP-DOWN', 'up-down']:
-                updown_tests.append(test_case)
-            else:
-                up_tests.append(test_case)
 
         # Generate UP mode tests
-        if up_tests or not scenarios:
+        if up_tests or not all_rows:
             lines.append(f"        // ========== UP MODE TESTS (mode=00) ==========")
             lines.append(f"        $display(\"\\n--- UP Mode Tests ---\\n\");")
             lines.append(f"        mode = 2'b00;")
@@ -1957,7 +2037,7 @@ class TestbenchGenerator:
         lines.append(f"        mode = 2'b01;")
         lines.append("")
 
-        test_cases = down_tests if down_tests else [
+        test_cases = down_tests if (down_tests or down_had_rows) else [
             {'initial': 100, 'cycles': 5, 'expected': 95},
             {'initial': 10, 'cycles': 10, 'expected': 0},
             {'initial': 1, 'cycles': 1, 'expected': 0},
