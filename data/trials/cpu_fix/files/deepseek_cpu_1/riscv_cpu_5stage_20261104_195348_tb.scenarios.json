@@ -1,0 +1,930 @@
+{
+ "version": 2,
+ "feature": "riscv_cpu_5stage_20261104_195348.feature",
+ "module_type": "cpu",
+ "oracle_source": "bdd",
+ "catalog": [
+  {
+   "id": "CPU-ARITHMETIC-001",
+   "title": "Instructions that write a register",
+   "tags": [
+    "arithmetic"
+   ],
+   "requirements": [],
+   "span": [
+    739,
+    1473
+   ],
+   "operation": null,
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "CPU-ARITHMETIC-001/r1",
+    "CPU-ARITHMETIC-001/r2",
+    "CPU-ARITHMETIC-001/r3",
+    "CPU-ARITHMETIC-001/r4",
+    "CPU-ARITHMETIC-001/r5"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "instruction",
+    "rs1",
+    "rs1_value",
+    "rs2",
+    "rs2_value",
+    "rd",
+    "expected"
+   ]
+  },
+  {
+   "id": "CPU-LOGICAL-001",
+   "title": "Bitwise instructions",
+   "tags": [
+    "logical"
+   ],
+   "requirements": [],
+   "span": [
+    1473,
+    2356
+   ],
+   "operation": null,
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "CPU-LOGICAL-001/r1",
+    "CPU-LOGICAL-001/r2",
+    "CPU-LOGICAL-001/r3",
+    "CPU-LOGICAL-001/r4",
+    "CPU-LOGICAL-001/r5",
+    "CPU-LOGICAL-001/r6",
+    "CPU-LOGICAL-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "instruction",
+    "rs1",
+    "rs1_value",
+    "rs2",
+    "rs2_value",
+    "rd",
+    "expected"
+   ]
+  },
+  {
+   "id": "CPU-COMPARE-001",
+   "title": "Signed comparison",
+   "tags": [
+    "compare"
+   ],
+   "requirements": [],
+   "span": [
+    2356,
+    3228
+   ],
+   "operation": null,
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "CPU-COMPARE-001/r1",
+    "CPU-COMPARE-001/r2",
+    "CPU-COMPARE-001/r3",
+    "CPU-COMPARE-001/r4",
+    "CPU-COMPARE-001/r5",
+    "CPU-COMPARE-001/r6",
+    "CPU-COMPARE-001/r7"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "instruction",
+    "rs1",
+    "rs1_value",
+    "rs2",
+    "rs2_value",
+    "rd",
+    "expected"
+   ]
+  },
+  {
+   "id": "CPU-MEMORY-001",
+   "title": "Load and store, one instruction per row",
+   "tags": [
+    "memory"
+   ],
+   "requirements": [],
+   "span": [
+    3228,
+    4172
+   ],
+   "operation": null,
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "CPU-MEMORY-001/r1",
+    "CPU-MEMORY-001/r2",
+    "CPU-MEMORY-001/r3",
+    "CPU-MEMORY-001/r4",
+    "CPU-MEMORY-001/r5",
+    "CPU-MEMORY-001/r6"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "instruction",
+    "rs1",
+    "rs1_value",
+    "rs2",
+    "rs2_value",
+    "rd",
+    "mem_value",
+    "expected"
+   ]
+  },
+  {
+   "id": "CPU-BRANCH-001",
+   "title": "Branch taken or not taken",
+   "tags": [
+    "branch"
+   ],
+   "requirements": [],
+   "span": [
+    4172,
+    5036
+   ],
+   "operation": null,
+   "status": "mapped",
+   "reason": null,
+   "rows": [
+    "CPU-BRANCH-001/r1",
+    "CPU-BRANCH-001/r2",
+    "CPU-BRANCH-001/r3",
+    "CPU-BRANCH-001/r4",
+    "CPU-BRANCH-001/r5",
+    "CPU-BRANCH-001/r6",
+    "CPU-BRANCH-001/r7",
+    "CPU-BRANCH-001/r8"
+   ],
+   "rows_malformed": [],
+   "rows_unmapped": [],
+   "columns": [
+    "instruction",
+    "rs1",
+    "rs1_value",
+    "rs2",
+    "rs2_value",
+    "taken"
+   ]
+  }
+ ],
+ "trace": {
+  "checks": {
+   "CPU-ARITHMETIC-001/r1": 1,
+   "CPU-ARITHMETIC-001/r2": 1,
+   "CPU-ARITHMETIC-001/r3": 1,
+   "CPU-ARITHMETIC-001/r4": 1,
+   "CPU-ARITHMETIC-001/r5": 1,
+   "CPU-LOGICAL-001/r1": 1,
+   "CPU-LOGICAL-001/r2": 1,
+   "CPU-LOGICAL-001/r3": 1,
+   "CPU-LOGICAL-001/r4": 1,
+   "CPU-LOGICAL-001/r5": 1,
+   "CPU-LOGICAL-001/r6": 1,
+   "CPU-LOGICAL-001/r7": 1,
+   "CPU-COMPARE-001/r1": 1,
+   "CPU-COMPARE-001/r2": 1,
+   "CPU-COMPARE-001/r3": 1,
+   "CPU-COMPARE-001/r4": 1,
+   "CPU-COMPARE-001/r5": 1,
+   "CPU-COMPARE-001/r6": 1,
+   "CPU-COMPARE-001/r7": 1,
+   "CPU-MEMORY-001/r1": 1,
+   "CPU-MEMORY-001/r2": 1,
+   "CPU-MEMORY-001/r3": 1,
+   "CPU-MEMORY-001/r4": 1,
+   "CPU-MEMORY-001/r5": 1,
+   "CPU-BRANCH-001/r1": 1,
+   "CPU-BRANCH-001/r2": 1,
+   "CPU-BRANCH-001/r3": 1,
+   "CPU-BRANCH-001/r4": 1,
+   "CPU-BRANCH-001/r5": 1,
+   "CPU-BRANCH-001/r6": 1,
+   "CPU-BRANCH-001/r7": 1,
+   "CPU-BRANCH-001/r8": 1
+  },
+  "skipped": {
+   "CPU-MEMORY-001/r6": "the memory address is not word-aligned or lies in the testbench's result area"
+  },
+  "generated": [],
+  "detail": {
+   "CPU-ARITHMETIC-001/r1": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "instruction": "add x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 10,
+      "rs2": 2,
+      "rs2_value": 20,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 30,
+     "expected_ref": 30,
+     "expected_used": 30,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-ARITHMETIC-001/r2": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "ADD",
+     "stimulus": {
+      "instruction": "add x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 2047,
+      "rs2": 2,
+      "rs2_value": 1,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 2048,
+     "expected_ref": 2048,
+     "expected_used": 2048,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-ARITHMETIC-001/r3": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "instruction": "sub x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 4294965248,
+      "rs2": 2,
+      "rs2_value": 1,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 4294965247,
+     "expected_ref": 4294965247,
+     "expected_used": 4294965247,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-ARITHMETIC-001/r4": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SUB",
+     "stimulus": {
+      "instruction": "sub x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 0,
+      "rs2": 2,
+      "rs2_value": 4294967295,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-ARITHMETIC-001/r5": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "ADDI",
+     "stimulus": {
+      "instruction": "addi x3, x1, 1",
+      "rs1": 1,
+      "rs1_value": 2047,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": 1
+     },
+     "expected_bdd": 2048,
+     "expected_ref": 2048,
+     "expected_used": 2048,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r1": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "instruction": "and x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 255,
+      "rs2": 2,
+      "rs2_value": 15,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 15,
+     "expected_ref": 15,
+     "expected_used": 15,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r2": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "OR",
+     "stimulus": {
+      "instruction": "or x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 240,
+      "rs2": 2,
+      "rs2_value": 15,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 255,
+     "expected_ref": 255,
+     "expected_used": 255,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r3": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "XOR",
+     "stimulus": {
+      "instruction": "xor x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 255,
+      "rs2": 2,
+      "rs2_value": 15,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 240,
+     "expected_ref": 240,
+     "expected_used": 240,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r4": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "ANDI",
+     "stimulus": {
+      "instruction": "andi x3, x1, 15",
+      "rs1": 1,
+      "rs1_value": 240,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": 15
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r5": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "ORI",
+     "stimulus": {
+      "instruction": "ori x3, x1, 15",
+      "rs1": 1,
+      "rs1_value": 240,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": 15
+     },
+     "expected_bdd": 255,
+     "expected_ref": 255,
+     "expected_used": 255,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r6": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "XORI",
+     "stimulus": {
+      "instruction": "xori x3, x1, -1",
+      "rs1": 1,
+      "rs1_value": 1,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": -1
+     },
+     "expected_bdd": 4294967294,
+     "expected_ref": 4294967294,
+     "expected_used": 4294967294,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-LOGICAL-001/r7": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "AND",
+     "stimulus": {
+      "instruction": "and x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 4294965248,
+      "rs2": 2,
+      "rs2_value": 2047,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r1": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "instruction": "slt x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 4294967295,
+      "rs2": 2,
+      "rs2_value": 1,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r2": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "instruction": "slt x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 5,
+      "rs2": 2,
+      "rs2_value": 3,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r3": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLTI",
+     "stimulus": {
+      "instruction": "slti x3, x1, 0",
+      "rs1": 1,
+      "rs1_value": 4294967295,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": 0
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r4": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "instruction": "slt x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 4294965248,
+      "rs2": 2,
+      "rs2_value": 2047,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r5": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLT",
+     "stimulus": {
+      "instruction": "slt x3, x1, x2",
+      "rs1": 1,
+      "rs1_value": 2047,
+      "rs2": 2,
+      "rs2_value": 4294965248,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": null
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r6": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLTI",
+     "stimulus": {
+      "instruction": "slti x3, x1, 2047",
+      "rs1": 1,
+      "rs1_value": 2047,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": 2047
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-COMPARE-001/r7": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "SLTI",
+     "stimulus": {
+      "instruction": "slti x3, x1, -2048",
+      "rs1": 1,
+      "rs1_value": 4294965248,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": null,
+      "path": "register",
+      "imm": -2048
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-MEMORY-001/r1": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "LW",
+     "stimulus": {
+      "instruction": "lw x3, 0(x1)",
+      "rs1": 1,
+      "rs1_value": 0,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": 4660,
+      "path": "register",
+      "imm": null,
+      "offset_applied": true
+     },
+     "expected_bdd": 4660,
+     "expected_ref": 4660,
+     "expected_used": 4660,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-MEMORY-001/r2": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "LW",
+     "stimulus": {
+      "instruction": "lw x3, 0(x1)",
+      "rs1": 1,
+      "rs1_value": 4,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": 4294967295,
+      "path": "register",
+      "imm": null,
+      "offset_applied": true
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-MEMORY-001/r3": [
+    {
+     "port": "rd",
+     "width": 32,
+     "operation": "LW",
+     "stimulus": {
+      "instruction": "lw x3, 0(x1)",
+      "rs1": 1,
+      "rs1_value": 8,
+      "rs2": 0,
+      "rs2_value": 0,
+      "rd": 3,
+      "mem_value": 2047,
+      "path": "register",
+      "imm": null,
+      "offset_applied": true
+     },
+     "expected_bdd": 2047,
+     "expected_ref": 2047,
+     "expected_used": 2047,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-MEMORY-001/r4": [
+    {
+     "port": "mem",
+     "width": 32,
+     "operation": "SW",
+     "stimulus": {
+      "instruction": "sw x2, 0(x1)",
+      "rs1": 1,
+      "rs1_value": 256,
+      "rs2": 2,
+      "rs2_value": 2047,
+      "rd": 2,
+      "mem_value": 0,
+      "path": "memory",
+      "offset_applied": true
+     },
+     "expected_bdd": 2047,
+     "expected_ref": 2047,
+     "expected_used": 2047,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-MEMORY-001/r5": [
+    {
+     "port": "mem",
+     "width": 32,
+     "operation": "SW",
+     "stimulus": {
+      "instruction": "sw x2, 0(x1)",
+      "rs1": 1,
+      "rs1_value": 512,
+      "rs2": 2,
+      "rs2_value": 4294967295,
+      "rd": 2,
+      "mem_value": 0,
+      "path": "memory",
+      "offset_applied": true
+     },
+     "expected_bdd": 4294967295,
+     "expected_ref": 4294967295,
+     "expected_used": 4294967295,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r1": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BEQ",
+     "stimulus": {
+      "instruction": "beq x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 10,
+      "rs2": 2,
+      "rs2_value": 10,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r2": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BEQ",
+     "stimulus": {
+      "instruction": "beq x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 10,
+      "rs2": 2,
+      "rs2_value": 20,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r3": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BNE",
+     "stimulus": {
+      "instruction": "bne x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 10,
+      "rs2": 2,
+      "rs2_value": 20,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r4": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BNE",
+     "stimulus": {
+      "instruction": "bne x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 10,
+      "rs2": 2,
+      "rs2_value": 10,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r5": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BLT",
+     "stimulus": {
+      "instruction": "blt x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 4294965248,
+      "rs2": 2,
+      "rs2_value": 2047,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r6": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BLT",
+     "stimulus": {
+      "instruction": "blt x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 2047,
+      "rs2": 2,
+      "rs2_value": 4294965248,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r7": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BGE",
+     "stimulus": {
+      "instruction": "bge x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 4294967295,
+      "rs2": 2,
+      "rs2_value": 1,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 0,
+     "expected_ref": 0,
+     "expected_used": 0,
+     "oracle": "bdd"
+    }
+   ],
+   "CPU-BRANCH-001/r8": [
+    {
+     "port": "taken",
+     "width": 1,
+     "operation": "BGE",
+     "stimulus": {
+      "instruction": "bge x1, x2, 8",
+      "rs1": 1,
+      "rs1_value": 1,
+      "rs2": 2,
+      "rs2_value": 4294967295,
+      "rd": null,
+      "mem_value": null,
+      "path": "branch",
+      "marker": 677
+     },
+     "expected_bdd": 1,
+     "expected_ref": 1,
+     "expected_used": 1,
+     "oracle": "bdd"
+    }
+   ]
+  }
+ }
+}
