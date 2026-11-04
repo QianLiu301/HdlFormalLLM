@@ -9,10 +9,7 @@ CPU (TestbenchGenerator._generate_cpu_testbench)
     rows using x29/x30 (the testbench's own registers), unaligned addresses,
     addresses in the result area, and memory words two rows fight over tested
     something else; they are now skipped and counted.
-ALU / counter
-  * a row without an expected column was compared with 0; it now uses the
-    reference model, as the register-file and CPU templates already do, and an
-    "Expected" column (not only Expected_Result / Result) is recognised.
+(ALU / counter rows without an expected value: tests/test_no_expected_result.py.)
 
 Every CPU check below runs on a small correct RV32I CPU, so any failure is a
 testbench error. Needs iverilog.
@@ -216,51 +213,3 @@ def test_prompt_example_passes_on_a_correct_cpu(tmp_path):
     r = _generate(tmp_path, HEADER + _outline('mixed', rows), CPU_DUT)
     lines = _run(tmp_path, r['filepath'], CPU)
     assert len(lines) == 7 and not any('FAIL' in l for l in lines), lines
-
-
-ALU_DUT = {'module_type': 'alu', 'module_name': 'alu_32bit', 'bitwidth': 32}
-
-
-def _alu_feature(header, rows):
-    return f"""Feature: 32-bit ALU Verification
-
-  @add
-  Scenario Outline: Verify ADD operation
-    Given I have operand A = <A>
-    And I have operand B = <B>
-    When I perform the ADD operation with opcode 0000
-    Then the result should be correct
-
-    Examples:
-      | {header} |
-""" + '\n'.join(f'      | {r} |' for r in rows) + '\n'
-
-
-def test_alu_row_without_expected_value_uses_the_reference(tmp_path):
-    r = _generate(tmp_path, _alu_feature('A | B', ['2 | 3', '4294967295 | 1']), ALU_DUT)
-    text = Path(r['filepath']).read_text(encoding='utf-8')
-    assert "if (result == 32'd5)" in text and "if (result == 32'd0)" in text
-    assert "if (result == 32'd0) begin" in text and text.count('total = total + 1;') == 2
-
-
-def test_alu_expected_column_named_expected_is_read(tmp_path):
-    r = _generate(tmp_path, _alu_feature('A | B | Expected', ['2 | 3 | 6']), ALU_DUT)
-    assert "if (result == 32'd6)" in Path(r['filepath']).read_text(encoding='utf-8')
-
-
-def test_counter_row_without_expected_value_uses_the_reference(tmp_path):
-    feat = """Feature: 8-bit Counter Verification
-
-  @up
-  Scenario Outline: Count up
-    Given the counter is loaded with <initial_value>
-    When it counts for <cycles> cycles
-    Then the count is correct
-
-    Examples:
-      | initial_value | cycles |
-      | 10            | 5      |
-"""
-    r = _generate(tmp_path, feat, {'module_type': 'counter', 'module_name': 'counter', 'bitwidth': 8})
-    text = Path(r['filepath']).read_text(encoding='utf-8')
-    assert 'UP from 10, 5 cycles -> %d (expected 15)' in text
