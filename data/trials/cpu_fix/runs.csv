@@ -1,0 +1,7 @@
+llm,design,rep,stage,error,seconds,step0_ok,duv_compiles,test_count,skipped_no_expected,scenarios_unmapped,steps_mapped,steps_unmapped,not_tested,initial_pass,initial_design_wrong,initial_scenario_wrong,initial_both_wrong,initial_consistent_wrong,initial_undecided,final_pass,final_design_wrong,final_scenario_wrong,final_both_wrong,final_consistent_wrong,final_undecided,initial_all_clear,final_all_clear,scenario_repairs,compile_fixes,compile_fixes_ok,design_repairs,repair_failures,llm_calls,prompt_chars,response_chars,llm_seconds
+deepseek,cpu,1,done,,363.9,False,True,33,0,0,31,0,1,30,2,0,0,0,0,30,2,0,0,0,0,False,False,0,0,0,2,1,5,72927,42768,355.1
+deepseek,cpu,2,duv,design: The model returned an empty answer (often: it spent its output budget on reasoning).,188.8,False,,,,,,,,,,,,,,,,,,,,,,0,0,0,0,0,1,8771,0,36.6
+deepseek,cpu,3,duv,design: The model's answer (70 characters) contained no complete Verilog module.,208.1,True,,,,,,,,,,,,,,,,,,,,,,0,0,0,0,0,1,8771,4291,20.9
+gemini,cpu,1,duv,design: The model's answer (70 characters) contained no complete Verilog module.,0.6,False,,,,,,,,,,,,,,,,,,,,,,0,0,0,0,0,1,8771,223,0.3
+gemini,cpu,2,duv,design: The model's answer (70 characters) contained no complete Verilog module.,0.5,False,,,,,,,,,,,,,,,,,,,,,,0,0,0,0,0,1,8771,223,0.2
+gemini,cpu,3,duv,design: The model's answer (70 characters) contained no complete Verilog module.,0.4,False,,,,,,,,,,,,,,,,,,,,,,0,0,0,0,0,1,8771,223,0.2
