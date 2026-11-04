@@ -618,6 +618,9 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
 
         by_test = _log_by_test(log_text)
         row_res = {r['id']: r for sc_res in results.get('scenarios') or [] for r in sc_res.get('rows') or []}
+        # scenarios with a step the testbench does not do: their checks decide nothing
+        blocked = ({sc.id for sc in scen.values() if mapping.blocked_steps(s, sc.id)}
+                   if L.library_for(module_type) else set())
         verdicts: Dict[str, int] = {}
         n_results = 0
         for (tag, seq), c in checks.items():
@@ -640,6 +643,8 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                 exp_txt, got = (mm.group(1), mm.group(2)) if mm else (None, None)
             o = _observed(status, got, c)
             v = _verdict(status, o, c)
+            if v is not None and c.scenario_id in blocked:
+                v = 'undecided'
             if v:
                 verdicts[v] = verdicts.get(v, 0) + 1
             s.add(M.CheckResult(sim_run_id=run.id, check_id=c.id, status=status, message=msg,

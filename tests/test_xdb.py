@@ -1440,3 +1440,83 @@ def test_trial_runner_dry_run(rf_run, db, monkeypatch, tmp_path):
     assert (t.out / 'runs.csv').read_text(encoding='utf-8').startswith('llm,design,rep,stage')
     with xdb.session_scope(db) as s:
         assert s.get(M.Session, rec['initial']['session_id']).note == 'trial:pytest'
+
+
+# ================================================================ steps the testbench does not do (D29)
+# Phrasings from the first real trial (data/trials/first): every register-file run
+# blamed on the scenario had such a step; the testbench ran it as a plain write/read.
+
+TRIAL_STEPS = {
+    'I attempt to write <data> to register <addr> with write enable deasserted': ('RF.A.WRITE_DISABLED', False),
+    'I disable write and attempt to write <data> to register <addr>': ('RF.A.WRITE_DISABLED', False),
+    'I simultaneously write <data> to register <addr> and read register <addr>': ('RF.A.SAME_CYCLE', False),
+    'I write <data> to register <addr> while reading register <addr> on port 1': ('RF.A.SAME_CYCLE', False),
+    'I read register <addr> on port 2': ('RF.A.READ_PORT2', False),
+    'register <addr> holds value <initial_data>': ('RF.P.PRELOAD', False),
+    'reset is active': ('RF.P.IN_RESET', False),
+    'I read register <addr> on read port A': ('RF.A.READ', True),
+    'I write <data> to register <addr> with write enable asserted on the rising clock edge': ('RF.A.WRITE', True),
+    'register 0 is hardwired to zero (REQ-7, REQ-8)': ('RF.P.STATE', True),
+    'the register file holds values from earlier writes': ('RF.P.STATE', True),
+    'the value in register <addr> should remain <expected>': ('RF.Q.RDATA', True),
+    'the value should still be <expected>': ('RF.Q.RDATA', True),
+}
+
+
+def test_trial_phrasings_are_classified():
+    from src.xdb import library as L
+    for text, (key, executable) in TRIAL_STEPS.items():
+        step, _ = L.map_step('regfile', text)
+        assert (step['key'], step.get('executable', True)) == (key, executable), text
+    assert L.map_step('alu', 'I perform the <Operation> operation with opcode <Opcode>')[0]['key'] == 'ALU.A.OP'
+    assert L.map_step('cpu', 'memory at that address should contain <expected>')[0]['key'] == 'CPU.Q.MEM'
+
+
+RF_SAME_CYCLE = RF_FEATURE + """
+  @write_read @req_1
+  Scenario Outline: Read during write returns the old value
+    Given the register file is ready
+    When I simultaneously write <data> to register <addr> and read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | data | expected |
+      | 12   | 99   | 7        |
+"""
+
+
+def test_scenario_the_testbench_cannot_run_decides_nothing(rf_run, db):
+    """R12 holds 7; the scenario reads it in the same cycle as writing 99 and
+    expects the old value 7, which is right. The testbench writes first and
+    reads 99. Without D29 that was 'scenario wrong' and "Correct the
+    scenarios" rewrote the right value 7 to 99."""
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.ingest import ingest_run
+    from src.xdb.explain import explain_check, summarize_run
+    from src.xdb import repair as XR
+    from src import xdb
+    proj, _, _ = rf_run
+    out = proj / 'output'
+    (out / 'bdd/rf_same_cycle.feature').write_text(RF_SAME_CYCLE, encoding='utf-8')
+    (out / 'dut/regfile_ok.v').write_text(RF_FIXED, encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/rf_same_cycle.feature'), {**RF_DUT, 'dut_filepath': str(out / 'dut/regfile_ok.v')},
+        output_filename='rf_same_cycle_tb.v')
+    _simulate(proj, tb['filepath'], out / 'dut/regfile_ok.v', 'output/simulation/rf_same_cycle.log')
+    paths = {'requirements': 'output/requirements/req.json', 'bdd': 'output/bdd/rf_same_cycle.feature',
+             'duv': 'output/dut/regfile_ok.v', 'testbench': Path(tb['filepath']).relative_to(proj).as_posix(),
+             'log': 'output/simulation/rf_same_cycle.log'}
+    res = ingest_run(proj, paths, run_id='rf_same_cycle', url=db, data={'bitwidth': 32})
+    # the fixed design passes everything else; the stale R1 read is the scenario's real mistake
+    assert res['verdicts'] == {'pass': 8, 'scenario_wrong': 1, 'undecided': 1}
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    blocked = next(p for p in s['problems'] if p['who'] == 'test')
+    assert blocked['title'] == 'The testbench cannot run one example as the scenario describes it'
+    assert ('“Read during write returns the old value”: the scenario says “When I simultaneously write <data> to '
+            'register <addr> and read register <addr>”, but the testbench reads only after a write has taken effect, '
+            'never in the same clock cycle.') in blocked['detail']
+    e = explain_check(blocked['explain']['tag'], sim_run_id=s['sim_run_id'], url=db)
+    assert e['plain']['lines'][0].startswith('This example cannot be checked as written: the scenario says')
+    with xdb.session_scope(db) as ss:
+        fixes = XR.scenario_corrections(ss, s['sim_run_id'])
+    assert [(c['scenario_key'], c['old'], c['new']) for c in fixes] == [('RF-READ-001', '100', '300')]

@@ -226,3 +226,33 @@ def test_last_examples_row_is_kept_without_a_final_newline(tmp_path):
     without = _generate(tmp_path / 'b', feature.rstrip('\n'), CPU_DUT)
     count = lambda r: Path(r['filepath']).read_text(encoding='utf-8').count('total = total + 1;')
     assert count(with_nl) == count(without) == 2
+
+
+ALU_DUT = {'module_type': 'alu', 'module_name': 'alu_32bit', 'bitwidth': 32}
+ALU_EMPTY_CELLS = """Feature: 32-bit ALU
+
+  @add
+  Scenario Outline: Verify ADD operation
+    Given I have operand A = <A>
+    And I have operand B = <B>
+    When I perform the ADD operation with opcode 0000
+    Then the result should be <Expected_Result>
+
+    Examples:
+      | A | B | Expected_Result | Overflow_Flag |
+      | 1 | 2 | 3               |               |
+      | 4 |   | 4               | False         |
+      | 5 | 6 | 11              | False         |
+"""
+
+
+def test_empty_cells_keep_the_row_and_an_empty_operand_skips_it(tmp_path):
+    """A model left one cell blank: the row used to be dropped as malformed
+    (51 of 74 rows in a real Gemini run). Now an empty flag cell is harmless
+    and an empty operand skips the row with a reason instead of becoming 0."""
+    from src import scenario_results as SR
+    r = _generate(tmp_path, ALU_EMPTY_CELLS, ALU_DUT)
+    text = Path(r['filepath']).read_text(encoding='utf-8')
+    assert text.count('total = total + 1;') == 2 and r['test_count'] == 2
+    assert r['parse_stats']['rows_dropped_malformed'] == 0
+    assert list(SR.load_index(r['filepath'])['trace']['skipped'].values()) == ['the row leaves an operand empty']
