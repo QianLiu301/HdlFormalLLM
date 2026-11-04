@@ -366,7 +366,8 @@ def cpu_reference(st: Dict) -> Dict:
         issue('unset_register', 'scenario', f'the instruction reads x{r}, which the example does not set')
         return None
 
-    if kind in ('LW', 'SW') and ops['offset']:
+    if kind in ('LW', 'SW') and ops['offset'] and not st.get('offset_applied'):
+        # testbenches generated before the offset fix placed the word at rs1
         issue('offset', 'test', f"the testbench ignores the offset {ops['offset']} of {ops['op']}")
     if kind == 'SW' and st.get('path') == 'register':
         issue('store_checked_as_register', 'test',

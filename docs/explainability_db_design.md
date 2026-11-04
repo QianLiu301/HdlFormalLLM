@@ -678,12 +678,20 @@ unsigned), 19 checks:
 | addi x0, x1, 5, expects 15 | x0 always stays 0 | scenario wrong |
 | slt x3, x1, x2, x1 = −1, x2 = 1 | design gives 0; seems to compare unsigned | design wrong |
 | blt x1, x2, 8, −5 vs 3, expects not taken | −5 < 3 is true: taken | scenario wrong |
-| lw x4, 4(x1) | the testbench ignores the offset | undecided (testbench) |
-| sw x2, 0(x1) with rd = 0 (the prompt's own format) | the testbench checks x0, not memory | undecided (testbench) |
+| lw x4, 4(x1) | checked at x1 + 4 | pass |
+| sw x2, 0(x1) with rd = 0 (the prompt's own format) | checked in memory | pass |
+| add x5, x1, x2 with rd column 3 | skipped by the testbench: other registers than the columns | Partly tested |
 
-The last two are bugs of the testbench generator (suggested as a separate task
-on master); when they are fixed, these rows become ordinary checks without any
-change here.
+The LW and SW rows were bugs of the testbench generator: offsets were
+ignored and a store row with an rd column was checked against x0. They are
+fixed on the master-based branch `claude/fix-testbench-generator` (together
+with: rows whose instruction names other registers than the columns, x29/x30,
+unaligned or result-area addresses and contended memory words are skipped with
+a reason; an ALU/counter row without an expected value uses the reference
+model instead of 0), merged here. Testbenches of features without such rows
+are byte-identical. For testbenches generated before the fix, `cpu_reference`
+still reports the ignored offset and the store checked as a register as
+testbench issues (`stimulus.offset_applied` / `path` tell the two apart).
 
 Repair: scenario correction writes −20, 0 and "yes" (cell style kept, negative
 values signed); design regeneration lists each failing instruction with its

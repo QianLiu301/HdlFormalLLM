@@ -1676,11 +1676,14 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                           'detail': f"This scenario was skipped: {plain_reason(sc.get('reason'))}."
                                     + (f" Requirement left untested: “{affected[0].rstrip('.')}”." if affected else ''),
                           'explain': None})
-        elif sc['status'] == 'partial':
-            n_skip = sum(1 for r in sc.get('rows') or [] if r['status'] == 'skipped')
+        elif any(r['status'] == 'skipped' for r in sc.get('rows') or []):
+            # also when other rows of the scenario failed: a skipped row is untested either way
+            skipped = [r for r in sc.get('rows') or [] if r['status'] == 'skipped']
+            why = plain_reason(skipped[0].get('reason')) if skipped and skipped[0].get('reason') else ''
             probs.append({'severity': 'warning', 'who': 'test',
                           'title': f"Partly tested: “{sc.get('title') or sc['id']}”",
-                          'detail': f'{n_skip} of its examples could not be turned into tests.', 'explain': None})
+                          'detail': f'{len(skipped)} of its examples could not be turned into tests'
+                                    + (f' (e.g. {why})' if why else '') + '.', 'explain': None})
     for r in reqs:
         if r['status'] == 'not_covered':
             probs.append({'severity': 'warning', 'who': 'coverage', 'title': 'A requirement is not tested by any scenario',

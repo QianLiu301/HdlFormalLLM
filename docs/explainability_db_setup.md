@@ -146,9 +146,11 @@ For CPU designs each example is judged the way the CPU executes it, and the
 card separates three kinds of problem: the design computes an instruction
 wrong (with a hint such as "seems to compare as unsigned numbers"), the
 scenario expects a wrong value or contradicts itself (one register given two
-values, a result expected in x0), and examples the testbench cannot check as
-written (load/store offsets, store rows that name an rd). Branches are shown
-as taken / not taken. `python tests/ui/stage_run.py cpu` stages a sample.
+values, a result expected in x0), and examples the testbench skips, with the
+reason (an instruction that uses other registers than its columns, x29/x30,
+unaligned addresses, two examples using the same memory word). Branches are
+shown as taken / not taken. `python tests/ui/stage_run.py cpu` stages a
+sample.
 
 Browser checks (developers; app running with `DATABASE_URL`, iverilog):
 
