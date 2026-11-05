@@ -1,0 +1,15 @@
+# Minimal runtime dependencies, derived from the project's actual imports
+# (main.py, src/, benchmark/, ...). Versions taken from requirements.txt.
+Flask==3.0.0
+Flask-Cors==4.0.0
+Werkzeug==3.1.4
+requests==2.31.0
+openai==1.66.3
+google-genai==1.47.0
+PyYAML==6.0.2
+# Step 0: repair malformed JSON from models without a JSON mode
+json-repair==0.30.3
+# Explainability database (optional at runtime: only used when DATABASE_URL is set)
+SQLAlchemy==2.0.54
+psycopg2-binary==2.9.12
+alembic==1.13.3

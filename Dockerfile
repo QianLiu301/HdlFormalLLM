@@ -11,11 +11,12 @@ RUN apt-get update && apt-get install -y \
 # 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件
-COPY requirements.txt .
+# 复制依赖文件。requirements.txt 是 Windows 上导出的完整环境（含 pywin32），
+# 只用于复现实验；网站运行只需要 requirements-core.txt
+COPY requirements-core.txt .
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-core.txt
 
 # 复制项目文件
 COPY . .
