@@ -54,6 +54,9 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D30 | **A design that does not compile goes back to the model with the compiler's words.** Two cases, told apart by compiling twice with `iverilog -g2012`: (a) *compile* — the design alone does not compile (offered in Step 1 under the compile result); (b) *interface* — the design compiles alone but not together with the testbench, i.e. its module or port names differ from the ones the testbench instantiates (offered in Step 4 when the simulation reports "Compilation failed"). The model gets the error lines (duplicates removed, at most 40, file paths replaced by "design line N" / "testbench line N"), for (b) also the module name and port list parsed from the testbench's `dut` instance, and the previous Verilog, under the same "Repair of a previous version" block as D26 with a kind-specific introduction (keep module name, ports, behaviour; Verilog-2001). No verdicts are involved, so this works for every design type and without the database; refused when there is nothing to fix. The new file never overwrites the old one (file names are made unique within one second). With the database it is a `feedback` row (subject = the stored design version, `proposed.action` = fix_compile_error, `kind`, the error lines) and the new design is the next version with reason `feedback:<id>`; a design the database does not know (an upload, or one still being stored) is fixed without a row. In case (b) Steps 3–4 rerun. The trial runner does the same: up to `--compile-fix N` (default 2) attempts per case, counted in the column "compile fixes" (ok / attempts) | 2026-11-04 |
 | D31 | **The CPU testbench's memory timing is stated, and it is the one the prompt implies.** Both memories read combinationally (the word at the address in the same cycle), the data memory writes at the clock edge; `prompts/duv_cpu/v2` says so (web default). Until 2026-11-04 the data memory answered one cycle late while the prompt was silent and its MEM/WB `mem_data` register implied a same-cycle read: both DeepSeek CPUs that compiled (trials first and cpu_fix) returned the word of the previous bus address for every load and were judged design_wrong; with a same-cycle read they pass 66/66 and 32/32, and the design repair could not help because the fault was not in the design. Lesson for every design type: a check is only evidence against the design if the interface contract it relies on was given to the model | 2026-11-04 |
 | D32 | **No credential leaves the machine.** Keys go in request headers, never in URLs (Gemini: `x-goog-api-key`); recorded API errors, JSON error responses and every trial output are passed through `src/redact.py` (the keys configured here, by value, plus common key formats); `tools/check_secrets.py` runs as a pre-commit hook (`git config core.hooksPath .githooks`) and refuses files such as `.env*` and any added line with a key. Found when a 429 message quoted by a trial result put a Gemini key into the public repository (the key was revoked) | 2026-11-04 |
+| D33 | **A CPU check only counts if the program got there.** A branch was judged by one result slot, so 0 meant "taken" even when the program never reached the branch. Trial cpu_v2: a design sent every taken branch to address 0; the program restarted at its first taken branch, the 4 taken rows passed and the 4 not-taken rows were reported as wrongly taken, and the repair prompt said so, which two rounds could not fix. Now the testbench records which instruction words the CPU fetched and which data words it wrote (`fetched[]`, `written[]`; only `imem_addr`, `dmem_addr`, `dmem_wen`). An example whose instruction was never fetched ends in "- not reached": status `not_tested`, no verdict, reported once as "The program never reached N examples", counted as a design failure for the repair. A branch target holds one more store (result slot + 0x7FC); if nothing was written there the check ends in "- did not continue after the branch": design_wrong with O = none, "A BEQ branch sends the program to the wrong place". Neither looks at the stored value: a design with a broken store path reached the row and gives a wrong result (the first version, arrival stores in the program, reported those rows as not reached and collided with word 512, which models use). Also: past address 4096 the CPU reads NOPs instead of wrapping to word 0, where a finished program started again; JAL/JALR rows are skipped, because their rd depends on the instruction's own address and a jump would leave rows unreached; rows that do not fit 1024 instruction words are skipped with a reason. Not solved: forwarding, stalls and JAL stay unchecked, see §6i | 2026-11-05 |
+| D34 | **An empty answer is a failed call, and one caused by the output budget gets one more try.** All 7 empty answers of 2026-11-03/04 (6 DeepSeek, 1 gpt-5-mini) had finish_reason `length`: a reasoning model used the whole budget before writing anything. They were logged as successful, and an empty Step 0 did not show in the trial summary although that run had no requirements. The instrumentation in `experiment_logger` is the one place every model call passes, so there: `success = 0` with "empty answer (finish_reason=...)", and for `length` / `max_tokens` one retry with twice the budget, at most 32768 (the UI's limit), streaming or not; both attempts are rows, the second with `budget_retry`. Step 0 budget 6000 -> 12000; its error names the budget. The trial summary has a column "requirements" (runs with / tried) and lists runs without them. Reasoning effort was left alone: it changes what the model does, the budget does not | 2026-11-05 |
+| D35 | **Step 4 never waits in silence.** From a laptop a query to Neon takes about 75 ms (a cloud session is much closer), so a summary took 22 s (222 queries) while the page polled for about 22 s and showed nothing; the panel looked as if it had disappeared. The page now says that it is preparing the explanations, waits up to 4 minutes, and on a timeout or an error says so with a Try again button (`sim-explain-wait`). `check_specification` loads the steps of a scenario once instead of per row (`_step_rows`): 93 queries, 10 s | 2026-11-05 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -739,6 +742,41 @@ the compile-error repair: of six runs, one produced a design (it compiled).
 | DeepSeek: Step 0 failed in 2 of 3 runs, the design call in 2 of 3 (an empty answer; three 60-s timeouts, then the fallback text, recorded as nothing) | read timeout 300 s, one retry after a timeout, 4xx other than 429 not retried, timeouts and HTTP errors recorded |
 | DeepSeek run 1: LW "executed wrong" (2 checks), unchanged after a design repair | D31: the testbench's registered memory read, not the design; the same held for the first trial's DeepSeek CPU |
 | The page always sent prompt version v1 (the per-type defaults, e.g. ALU v3, reached only the trial runner) and its version menu reset itself | the menu starts at the server's default and keeps the choice |
+
+## 6i. Third and fourth trial (2026-11-04/05, `output/trials/cpu_v2`, `cpu_v3`)
+
+gpt-5-mini, CPU only, three runs each: `cpu_v2` before D33/D34, `cpu_v3` after.
+Every verdict was checked against a small independent RV32I instruction-set
+simulator in a plain testbench, with no code shared with the website (scripts in
+`output/trials/cpu_v3/check/`, local only).
+
+| | cpu_v2 | cpu_v3 |
+|---|---|---|
+| Step 0 | 2 of 3 (one empty answer, budget 6000) | 3 of 3 (budget 12000, no empty answer) |
+| Checks at the first simulation | 84, 67 % pass | 94, 98 % pass (2 LW) |
+| No failing check at the end | 2 of 3 | 3 of 3 |
+| Compile fixes that worked | 2 of 2 | 2 of 3 attempts; both designs compiled in the end |
+| Design repairs | 3 rounds, one run stuck | 1 round, fixed |
+
+Two runs per table are few, and the only run without requirements (`cpu_v2` run 3) also
+had the worst first design: suggestive, not proof.
+
+| Finding | Change |
+|---|---|
+| All scenario values agree with the simulator (84 + 94 of 178) | none: no D31-like mistake in the tool |
+| `cpu_v2` run 3: every taken branch went to address 0. 4 taken rows passed, 4 not-taken rows never ran but were reported as wrongly taken, and the repair prompt said so | D33. On the saved designs the same run now reads 1 branch going astray and 7 examples not reached |
+| All 7 empty answers since 2026-11-03 had finish_reason `length`, and were logged as successful | D34 |
+| `cpu_v3` run 1: LW wrong. Confirmed: the design registered `dmem_addr` a cycle late, against the stated memory timing | one design repair |
+| The D33 and D34 paths did not occur in `cpu_v3` (no stray branch, no empty answer), so their evidence is the tests and the saved `cpu_v2` designs | |
+
+**Limits of "no failing check".** The generated programs put NOPs around each
+instruction and have no JAL/JALR rows, so forwarding, stalls and jumps are not
+checked (the requirements page says "not covered" for those). A program without
+NOPs, oracle the simulator: all final designs of both trials get forwarding,
+load-use stalls and flushes right (13 of 13 behaviours in `cpu_v3`), except `cpu_v2`
+run 3. JAL is wrong in all three designs of `cpu_v3`: run 1 cannot use the link
+value right after the jump, runs 2 and 3 write it wrongly (run 2 also for JALR).
+This is what roadmap R3 (deep check) should cover.
 
 ## 7. Evaluating explanations
 

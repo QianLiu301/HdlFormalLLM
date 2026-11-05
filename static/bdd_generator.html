@@ -2167,6 +2167,7 @@
                 <!-- 可解释性：每条检查是设计错了还是场景写错了，以及规格里写了但
                      testbench 从不比较的内容（如标志位）是否与规则一致。只有配置了
                      DATABASE_URL 才显示，数据来自后台写入的可解释性数据库。 -->
+                <div class="xp-sub" id="sim-explain-wait" style="display: none;"></div>
                 <div id="sim-explain" style="display: none;">
                     <div class="preview-label">🧭 Who Is Wrong? — Explanations</div>
                     <div class="xp-headline" id="xp-headline"></div>
@@ -6174,6 +6175,7 @@
             const box = document.getElementById('sim-coverage');
             box.style.display = 'none';
             document.getElementById('sim-explain').style.display = 'none';
+            document.getElementById('sim-explain-wait').style.display = 'none';
             document.getElementById('sim-problems').style.display = 'none';
             document.getElementById('sim-tech').open = true;
             explainState = null;
@@ -6215,24 +6217,57 @@
             not_tested: 'No assertion ran for this row', setup: 'Setup step without a check of its own'
         };
 
-        async function loadExplainSummary(paths, attempt = 0) {
+        // Storing a run takes a minute or more from a laptop (about 75 ms per query to
+        // the database). Waiting 22 seconds and then showing nothing looked as if the
+        // explanations had disappeared.
+        const EXPLAIN_WAIT_MS = 240000;
+
+        function showExplainWait(html) {
+            const el = document.getElementById('sim-explain-wait');
+            el.innerHTML = html;
+            el.style.display = html ? 'block' : 'none';
+        }
+
+        function offerExplainRetry(text) {
+            showExplainWait(`${escapeHtml(text)} <button class="btn btn-secondary" `
+                + `onclick="loadExplainSummary(currentSimResult.paths)">Try again</button>`);
+        }
+
+        async function loadExplainSummary(paths, started = Date.now()) {
             if (!paths || !currentSimResult || currentSimResult.paths !== paths) return;  // a newer run is on screen
+            showExplainWait('Preparing the explanations… The run is stored in the database first, '
+                            + 'which can take a minute or two.');
             try {
                 const r = await fetch('/api/explain/summary', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(paths)
                 });
                 const j = await r.json();
-                if (!j.enabled) return;                       // no database configured
-                if (!j.ready) {                               // background write still running
-                    if (attempt < 15) setTimeout(() => loadExplainSummary(paths, attempt + 1), 1500);
+                if (!currentSimResult || currentSimResult.paths !== paths) return;
+                if (!j.enabled) {                             // no database configured
+                    showExplainWait('');
                     return;
                 }
-                if (!currentSimResult || currentSimResult.paths !== paths) return;
+                if (j.success === false) {
+                    offerExplainRetry(`The explanations could not be loaded: ${j.error || 'unknown error'}.`);
+                    return;
+                }
+                if (!j.ready) {                               // background write still running
+                    if (Date.now() - started < EXPLAIN_WAIT_MS) {
+                        setTimeout(() => loadExplainSummary(paths, started), 2000);
+                    } else {
+                        offerExplainRetry('The explanations are not ready yet.');
+                    }
+                    return;
+                }
+                showExplainWait('');
                 explainState = j;
                 renderExplainSummary(j);
             } catch (e) {
                 console.warn('explanations unavailable:', e);  // additional information only
+                if (currentSimResult && currentSimResult.paths === paths) {
+                    offerExplainRetry('The explanations could not be loaded.');
+                }
             }
         }
 
@@ -7005,6 +7040,7 @@
         document.getElementById('vcd-tip').style.display = 'none';
         document.getElementById('sim-coverage').style.display = 'none';
         document.getElementById('sim-explain').style.display = 'none';
+        document.getElementById('sim-explain-wait').style.display = 'none';
         document.getElementById('sim-problems').style.display = 'none';
         document.getElementById('sim-tech').open = true;
         explainState = null;

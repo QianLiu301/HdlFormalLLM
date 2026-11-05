@@ -1230,9 +1230,8 @@ def test_regfile_repair_scenarios_and_design(rf_run, db, monkeypatch):
 
 
 
-@pytest.fixture(scope='module')
-def cpu_run(db, tmp_path_factory):
-    """The CPU sample, simulated on the CPU whose SLT compares unsigned (run id cpu_run)."""
+def _ingest_cpu(db, tmp_path_factory, design, run_id):
+    """The CPU sample, simulated on `design` and stored under `run_id`."""
     from src.testbench_generator import TestbenchGenerator
     from src.xdb.ingest import ingest_run
     proj = tmp_path_factory.mktemp('cpuproj')
@@ -1240,7 +1239,7 @@ def cpu_run(db, tmp_path_factory):
     for d in ('bdd', 'dut', 'requirements', 'simulation'):
         (out / d).mkdir(parents=True)
     (out / 'bdd/cpu.feature').write_text(CPU_FEATURE, encoding='utf-8')
-    (out / 'dut/cpu.v').write_text(CPU_BUGGY, encoding='utf-8')
+    (out / 'dut/cpu.v').write_text(design, encoding='utf-8')
     (out / 'requirements/req.json').write_text(json.dumps(CPU_RECORD), encoding='utf-8')
     tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
         str(out / 'bdd/cpu.feature'), dict(CPU_DUT))
@@ -1249,9 +1248,79 @@ def cpu_run(db, tmp_path_factory):
     paths = {'requirements': 'output/requirements/req.json', 'bdd': 'output/bdd/cpu.feature',
              'duv': 'output/dut/cpu.v', 'testbench': Path(tb['filepath']).relative_to(proj).as_posix(),
              'log': 'output/simulation/cpu.log'}
-    res = ingest_run(proj, paths, run_id='cpu_run', url=db, data={'bitwidth': 32})
+    res = ingest_run(proj, paths, run_id=run_id, url=db, data={'bitwidth': 32})
     assert res['ingested'], res
     return proj, paths, res
+
+
+@pytest.fixture(scope='module')
+def cpu_run(db, tmp_path_factory):
+    """The CPU sample, simulated on the CPU whose SLT compares unsigned (run id cpu_run)."""
+    return _ingest_cpu(db, tmp_path_factory, CPU_BUGGY, 'cpu_run')
+
+
+# A CPU that sends every taken branch to address 0, so the program never gets
+# past its first taken branch (trial cpu_v2, 2026-11-04). All examples before it
+# are correct; the four branches behind it never ran.
+_PC_UPDATE = 'pc <= (is_br && taken) ? pc + imm_b : pc + 4;'
+CPU_STRAY = CPU_OK.replace(_PC_UPDATE, "pc <= (is_br && taken) ? 32'd0 : pc + 4;")
+CPU_STUCK = CPU_OK.replace(_PC_UPDATE, 'pc <= pc;')
+
+
+@pytest.fixture(scope='module')
+def stray_run(db, tmp_path_factory):
+    assert CPU_STRAY != CPU_OK
+    return _ingest_cpu(db, tmp_path_factory, CPU_STRAY, 'stray_run')
+
+
+def test_cpu_examples_behind_a_stray_branch_are_not_judged(stray_run, db):
+    from src.xdb.explain import explain_check, summarize_run
+    proj, paths, res = stray_run
+    assert res['verdicts'] == {'pass': 11, 'scenario_wrong': 3, 'design_wrong': 1}
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    probs = {p['title']: (p['who'], p['detail']) for p in s['problems']}
+    assert probs['A BEQ branch sends the program to the wrong place'] == (
+        'design', '1 of 1 BEQ examples. E.g. beq x1, x2, 8 with x1 = 10, x2 = 10: the branch should be taken, '
+                  'but after it the program did not arrive where it should.')
+    who, detail = probs['The program never reached 4 examples']
+    assert who == 'design' and 'The last example the program reached is beq x1, x2, 8 with x1 = 10, x2 = 10.' in detail
+    assert not any('decides' in t or 'BLT' in t for t in probs)   # not reached: says nothing about BLT
+    assert s['repairs']['design_failures'] == 5
+
+    run = s['sim_run_id']
+    taken = explain_check('CPU-BRANCH-001/r1', sim_run_id=run, url=db)
+    assert taken['structure']['verdict'] == 'design_wrong'
+    assert taken['plain']['lines'][0] == ('The design is wrong. The branch should be taken, but after it the '
+                                          'program did not arrive where it should, so the branch sent it '
+                                          'somewhere else.')
+    behind = explain_check('CPU-BRANCH-001/r2', sim_run_id=run, url=db)
+    assert behind['structure']['verdict'] is None and behind['structure']['target']['status'] == 'not_tested'
+    assert behind['plain']['lines'][0].startswith('The program never reached this example')
+
+
+def test_cpu_repair_feedback_names_the_stray_branch(stray_run, db):
+    from src.xdb.repair import design_feedback
+    proj, paths, _ = stray_run
+    fb, err = design_feedback(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    assert err is None and fb['count'] == 2 and fb['operations'] == ['BEQ']
+    assert 'the branch must be taken, and the program must then continue with the instruction 8 bytes' in fb['text']
+    assert '4 further example(s) were never reached' in fb['text']
+    assert 'must be not taken' not in fb['text']
+
+
+def test_cpu_program_that_never_starts_can_still_be_repaired(db, tmp_path_factory):
+    from src.xdb.explain import summarize_run
+    from src.xdb.repair import design_feedback
+    assert CPU_STUCK != CPU_OK
+    proj, paths, res = _ingest_cpu(db, tmp_path_factory, CPU_STUCK, 'stuck_run')
+    assert res['verdicts'] == {}
+    q = {'testbench_path': paths['testbench'], 'log_file': paths['log']}
+    s = summarize_run(proj, q, url=db)
+    assert s['problems'][0]['title'] == 'The program never reached 19 examples'
+    assert s['problems'][0]['detail'].startswith('Not even the first example ran')
+    assert s['repairs']['design_failures'] == 19
+    fb, err = design_feedback(proj, q, url=db)
+    assert err is None and '19 further example(s) were never reached' in fb['text']
 
 
 def test_cpu_rules_match_the_testbench_reference():

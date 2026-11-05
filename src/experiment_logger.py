@@ -358,6 +358,30 @@ def _reentrant() -> bool:
     return getattr(_local, 'in_call', False)
 
 
+# An empty answer with finish_reason 'length': a reasoning model spent its whole
+# output budget before writing anything. All 7 empty answers of the trials of
+# 2026-11-03/04 were this (6 DeepSeek, 1 GPT-5), and the same prompt often worked
+# on the next run, so it gets one more try with twice the budget, up to the
+# largest value the UI allows (LLMProvider's max_tokens limit).
+BUDGET_RETRY_CAP = 32768
+
+
+def _empty_answer_error(result, meta) -> Optional[str]:
+    """Why a call that raised nothing still gave no answer, or None."""
+    if not isinstance(result, str) or result.strip():
+        return None
+    return f"empty answer (finish_reason={(meta or {}).get('finish_reason')})"
+
+
+def _retry_budget(result, meta, max_tokens) -> Optional[int]:
+    """The larger budget for a retry, or None when this call needs none."""
+    finish = str((meta or {}).get('finish_reason') or '').lower()
+    if (_empty_answer_error(result, meta) and finish in ('length', 'max_tokens')
+            and max_tokens and max_tokens < BUDGET_RETRY_CAP):
+        return min(max_tokens * 2, BUDGET_RETRY_CAP)
+    return None
+
+
 def _wrap_regular(cls_name, name, fn):
     @functools.wraps(fn)
     def wrapper(self, prompt, *args, **kwargs):
@@ -369,36 +393,49 @@ def _wrap_regular(cls_name, name, fn):
         if _reentrant():
             return fn(self, prompt, *args, **kwargs)   # 内层转发，不重复记录
         model = getattr(self, 'model', None)
-        max_tokens = kwargs.get('max_tokens')
         system_prompt = kwargs.get('system_prompt')
-        start = time.time()
-        _local.in_call = True
-        # 调用前渲染 prompt 时登记的信息在暂存区，这里取走作为初值
-        _local.call_meta = _take_pending_meta()
-        try:
-            result = fn(self, prompt, *args, **kwargs)
-            log_call(cls_name, model, name, prompt,
-                     response=result if isinstance(result, str) else str(result),
-                     system_prompt=system_prompt, max_tokens=max_tokens,
-                     latency_ms=int((time.time() - start) * 1000), success=True,
-                     extra=_auto_extra(self, cls_name, name, dict(
-                         _local.call_meta or {},
-                         prompt_sha256=_text_sha256(prompt),
-                         system_prompt_sha256=_text_sha256(system_prompt))))
-            return result
-        except Exception as e:
-            log_call(cls_name, model, name, prompt,
-                     system_prompt=system_prompt, max_tokens=max_tokens,
-                     latency_ms=int((time.time() - start) * 1000),
-                     success=False, error=f"{type(e).__name__}: {e}",
-                     extra=_auto_extra(self, cls_name, name, dict(
-                         _local.call_meta or {},
-                         prompt_sha256=_text_sha256(prompt),
-                         system_prompt_sha256=_text_sha256(system_prompt))))
-            raise
-        finally:
-            _local.in_call = False
-            _local.call_meta = None
+        # 调用前渲染 prompt 时登记的信息在暂存区，这里取走作为初值；两次尝试共用
+        pending = _take_pending_meta()
+
+        def attempt(call_kwargs, **meta):
+            max_tokens = call_kwargs.get('max_tokens')
+            start = time.time()
+            _local.in_call = True
+            _local.call_meta = dict(pending, **meta)
+            try:
+                result = fn(self, prompt, *args, **call_kwargs)
+                seen = dict(_local.call_meta or {})
+                error = _empty_answer_error(result, seen)
+                log_call(cls_name, model, name, prompt,
+                         response=result if isinstance(result, str) else str(result),
+                         system_prompt=system_prompt, max_tokens=max_tokens,
+                         latency_ms=int((time.time() - start) * 1000),
+                         success=error is None, error=error,
+                         extra=_auto_extra(self, cls_name, name, dict(
+                             seen,
+                             prompt_sha256=_text_sha256(prompt),
+                             system_prompt_sha256=_text_sha256(system_prompt))))
+                return result, seen
+            except Exception as e:
+                log_call(cls_name, model, name, prompt,
+                         system_prompt=system_prompt, max_tokens=max_tokens,
+                         latency_ms=int((time.time() - start) * 1000),
+                         success=False, error=f"{type(e).__name__}: {e}",
+                         extra=_auto_extra(self, cls_name, name, dict(
+                             _local.call_meta or {},
+                             prompt_sha256=_text_sha256(prompt),
+                             system_prompt_sha256=_text_sha256(system_prompt))))
+                raise
+            finally:
+                _local.in_call = False
+                _local.call_meta = None
+
+        result, seen = attempt(kwargs)
+        budget = _retry_budget(result, seen, kwargs.get('max_tokens'))
+        if budget:
+            print(f"🔁 Empty answer: the model used its whole output budget; retrying with {budget} tokens")
+            result, _ = attempt({**kwargs, 'max_tokens': budget}, budget_retry=True)
+        return result
     wrapper._exp_logged = True
     return wrapper
 
@@ -414,23 +451,22 @@ def _wrap_stream(cls_name, name, fn):
         if _reentrant():
             return fn(self, prompt, *args, **kwargs)
         model = getattr(self, 'model', None)
-        max_tokens = kwargs.get('max_tokens')
         system_prompt = kwargs.get('system_prompt')
         labels = _current_labels()  # 生成器可能在 context 退出后才被消费，先快照
         # 暂存的 prompt 元信息同样在此刻取走：生成器创建与被消费之间可能
         # 夹着别的调用，那时再取就会拿到别人的
         pending = _take_pending_meta()
-        start = time.time()
-        chunks = []
 
-        def gen():
+        def attempt(call_kwargs, outcome, **extra_meta):
+            start = time.time()
+            chunks = []
             success, error = True, None
             # 守卫在生成器体内设置：wrapper 只负责创建生成器，真正执行发生在被消费时。
             # 流式失败时 provider 会回退调用 self._call_api()，需一并抑制其重复记录。
             _local.in_call = True
-            _local.call_meta = dict(pending)
+            _local.call_meta = dict(pending, **extra_meta)
             try:
-                for chunk in fn(self, prompt, *args, **kwargs):
+                for chunk in fn(self, prompt, *args, **call_kwargs):
                     if isinstance(chunk, str):
                         chunks.append(chunk)
                     yield chunk
@@ -438,19 +474,33 @@ def _wrap_stream(cls_name, name, fn):
                 success, error = False, f"{type(e).__name__}: {e}"
                 raise
             finally:
-                meta = _local.call_meta or {}
+                meta = dict(_local.call_meta or {})
                 _local.in_call = False
                 _local.call_meta = None
+                text = ''.join(chunks)
+                if success:
+                    error = _empty_answer_error(text, meta)
+                    success = error is None
+                outcome.update(text=text, meta=meta)
                 with call_context(**labels):
                     log_call(cls_name, model, name, prompt,
-                             response=''.join(chunks),
-                             system_prompt=system_prompt, max_tokens=max_tokens,
+                             response=text,
+                             system_prompt=system_prompt, max_tokens=call_kwargs.get('max_tokens'),
                              latency_ms=int((time.time() - start) * 1000),
                              success=success, error=error, streaming=True,
                              extra=_auto_extra(self, cls_name, name, dict(
                                  meta,
                                  prompt_sha256=_text_sha256(prompt),
                                  system_prompt_sha256=_text_sha256(system_prompt))))
+
+        def gen():
+            outcome = {}
+            yield from attempt(kwargs, outcome)
+            # nothing has been sent to the reader yet, so the retry is seamless
+            budget = _retry_budget(outcome.get('text'), outcome.get('meta'), kwargs.get('max_tokens'))
+            if budget:
+                print(f"🔁 Empty answer: the model used its whole output budget; retrying with {budget} tokens")
+                yield from attempt({**kwargs, 'max_tokens': budget}, {}, budget_retry=True)
         return gen()
     wrapper._exp_logged = True
     return wrapper

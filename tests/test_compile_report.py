@@ -40,8 +40,9 @@ def test_lines_are_unique_and_name_the_design(tmp_path):
     assert len(lines) == len(set(lines))
     assert all(ln.startswith('design line ') for ln in lines), lines
     assert not any(': :' in ln or str(tmp_path) in ln for ln in lines), lines
-    assert 'design line 2: a is declared here as wire.' in lines
-    assert {ln.split('error: ')[1].split(' ')[0] for ln in lines if 'error: ' in ln} == {'a', 'b'}
+    # the wording depends on the iverilog version
+    assert any(ln.startswith('design line 2: ') and 'declared here as' in ln for ln in lines), lines
+    assert {ln.split('error: ')[1].split(' ')[0].strip("'") for ln in lines if 'error: ' in ln} == {'a', 'b'}
 
 
 def test_long_reports_say_how_much_was_left_out(tmp_path):

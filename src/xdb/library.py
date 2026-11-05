@@ -245,6 +245,11 @@ def regfile_replay(events: List[Dict], width: int) -> Dict[str, Dict]:
 # stores the register named in the rd column to a result slot (a branch skips
 # a store of a marker instead). cpu_reference judges a row the way the CPU
 # executes that program, and says when the row cannot mean what it says.
+#
+# The testbench also records which instructions the CPU fetched, and a branch
+# target holds one more store. A row whose instruction was never fetched did not
+# run and proves nothing (status not_tested); a branch that was fetched but whose
+# target store never happened sent the program somewhere else: the design's fault.
 
 _M32 = 0xFFFFFFFF
 
@@ -320,6 +325,17 @@ CPU_RULES['SW'] = {'op': 'SW', 'expr': 'dmem[rs1 + offset] = rs2', 'fn': None,
 
 _CPU_MEM_RX = re.compile(r'^\s*(-?(?:0x)?[0-9a-f]+)\s*\(\s*x(\d+)\s*\)\s*$', re.I)
 CPU_RESERVED = (29, 30)          # the testbench keeps the marker and the result address there
+# how a failed check ends in the simulation log (TestbenchGenerator._generate_cpu_testbench)
+CPU_NOT_REACHED = ' - not reached'
+CPU_ASTRAY = ' - did not continue after the branch'
+
+
+def cpu_not_reached(message: Optional[str]) -> bool:
+    return CPU_NOT_REACHED in (message or '')
+
+
+def cpu_astray(message: Optional[str]) -> bool:
+    return CPU_ASTRAY in (message or '')
 
 
 def _imm(v: str) -> Optional[int]:

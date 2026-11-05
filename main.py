@@ -579,6 +579,9 @@ def _read_bdd_context(data):
     return text, None
 
 
+REQUIREMENTS_MAX_TOKENS = 12000     # Step 0
+
+
 def _empty_response_message(run_id, max_tokens=None):
     """空响应时告诉用户原因。最常见的是推理模型把输出预算全花在思考上
     （finish_reason=length），这时重试或换非推理模型才有用，而"返回为空"
@@ -2881,16 +2884,17 @@ def analyze_requirements():
         llm = LLMFactory.create_provider(
             llm_name, **({'model': model} if model and llm_name in MODEL_OVERRIDE_PROVIDERS else {}))
         with call_context(**_ctx):
-            # 推理模型会先花掉一部分预算在思考上，给少了只会拿到空串
-            text = llm._call_api(user_prompt, max_tokens=6000, system_prompt=sys_prompt)
+            # 推理模型会先花掉一部分预算在思考上，给少了只会拿到空串。
+            # 6000 时 gpt-5-mini 三次里有一次全部花在推理上（试验 cpu_v2）
+            text = llm._call_api(user_prompt, max_tokens=REQUIREMENTS_MAX_TOKENS, system_prompt=sys_prompt)
     except Exception as e:
         return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 502
 
     if is_fallback_text(text):
         meta = _last_call_meta(run_id) or {}
         return jsonify({'success': False, 'run_id': run_id,
-                        'error': meta.get('api_error') or 'The model call failed '
-                                 '(empty or fallback response).'}), 502
+                        'error': _empty_response_message(run_id) if not text and meta.get('truncated')
+                        else meta.get('api_error') or 'The model call failed (empty or fallback response).'}), 502
     analysis, err = requirements_store.parse_analysis(text)
     retried = False
     if err and 'JSON' in err:
@@ -2902,7 +2906,7 @@ def analyze_requirements():
                       f"no prose, no code fences.")
         try:
             with call_context(**_ctx):
-                text = llm._call_api(fix_prompt, max_tokens=6000, system_prompt=sys_prompt)
+                text = llm._call_api(fix_prompt, max_tokens=REQUIREMENTS_MAX_TOKENS, system_prompt=sys_prompt)
             analysis, err = requirements_store.parse_analysis(text)
         except Exception as e:
             err = f'{type(e).__name__}: {e}'
