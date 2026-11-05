@@ -58,6 +58,7 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D34 | **An empty answer is a failed call, and one caused by the output budget gets one more try.** All 7 empty answers of 2026-11-03/04 (6 DeepSeek, 1 gpt-5-mini) had finish_reason `length`: a reasoning model used the whole budget before writing anything. They were logged as successful, and an empty Step 0 did not show in the trial summary although that run had no requirements. The instrumentation in `experiment_logger` is the one place every model call passes, so there: `success = 0` with the reason, and for `length` / `max_tokens` one retry with twice the budget, at most 32768 (the UI's limit); both attempts are rows, the second with `budget_retry`. A failed call does not always look empty: the GWDG providers catch their own error and return a fallback text. The first version of this decision missed that, so GLM and Qwen 3.6 were neither retried nor logged as failed; `_failed_call_error` now also counts an `api_error` with a fallback text. A stream is retried only while nothing has reached the reader. Step 0 budget 6000 -> 12000; its error names the budget. The trial summary has a column "requirements" (runs with / tried) and lists runs without them. Reasoning effort was left alone: it changes what the model does, the budget does not | 2026-11-05 |
 | D35 | **Step 4 never waits in silence.** From a laptop a query to Neon takes about 75 ms (a cloud session is much closer), so a summary took 22 s (222 queries) while the page polled for about 22 s and showed nothing; the panel looked as if it had disappeared. The page now says that it is preparing the explanations, waits up to 4 minutes, and on a timeout or an error says so with a Try again button (`sim-explain-wait`). `check_specification` loads the steps of a scenario once instead of per row (`_step_rows`): 93 queries, 10 s | 2026-11-05 |
 | D36 | **Which models the site offers.** Only models the GWDG documentation lists, tried through the whole web flow here; "good at coding" in the documentation is a reason to try a model, not a result. GPT-OSS 120B and GLM 4.7 left GWDG (403), Llama 3.3 70B on Together now needs a dedicated endpoint (400). Offered with the school key: Qwen 3 Coder Next, Gemma 4 31B (falls back to `QWEN_API_KEY`, same key), GLM 5.3 Flash with `reasoning_effort` low (`EXTRA_PAYLOAD`); evidence in §6j. Own accounts stay: OpenAI, Gemini, DeepSeek, Mistral. External models in the GWDG list (Claude, GPT-5.x) are "not generally available for API usage" (403/404 with this key). The menu change went to master alone as 24fd642, because the live site offered the dead models; D33-D35 did not | 2026-11-05 |
+| D37 | **A card is one thing to fix, and it says what the reader needs.** Simulation #106 had every number right and still misled: SLT read "2 of 8" although 7 of 8 were wrong, on two cards, and `32767 < 32768 gives 1` looked correct because the scenario had written -32768. The grouping of D25 by operation caused the first. Now: examples where the design repeats the scenario's mistake are counted with the design's failures of that operation; operands an operation reads as signed are shown as signed (`library.SIGNED_OPERANDS`); a cause is named only when a known mix-up (`library.ALU_MIXUPS`: unsigned compare, logical shift, add/subtract) reproduces every example of the operation, otherwise the card says what is wrong and no more; a scenario whose two operations are exchanged throughout is one card; a contrast is the example with the fewest differing bits that is really correct, never one that passes by the same mistake. No schema change: all of this is computed from the stored values. Rules in §7a, fixed example in `tests/data/unsigned_alu` | 2026-11-05 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -810,6 +811,28 @@ passed 6 wrong branches. JAL remains wrong in every design checked (§6i), GLM i
 | Usefulness | helps a person find the problem | task study: participants localise injected faults (existing mutants) with vs. without explanations; time and accuracy |
 
 ---
+
+## 7a. What a card must do (the explanation standard, D37)
+
+§7 says how to evaluate explanations; these are the rules an explanation is written to.
+Rules 1 to 5 are checked by tests on a fixed real run (`tests/data/unsigned_alu`, simulation
+#106). Rule 6 is checked per verdict. Whether a hardware engineer gets it at once can only be
+asked of hardware engineers (Usefulness in §7), which has not been done yet.
+
+1. **Traceable.** Every number comes from O, B, R or a stated rule.
+2. **One card per root cause.** A card is one thing to fix, and its count is the true extent.
+3. **Values as the operation reads them.** 0xFFFF is -1 for SLT and 65535 for SLTU.
+4. **A cause needs proof.** Name a cause only if it reproduces every example of the operation.
+   Otherwise say what is wrong and that the cause is unknown.
+5. **Say what to change:** the design or the scenario, and where the run shows it.
+6. **Never hide a false pass.** A test that passes because the scenario is wrong too must show.
+
+Where a new problem belongs, in this order: did we read the data wrongly (log, index), is the
+rule wrong (`library.py`, the reference model), is the verdict wrong (`verdict.py`), or does a
+right result read badly (`explain.py`)? #106 was the last. Relation to BDX: structure and local /
+global / contrastive come from the paper, reduced and summarised explanations from its step 3;
+the verdict, the independent reference and rule 4 are ours, because BDX trusts the
+specification and ours is generated by a model.
 
 ## 8. Deployment
 

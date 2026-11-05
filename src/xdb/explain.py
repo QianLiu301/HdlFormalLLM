@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.10'  # v1.10: a CPU example the program never reached is not judged
+ALGORITHM = 'bdx_v1.11'  # v1.11: one card per root cause, signed values, proven causes
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -435,23 +435,49 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
                                    'rule_value': expect, 'consistent': consistent,
                                    'matches_alternative': alts})
 
+        # the cause of a wrong result, when a known mix-up reproduces every example
+        _alu_op = L.alu_swap_partner(ci.operation) is not None and not (L.library_for(mt) or {}).get('reference') \
+            and not (L.library_for(mt) or {}).get('stateful')
+        cause = None
+        if _alu_op and cr and cr.verdict in ('design_wrong', 'both_wrong', 'consistent_wrong'):
+            same_op = s.execute(select(M.CheckItem, M.CheckResult)
+                                .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+                                .where(M.CheckResult.sim_run_id == run.id, M.CheckItem.operation == ci.operation,
+                                       M.CheckItem.seq == 1)).all()
+            cause = L.alu_mixup(ci.operation, _alu_rows(same_op, ci.operation), width)
+
         contrast = None
         if sc is not None:
+            # An ALU example has two operands, so the nearest example of the same
+            # operation is the one with the fewest differing bits, in any scenario
+            # (BDX: a minimal change). Elsewhere: the nearest row of this scenario.
+            bits = _alu_op and stim.get('a') is not None and stim.get('b') is not None
             others = s.execute(
                 select(M.CheckItem, M.CheckResult, M.ExampleRow)
                 .join(M.CheckResult, (M.CheckResult.check_id == M.CheckItem.id)
                       & (M.CheckResult.sim_run_id == run.id))
                 .join(M.ExampleRow, M.ExampleRow.id == M.CheckItem.example_row_id)
-                .where(M.CheckItem.scenario_id == sc.id, M.CheckItem.id != ci.id,
+                .where((M.CheckItem.operation == ci.operation) if bits else (M.CheckItem.scenario_id == sc.id),
+                       M.CheckItem.testbench_id == ci.testbench_id, M.CheckItem.seq == 1, M.CheckItem.id != ci.id,
                        M.CheckResult.status.in_(('pass', 'fail')))).all()
             mine_row = er.row_no if er else 0
             cands = [o for o in others if (o[1].status != (cr.status if cr else None))
                      or (o[1].verdict != (cr.verdict if cr else None))]
+
+            def distance(o):
+                if not bits or (o[0].stimulus or {}).get('a') is None:
+                    return abs(o[2].row_no - mine_row)
+                return (bin(int(o[0].stimulus['a']) ^ int(stim['a'])).count('1')
+                        + bin(int(o[0].stimulus['b']) ^ int(stim['b'])).count('1'))
+            # never compare with an example that only passes because the scenario is wrong too
             cands.sort(key=lambda o: (o[1].status == (cr.status if cr else None),
-                                      abs(o[2].row_no - mine_row)))
+                                      o[1].verdict != 'pass', distance(o)))
             if cands:
                 oc, ocr, oer = cands[0]
                 contrast = {'row_no': oer.row_no, 'tag': oc.tag, 'status': ocr.status,
+                            'same_with_fault': (cause is not None and L.alu_mixup_value(
+                                ci.operation, int(oc.stimulus['a']), int(oc.stimulus['b']), width)
+                                == _int(oc.expected_ref)),
                             'verdict': ocr.verdict, 'stimulus': oc.stimulus,
                             'expected_bdd': _int(oc.expected_bdd), 'observed': _int(ocr.observed_value),
                             'expected_ref': _int(oc.expected_ref)}
@@ -464,7 +490,7 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
                        'port': ci.port, 'status': cr.status if cr else None},
             'verdict': cr.verdict if cr else None,
             'values': {'observed': O, 'expected_bdd': B, 'expected_ref': R, 'width': width},
-            'operation': ci.operation, 'module_type': mt, 'history': history, 'cpu': cpu,
+            'operation': ci.operation, 'module_type': mt, 'history': history, 'cpu': cpu, 'cause': cause,
             'blocked': blocked,
             'scenario': {'P': [x for x in steps if x['role'] == 'P'],
                          'Q': [x for x in steps if x['role'] == 'Q']},
@@ -648,6 +674,10 @@ def _num(v, width=None) -> str:
     return str(v)
 
 
+def _hex(v, width) -> str:
+    return f'0x{v:0{(width + 3) // 4}X}'
+
+
 def render(st: Dict) -> str:
     kind = st.get('kind')
     if kind == 'local':
@@ -669,13 +699,19 @@ def render(st: Dict) -> str:
             for x in (st.get('cpu') or {}).get('notes') or []:
                 lines.append(f"   note: {x['text']}")
         elif stim:
+            op_ = st.get('operation')
+            shown = lambda k, v: (f'{_hex(v, w)} ({L.signed_value(op_, k, v, w)} as signed)'
+                                  if L.signed_value(op_, k, v, w) is not None else _num(v, w))
             lines.append("② Applied: " + ', '.join(
-                f"{k} = {_num(v, w) if k != 'opcode' else v}" for k, v in stim.items()))
+                f"{k} = {shown(k, v) if k != 'opcode' else v}" for k, v in stim.items()))
         r = st.get('rule')
         h = st.get('history')
         if r:
             sym = _OP_SYMBOL.get(r['op'], r['op'])
-            calc = (f"{_num(stim.get('a'), w)} {sym} {_num(stim.get('b'), w)} = {_num(r.get('value'), w)}"
+            sa, sb = (L.signed_value(r['op'], 'a', stim.get('a'), w),
+                      L.signed_value(r['op'], 'b', stim.get('b'), w))
+            calc = (f"{_num(stim.get('a'), w) if sa is None else sa} {sym} "
+                    f"{_num(stim.get('b'), w) if sb is None else sb} = {_num(r.get('value'), w)}"
                     if stim.get('a') is not None else _num(r.get('value'), w))
             lines.append(f"③ Rule: {r['text']} → {calc}   ({r['source']})")
         if h:
@@ -698,7 +734,8 @@ def render(st: Dict) -> str:
             c_status = 'passed' if c['status'] == 'pass' else 'failed'
             what = (_example(st.get('module_type'), st.get('operation'), cs, w) if _stateful(st.get('module_type'))
                     else f"a = {_num(cs.get('a'), w)}, b = {_num(cs.get('b'), w)}")
-            lines.append(f"⑤ Contrast: row {c['row_no']} ({what}) {c_status} — {_VERDICT.get(c.get('verdict'), '')}")
+            where = c['tag'][4:] if (c.get('tag') or '').startswith('BDD:') else f"row {c['row_no']}"
+            lines.append(f"⑤ Contrast: {where} ({what}) {c_status} — {_VERDICT.get(c.get('verdict'), '')}")
         for d in st.get('stimulus_differs') or []:
             lines.append(f"Note: the scenario writes {d['scenario']} for {d['port']}; the testbench applied "
                          f"{d['applied']} (same bits as a {w}-bit value)")
@@ -1042,9 +1079,60 @@ def _with_width(text: str, w: Optional[int]) -> str:
     return text.replace('2^W', f'2^{w}').replace('log2(W)', str((w - 1).bit_length()))
 
 
+def _operand(op, name, stim, w) -> str:
+    """An operand as the operation reads it: 0xFFFF is -1 for SLT, 65535 for SLTU."""
+    v = (stim or {}).get(name)
+    signed = L.signed_value(op, name, v, w)
+    return _pv(v, w) if signed is None else f'{_hex(v, w)} ({signed} as signed)'
+
+
 def _inputs(op, stim, w) -> str:
-    stim = stim or {}
-    return f"{op or 'operation'} with A = {_pv(stim.get('a'), w)}, B = {_pv(stim.get('b'), w)}"
+    return f"{op or 'operation'} with A = {_operand(op, 'a', stim, w)}, B = {_operand(op, 'b', stim, w)}"
+
+
+def _alu_rows(main, op) -> List[Tuple[int, int, int]]:
+    """(a, b, design output) of every simulated example of an ALU operation."""
+    rows = []
+    for ci, cr in main:
+        st = ci.stimulus or {}
+        if (ci.tag.startswith('BDD:') and ci.operation == op and cr.status in ('pass', 'fail')
+                and cr.observed_value is not None and st.get('a') is not None and st.get('b') is not None):
+            rows.append((int(st['a']), int(st['b']), int(cr.observed_value)))
+    return rows
+
+
+def _swapped_scenarios(s, main, width) -> Tuple[List[Dict], set]:
+    """Scenarios whose two operations are exchanged throughout: every example
+    of both gives the other operation's result. Returns the cards and the
+    examples they cover."""
+    by_scenario: Dict[int, List] = {}
+    for ci, cr in main:
+        st = ci.stimulus or {}
+        if (ci.tag.startswith('BDD:') and ci.scenario_id and L.alu_swap_partner(ci.operation)
+                and ci.expected_bdd is not None and ci.expected_ref is not None
+                and st.get('a') is not None and st.get('b') is not None):
+            by_scenario.setdefault(ci.scenario_id, []).append((ci, cr))
+    cards, covered = [], set()
+    for sid, rows in by_scenario.items():
+        ops = {ci.operation for ci, _ in rows}
+        if len(ops) != 2 or L.alu_swap_partner(min(ops)) != max(ops):
+            continue
+        wrong = [(ci, cr) for ci, cr in rows if _int(ci.expected_bdd) != _int(ci.expected_ref)]
+        fits = all(L.alu_mixup_value(ci.operation, int(ci.stimulus['a']), int(ci.stimulus['b']), width)
+                   == _int(ci.expected_bdd) for ci, _ in rows)
+        if not fits or {ci.operation for ci, _ in wrong} != ops:
+            continue
+        first = next((ci for ci, cr in wrong if cr.verdict == 'scenario_wrong'), wrong[0][0])
+        sc = s.get(M.Scenario, sid)
+        a, b = sorted(ops)
+        cards.append({'severity': 'warning', 'who': 'scenario', 'title': f'A scenario swaps {a} and {b}',
+                      'detail': f"“{sc.title}”: all {len(rows)} examples give the other operation's result. "
+                                f"E.g. {_inputs(first.operation, first.stimulus, width)}: the scenario expects "
+                                f"{_pv(_int(first.expected_bdd), width)}, correct is "
+                                f"{_pv(_int(first.expected_ref), width)}.",
+                      'explain': {'kind': 'check', 'tag': first.tag}})
+        covered |= {ci.tag for ci, _ in rows}
+    return cards, covered
 
 
 _FLAG_WORD = {'zero': 'zero flag', 'negative': 'negative flag', 'overflow': 'overflow flag'}
@@ -1390,12 +1478,19 @@ def _plain_local_combinational(st: Dict) -> Dict:
     else:
         lines.append('This check was not executed.')
     r = st.get('rule')
+    stim = st.get('stimulus') or {}
     if r and v not in ('pass', None):
-        lines.append(f"Why {_pv(R, w)}: {_with_width(r['text'], w)}.")
+        work = L.alu_working(st.get('operation'), stim.get('a'), stim.get('b'), w)
+        lines.append(f"Why {_pv(R, w)}: {_with_width(r['text'], w)}" + (f"; here {work}." if work else '.'))
+    cause = st.get('cause')
+    if cause and v not in ('pass', None):
+        lines.append(f"Cause: the design {cause['says']}. That reproduces all {cause['rows']} "
+                     f"{st.get('operation')} examples, so {cause['fix']}.")
     c = st.get('contrast')
     if c and v not in ('pass', None):
         lines.append(f"For comparison, {_inputs(st.get('operation'), c.get('stimulus'), w)} "
-                     f"{'passed' if c['status'] == 'pass' else 'failed'}.")
+                     f"{'passed' if c['status'] == 'pass' else 'failed'}"
+                     + (': the fault does not show on these values.' if c.get('same_with_fault') else '.'))
     flags = st.get('probed') or []
     bad = [x for x in flags if x['verdict'] != 'pass']
     if flags and not bad:
@@ -1662,6 +1757,12 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
         if cr.verdict in _WHO:
             by_op.setdefault((cr.verdict, ci.operation or '?'), []).append((ci, cr))
             main_bad_tags.add(ci.tag)
+    # One card per thing to fix. Examples where the design repeats the scenario's
+    # mistake are the same fault as those where it fails the test: they only pass
+    # because the scenario is wrong too (D37).
+    same_mistake: Dict[str, List] = {}
+    for key in [k for k in by_op if k[0] == 'consistent_wrong' and ('design_wrong', k[1]) in by_op]:
+        same_mistake[key[1]] = by_op.pop(key)
     probs: List[Dict] = []
     tbrow = s.get(M.Testbench, run.testbench_id)
     sess = s.get(M.Session, tbrow.session_id)
@@ -1669,10 +1770,20 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     mt = design.module_type if design else None
     hist = _rf_history(s, run.testbench_id, width) if _stateful(mt) else {}
 
+    swap_cards: List[Dict] = []
+    if not _is_cpu(mt) and not _stateful(mt) and width:
+        swap_cards, swapped = _swapped_scenarios(s, main, width)
+        for key in [k for k in by_op if k[0] == 'scenario_wrong']:
+            by_op[key] = [x for x in by_op[key] if x[0].tag not in swapped]
+            if not by_op[key]:
+                del by_op[key]
+
     order = ['design_wrong', 'both_wrong', 'consistent_wrong', 'scenario_wrong']
     for (v, op), items in sorted(by_op.items(), key=lambda kv: (order.index(kv[0][0]), kv[0][1])):
         ci, cr = items[0]
-        n, m = len(items), total_op.get(op, len(items))
+        also = len(same_mistake.get(op) or []) if v == 'design_wrong' else 0
+        n, m = len(items) + also, total_op.get(op, len(items))
+        passing = (f' {also} of them pass the test, because the scenario makes the same mistake.' if also else '')
         B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
         if _is_cpu(mt):
             lost = next(((c_, r_) for c_, r_ in items if L.cpu_astray(r_.message)), None)
@@ -1680,19 +1791,23 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                 ci, cr = lost
                 B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
             title, detail = _cpu_problem(v, op, n, m, ci, B, R, O, astray=bool(lost))
+            detail += passing
             probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                           'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
             continue
         if _stateful(mt):
             title, detail = _stateful_problem(s, run.testbench_id, v, op, n, m, ci, B, R, O, width,
                                               hist.get(ci.tag))
+            detail += passing
             probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                           'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
             continue
         ex = _inputs(op, ci.stimulus, width)
+        cause = L.alu_mixup(op, _alu_rows(main, op), width) if v != 'scenario_wrong' else None
         if v == 'design_wrong':
-            title = f'The design computes {op} wrong'
-            detail = f'{n} of {m} {op} examples give a wrong result. E.g. {ex}: the design gives {_pv(O, width)}, correct is {_pv(R, width)}.'
+            title = f"The design {cause['says']}" if cause else f'The design computes {op} wrong'
+            detail = (f'{n} of {m} {op} examples give a wrong result.{passing} E.g. {ex}: the design gives '
+                      f'{_pv(O, width)}, correct is {_pv(R, width)}.')
         elif v == 'both_wrong':
             title = f'{op}: both the design and the scenario are wrong'
             detail = f'{n} of {m} {op} examples. E.g. {ex}: scenario {_pv(B, width)}, design {_pv(O, width)}, correct {_pv(R, width)}.'
@@ -1703,9 +1818,12 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
         else:
             title = f'A scenario expects a wrong {op} result' if n == 1 else f'{n} scenario examples expect a wrong {op} result'
             detail = f'E.g. {ex}: the scenario expects {_pv(B, width)}, correct is {_pv(R, width)}. The design is right.'
+        if cause:
+            detail += f" All {cause['rows']} {op} examples fit this, so {cause['fix']}."
         probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                       'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
 
+    probs += swap_cards
     probs += _blocked_problems(s, main)
     if _is_cpu(mt):
         probs += _cpu_not_reached(main)

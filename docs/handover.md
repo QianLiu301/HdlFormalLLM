@@ -7,7 +7,8 @@ says what the user wants, what the sources were, how we work, where things
 stand and what comes next. Details live in the documents it points to.
 
 Read first: `CLAUDE.md`, then `docs/explainability_db_design.md` (decision
-log D1–D36, §1 users, §2 BDX mapping, §6d–§6j milestones and trial findings),
+log D1–D37, §1 users, §2 BDX mapping, §6d–§6j milestones and trial findings, §7a the
+explanation standard),
 `docs/explainability_db_setup.md` (how to run everything),
 `docs/research_outline.md` (candidate papers and feature roadmap R1–R7).
 
@@ -59,11 +60,14 @@ Done: explainability DB and verdicts (M1), rule libraries and explanations
 batch trial runner (R1), D29 (steps the testbench cannot run), D30
 (compile-error repair), D31 (CPU memory timing, prompt duv_cpu v2), D32
 (credentials), D33 (a CPU check counts only if the program got there), D34
-(empty answers), D35 (Step 4 says when it is waiting), D36 (the model list).
-186 tests (`tests/`), browser checks in `tests/ui/`.
+(empty answers), D35 (Step 4 says when it is waiting), D36 (the model list), D37 (a
+card is one thing to fix). 192 tests (`tests/`), browser checks in `tests/ui/`.
 
-Live site: master is 24fd642 = the release before this work + the model list of D36
-only. Everything else stays on `bdx-explainability` until the user merges it.
+Live site: master is 23dcb9a = the release before this work + the model list of D36
+(24fd642) + the Docker image installing `requirements-core.txt` instead of the
+Windows export in `requirements.txt`. Everything else stays on
+`bdx-explainability` until the user merges it; the Dockerfile change arrives with
+that merge.
 
 Trials (`first`, `cpu_fix` in `data/trials/`; `cpu_v2`, `cpu_v3` in
 `output/trials/`, local; findings in design doc §6g–§6i):

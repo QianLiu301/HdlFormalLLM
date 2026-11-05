@@ -738,7 +738,7 @@ def test_problems_list_in_plain_words(run, db):
     s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
     probs = s['problems']
     titles = [p['title'] for p in probs]
-    assert titles[0] == 'The design computes SLTU wrong'                  # most severe first
+    assert titles[0] == 'The design compares SLTU operands as signed numbers'   # most severe first
     assert 'A scenario expects a wrong SUB result' in titles
     assert 'A scenario expects a wrong SRA result' in titles
     assert 'A scenario states a wrong zero flag for ADD' in titles
@@ -1763,3 +1763,85 @@ def test_scenario_the_testbench_cannot_run_decides_nothing(rf_run, db):
     with xdb.session_scope(db) as ss:
         fixes = XR.scenario_corrections(ss, s['sim_run_id'])
     assert [(c['scenario_key'], c['old'], c['new']) for c in fixes] == [('RF-READ-001', '100', '300')]
+
+
+# ================================================================ reading a card (D37)
+# The fixed example of the explanation standard: a real run (simulation #106,
+# 2026-11-05), a 16-bit ALU from qwen3-coder-next. The design has no $signed at
+# all, so SLT compares unsigned and SRA fills with zeros, and one scenario swaps
+# SLT and SLTU. The numbers were always right; these tests hold how they read.
+
+@pytest.fixture(scope='module')
+def unsigned_run(db, tmp_path_factory):
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.ingest import ingest_run
+    proj = tmp_path_factory.mktemp('unsigned')
+    out = proj / 'output'
+    for d in ('bdd', 'dut', 'simulation'):
+        (out / d).mkdir(parents=True)
+    src = ROOT / 'tests/data/unsigned_alu'
+    (out / 'bdd/alu.feature').write_text((src / 'alu.feature').read_text(encoding='utf-8'), encoding='utf-8')
+    (out / 'dut/alu.v').write_text((src / 'alu.v').read_text(encoding='utf-8'), encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/alu.feature'), {'module_type': 'alu', 'module_name': 'alu_16bit', 'bitwidth': 16})
+    assert tb['success'], tb
+    _simulate(proj, tb['filepath'], out / 'dut/alu.v', 'output/simulation/alu.log')
+    paths = {'bdd': 'output/bdd/alu.feature', 'duv': 'output/dut/alu.v',
+             'testbench': Path(tb['filepath']).relative_to(proj).as_posix(), 'log': 'output/simulation/alu.log'}
+    res = ingest_run(proj, paths, run_id='unsigned_run', url=db, data={'module_type': 'alu', 'bitwidth': 16})
+    assert res['ingested'], res
+    from src.xdb.explain import summarize_run
+    return proj, paths, res, summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+
+
+def test_a_run_has_the_same_verdicts_as_before_the_wording_changed(unsigned_run):
+    assert unsigned_run[2]['verdicts'] == {'pass': 44, 'design_wrong': 4, 'consistent_wrong': 5, 'scenario_wrong': 3}
+
+
+def test_one_card_per_root_cause_with_the_true_count(unsigned_run):
+    s = unsigned_run[3]
+    design = [p for p in s['problems'] if p['who'] == 'design']
+    assert [p['title'] for p in design] == ['The design compares SLT operands as unsigned numbers',
+                                            'The design shifts SRA with zeros instead of copying the sign bit']
+    assert s['overview']['counts']['design'] == 2
+    slt = design[0]['detail']
+    assert slt.startswith('7 of 8 SLT examples give a wrong result. 5 of them pass the test, because the '
+                          'scenario makes the same mistake.')
+    assert 'All 8 SLT examples fit this, so the comparison needs $signed on both operands.' in slt
+    assert not any('repeats a mistake' in p['title'] for p in s['problems'])
+
+
+def test_a_signed_operand_is_shown_as_signed(unsigned_run):
+    slt = unsigned_run[3]['problems'][0]['detail']
+    assert 'E.g. SLT with A = 0xFFFF (-1 as signed), B = 0: the design gives 0, correct is 1.' in slt
+    sra = unsigned_run[3]['problems'][1]['detail']
+    assert 'SRA with A = 0x8000 (-32768 as signed), B = 15' in sra
+
+
+def test_a_swapped_scenario_is_named_once(unsigned_run):
+    probs = {p['title']: p for p in unsigned_run[3]['problems']}
+    card = probs['A scenario swaps SLT and SLTU']
+    assert card['who'] == 'scenario' and 'all 6 examples' in card['detail']
+    assert 'E.g. SLTU with A = 65535 (0xFFFF), B = 1: the scenario expects 1, correct is 0.' in card['detail']
+    assert not any('wrong SLTU result' in t for t in probs)
+
+
+def test_the_details_show_the_working_and_the_cause(unsigned_run, db):
+    from src.xdb.explain import explain_check
+    x = explain_check('ALU-SLT-001/r2', sim_run_id=unsigned_run[3]['sim_run_id'], url=db)
+    assert x['plain']['title'] == 'SLT with A = 0xFFFF (-1 as signed), B = 0'
+    assert x['plain']['lines'][:4] == [
+        'The design is wrong. It gives result = 0; the correct value is 1, as the scenario expects.',
+        'Why 1: SLT is 1 when A < B as signed numbers, else 0; here -1 < 0 is true.',
+        'Cause: the design compares SLT operands as unsigned numbers. That reproduces all 8 SLT examples, '
+        'so the comparison needs $signed on both operands.',
+        'For comparison, SLT with A = 0, B = 0 passed: the fault does not show on these values.']
+    assert '-1 <ₛ 0 = 1' in x['text'] and 'a = 0xFFFF (-1 as signed)' in x['text']
+
+
+def test_a_cause_needs_every_example(unsigned_run):
+    from src.xdb import library as L
+    rows = [(0, 0, 0), (65535, 0, 0), (0, 65535, 1)]
+    assert L.alu_mixup('SLT', rows, 16)['rows'] == 3
+    assert L.alu_mixup('SLT', rows + [(5, 3, 1)], 16) is None      # one row no mix-up explains: cause unknown
+    assert L.alu_mixup('SLT', [(1, 2, 1)], 16) is None             # nothing is wrong
