@@ -2016,6 +2016,10 @@ Generate a concise Feature description (2-4 sentences):
 
 
 class QwenProvider(LLMProvider):
+    # Provider-specific fields for the request body; see GlmProvider.
+    EXTRA_PAYLOAD: Dict[str, Any] = {}
+    READ_TIMEOUT = 300
+
     # DashScope compatible-mode 为 OpenAI 兼容 API
     DEFAULT_SAMPLING = {'default': {'temperature': 0.7},
                         'stream': {'temperature': 0.7}}
@@ -2070,6 +2074,7 @@ class QwenProvider(LLMProvider):
             "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
         payload.update(self._merge_sampling('default', sampling)[0])
+        payload.update(self.EXTRA_PAYLOAD)
 
         try:
             # 60s 对 BDD 这类长输出远远不够：GWDG（共享学术集群）上的 GLM 4.7
@@ -2077,7 +2082,7 @@ class QwenProvider(LLMProvider):
             # provider 返回兜底文本，表现成「模型不会写 BDD」，实际只是等得不够久。
             # 超时只是等待上限，放宽不会有副作用。
             response = requests.post(self.api_url, headers=headers, json=payload,
-                                     proxies=self._get_proxies(), timeout=300)
+                                     proxies=self._get_proxies(), timeout=self.READ_TIMEOUT)
             response.raise_for_status()
             result = response.json()
             self._record_response_meta(result)
@@ -2122,6 +2127,7 @@ class QwenProvider(LLMProvider):
             "max_tokens": self._resolve_max_tokens(max_tokens, sampling)[0],
         }
         payload.update(self._merge_sampling('stream', sampling)[0])
+        payload.update(self.EXTRA_PAYLOAD)
         payload["stream"] = True
 
         try:
@@ -2554,6 +2560,8 @@ class AcademicCloudProvider(QwenProvider):
 
     DEFAULT_MODEL = "meta-llama-3.1-8b-instruct"
     BASE_URL = "https://chat-ai.academiccloud.de/v1/chat/completions"
+    # Seen 2026-11-05: a CPU design took GLM 5.3 Flash over 360 s at 20000 tokens.
+    READ_TIMEOUT = 600
     # 与 config/llm_config.json 里的键、LLMFactory 的注册名保持一致。
     # 不能从类名推导：QwenProvider3 会推出 QWEN3_API_KEY，而配置导出的是
     # QWEN_API_KEY，取不到 key 就会构造失败并被工厂静默降级成本地模板。
@@ -2588,7 +2596,8 @@ class QwenProvider3(AcademicCloudProvider):
 
 class GptOssProvider(AcademicCloudProvider):
     """OpenAI GPT-OSS 120B（开放权重），与走 api.openai.com 的 OpenAIProvider
-    是两回事，故独立成一家。"""
+    是两回事，故独立成一家。GWDG 已下架（2026-11，403），类留着是因为
+    llm_calls 里的历史记录用这个名字。"""
     CONFIG_KEY = "gptoss"
     DEFAULT_MODEL = "openai-gpt-oss-120b"
 
@@ -2600,9 +2609,25 @@ class DeepSeekV4Provider(AcademicCloudProvider):
 
 
 class GlmProvider(AcademicCloudProvider):
-    """智谱 GLM-4.7。"""
+    """智谱 GLM 5.3 Flash（GLM-4.7 已被 GWDG 下架）。
+
+    同 DeepSeek 的 REASONING_EFFORT：不设限时一个 CPU 设计的 20000 token 全花
+    在推理上，正文 0 字符。reasoning_effort=low 时推理几乎为零。
+    """
     CONFIG_KEY = "glm"
-    DEFAULT_MODEL = "glm-4.7"
+    DEFAULT_MODEL = "glm-5.3-flash"
+    EXTRA_PAYLOAD = {'reasoning_effort': 'low'}
+
+
+class GemmaProvider(AcademicCloudProvider):
+    """Google Gemma 4 31B. Same GWDG key as Qwen, so a deployment that already
+    has QWEN_API_KEY needs no new setting."""
+    CONFIG_KEY = "gemma"
+    DEFAULT_MODEL = "gemma-4-31b-it"
+
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+        super().__init__(api_key=api_key or os.getenv("GEMMA_API_KEY") or os.getenv("ACADEMIC_API_KEY")
+                         or os.getenv("QWEN_API_KEY"), model=model)
 
 
 # ========== FACTORY ==========
@@ -2634,14 +2659,16 @@ class LLMFactory:
             # 去掉下面两行注释即可。
             # 'llama': LlamaProvider,
             # 'meta': LlamaProvider,
-            'gptoss': GptOssProvider,     # openai-gpt-oss-120b（≠ api.openai.com）
-            'gpt-oss': GptOssProvider,
+            # GPT-OSS 120B 不再登记：GWDG 已下架（403 Not authorized）。
+            # 'gptoss': GptOssProvider,
+            # 'gpt-oss': GptOssProvider,
+            'gemma': GemmaProvider,       # gemma-4-31b-it
             # DeepSeek V4 Flash 暂不登记：官方 API 的 deepseek-chat 已有 334 次
             # 历史调用、base01/base02 两批都用它，保留那条数据线比多一个同厂
             # 模型更有价值。类保留着，想换回来去掉下面两行注释即可。
             # 'deepseekv4': DeepSeekV4Provider,
             # 'deepseek-v4': DeepSeekV4Provider,
-            'glm': GlmProvider,           # glm-4.7
+            'glm': GlmProvider,           # glm-5.3-flash
             'zhipu': GlmProvider,
             'local': LocalLLMProvider,
 
