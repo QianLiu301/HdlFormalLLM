@@ -7,7 +7,7 @@ says what the user wants, what the sources were, how we work, where things
 stand and what comes next. Details live in the documents it points to.
 
 Read first: `CLAUDE.md`, then `docs/explainability_db_design.md` (decision
-log D1–D35, §1 users, §2 BDX mapping, §6d–§6i milestones and trial findings),
+log D1–D36, §1 users, §2 BDX mapping, §6d–§6j milestones and trial findings),
 `docs/explainability_db_setup.md` (how to run everything),
 `docs/research_outline.md` (candidate papers and feature roadmap R1–R7).
 
@@ -59,8 +59,11 @@ Done: explainability DB and verdicts (M1), rule libraries and explanations
 batch trial runner (R1), D29 (steps the testbench cannot run), D30
 (compile-error repair), D31 (CPU memory timing, prompt duv_cpu v2), D32
 (credentials), D33 (a CPU check counts only if the program got there), D34
-(empty answers), D35 (Step 4 says when it is waiting). 173 tests (`tests/`),
-browser checks in `tests/ui/`.
+(empty answers), D35 (Step 4 says when it is waiting), D36 (the model list).
+186 tests (`tests/`), browser checks in `tests/ui/`.
+
+Live site: master is 24fd642 = the release before this work + the model list of D36
+only. Everything else stays on `bdx-explainability` until the user merges it.
 
 Trials (`first`, `cpu_fix` in `data/trials/`; `cpu_v2`, `cpu_v3` in
 `output/trials/`, local; findings in design doc §6g–§6i):
@@ -77,6 +80,9 @@ Trials (`first`, `cpu_fix` in `data/trials/`; `cpu_v2`, `cpu_v3` in
 
 ## 5. Next steps
 
+0. After the master update, check on Render that no `GLM_MODEL` or `QWEN_MODEL` still
+   names a retired model and that `QWEN_API_KEY` is set: `load_config` reads only
+   the environment there, and a `*_MODEL` overrides the default in the code.
 1. Optional: the same CPU trial with DeepSeek (balance 7.09 CNY on 2026-11-04,
    no balance error so far) or Gemini when its quota allows, to compare models:
    `python -m src.xdb.trial run --llms deepseek --designs cpu --reps 3 --tag cpu_v3_deepseek`.

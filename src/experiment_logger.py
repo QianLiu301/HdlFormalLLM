@@ -366,17 +366,34 @@ def _reentrant() -> bool:
 BUDGET_RETRY_CAP = 32768
 
 
-def _empty_answer_error(result, meta) -> Optional[str]:
-    """Why a call that raised nothing still gave no answer, or None."""
-    if not isinstance(result, str) or result.strip():
+# llm_providers.is_fallback_text, set when that module loads (it imports this one).
+FALLBACK_CHECK = None
+
+
+def register_fallback_check(check) -> None:
+    global FALLBACK_CHECK
+    FALLBACK_CHECK = check
+
+
+def _failed_call_error(result, meta) -> Optional[str]:
+    """Why a call that raised nothing still gave no answer, or None. Providers
+    swallow their own errors: they note an api_error and return an empty string
+    or a fallback text. The GWDG providers do so when the budget ran out, so an
+    empty answer does not always look empty here (trials of 2026-11-05)."""
+    if not isinstance(result, str):
         return None
-    return f"empty answer (finish_reason={(meta or {}).get('finish_reason')})"
+    meta = meta or {}
+    if not result.strip():
+        return meta.get('api_error') or f"empty answer (finish_reason={meta.get('finish_reason')})"
+    if meta.get('api_error') and FALLBACK_CHECK is not None and FALLBACK_CHECK(result):
+        return str(meta['api_error'])
+    return None
 
 
 def _retry_budget(result, meta, max_tokens) -> Optional[int]:
     """The larger budget for a retry, or None when this call needs none."""
     finish = str((meta or {}).get('finish_reason') or '').lower()
-    if (_empty_answer_error(result, meta) and finish in ('length', 'max_tokens')
+    if (_failed_call_error(result, meta) and finish in ('length', 'max_tokens')
             and max_tokens and max_tokens < BUDGET_RETRY_CAP):
         return min(max_tokens * 2, BUDGET_RETRY_CAP)
     return None
@@ -405,7 +422,7 @@ def _wrap_regular(cls_name, name, fn):
             try:
                 result = fn(self, prompt, *args, **call_kwargs)
                 seen = dict(_local.call_meta or {})
-                error = _empty_answer_error(result, seen)
+                error = _failed_call_error(result, seen)
                 log_call(cls_name, model, name, prompt,
                          response=result if isinstance(result, str) else str(result),
                          system_prompt=system_prompt, max_tokens=max_tokens,
@@ -479,7 +496,7 @@ def _wrap_stream(cls_name, name, fn):
                 _local.call_meta = None
                 text = ''.join(chunks)
                 if success:
-                    error = _empty_answer_error(text, meta)
+                    error = _failed_call_error(text, meta)
                     success = error is None
                 outcome.update(text=text, meta=meta)
                 with call_context(**labels):
@@ -496,9 +513,10 @@ def _wrap_stream(cls_name, name, fn):
         def gen():
             outcome = {}
             yield from attempt(kwargs, outcome)
-            # nothing has been sent to the reader yet, so the retry is seamless
+            # only while nothing has been sent to the reader (a provider may have
+            # streamed its fallback text, and that cannot be taken back)
             budget = _retry_budget(outcome.get('text'), outcome.get('meta'), kwargs.get('max_tokens'))
-            if budget:
+            if budget and not (outcome.get('text') or '').strip():
                 print(f"🔁 Empty answer: the model used its whole output budget; retrying with {budget} tokens")
                 yield from attempt({**kwargs, 'max_tokens': budget}, {}, budget_retry=True)
         return gen()

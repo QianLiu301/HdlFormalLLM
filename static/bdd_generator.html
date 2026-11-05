@@ -1056,9 +1056,8 @@
                                 <option value="mistral">Mistral</option>
                                 <option value="qwen">Qwen3 Coder</option>
                                 <option value="gemini">Gemini</option>
-                                <option value="together">Llama 3.3 70B</option>
-                                <option value="glm">GLM 4.7</option>
-                                <option value="gptoss">GPT-OSS 120B</option>
+                                <option value="gemma">Gemma 4 31B</option>
+                                <option value="glm">GLM 5.3 Flash</option>
                             </select>
                         </div>
                     </div>
@@ -1176,9 +1175,8 @@
                                     <option value="deepseek">DeepSeek</option>
                                     <option value="openai">OpenAI GPT-5</option>
                                     <option value="qwen">Qwen3 Coder</option>
-                                    <option value="gptoss">GPT-OSS 120B</option>
-                                    <option value="glm">GLM 4.7</option>
-                                    <option value="together">Llama 3.3 70B</option>
+                                    <option value="gemma">Gemma 4 31B</option>
+                                    <option value="glm">GLM 5.3 Flash</option>
                                     <!-- <option value="claude">Claude</option> -->
                                     <!-- <option value="grok">Grok (xAI)</option> -->
                                 </select>
@@ -1575,9 +1573,8 @@
                                 <option value="deepseek">DeepSeek</option>
                                 <option value="openai">OpenAI GPT-5</option>
                                 <option value="qwen">Qwen3 Coder</option>
-                                <option value="gptoss">GPT-OSS 120B</option>
-                                <option value="glm">GLM 4.7</option>
-                                <option value="together">Llama 3.3 70B</option>
+                                <option value="gemma">Gemma 4 31B</option>
+                                <option value="glm">GLM 5.3 Flash</option>
                                 <!-- <option value="claude">Claude</option> -->
                                 <!-- <option value="grok">Grok (xAI)</option> -->
                             </select>
@@ -4458,8 +4455,8 @@
         // 死模型的表现是 404/503 -> provider 降级成兜底文本 -> 端点仍报 success，
         // 看起来像「模型不会写 Verilog」，所以这份表只放实测通过的。
         // 复核：benchmark/check_models_live.py
-        // 只剩一个可用模型的 provider 不显示下拉框（together / qwen / llama /
-        // gptoss / glm），其模型固定在 config/llm_config.json。
+        // 只剩一个可用模型的 provider 不显示下拉框（qwen / gemma / glm），其模型
+        // 固定在 config/llm_config.json。
         const modelOptions = {
             'gemini': [
                 {value: 'gemini-2.5-flash', text: 'Gemini 2.5 Flash'},
