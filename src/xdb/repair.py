@@ -323,6 +323,10 @@ def _cpu_item(ci, cr) -> str:
     O = int(cr.observed_value) if cr.observed_value is not None else None
     R = int(ci.expected_ref)
     got = _cpu_val(O, port) if O is not None else f"an unexpected value ({(cr.observed or {}).get(port)})"
+    if port == 'taken' and L.cpu_astray(cr.message):
+        return (f"- {_cpu_example(ci.stimulus)}: the branch must be {_cpu_val(R, port)}, and the program must then "
+                f"continue with the instruction 8 bytes after the branch, but it never arrived there. The branch "
+                f"sent the program somewhere else: check the address loaded into the PC")
     if port == 'taken':
         return f"- {_cpu_example(ci.stimulus)}: the branch must be {_cpu_val(R, port)}, the design result was {got}"
     ops = L.cpu_operands((ci.stimulus or {}).get('instruction') or '') or {}
@@ -350,10 +354,14 @@ def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tup
         stateful = bool((L.library_for(mt) or {}).get('stateful'))
         cpu = bool((L.library_for(mt) or {}).get('reference'))
         hist = _rf_history(s, tb.id, W) if stateful else {}
+        not_reached = 0
         for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
                                 .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
                                 .where(M.CheckResult.sim_run_id == run.id, M.CheckItem.seq == 1)
                                 .order_by(M.CheckItem.test_no)):
+            if cpu and cr.status == 'not_tested' and L.cpu_not_reached(cr.message):
+                not_reached += 1          # says nothing about its own instruction; see below
+                continue
             if ci.tag.startswith('GEN:') and cr.status == 'fail':
                 items.append(('', f"- the testbench's own check “{ci.label}” failed: {cr.message or ''}".rstrip()))
                 continue
@@ -378,6 +386,9 @@ def design_feedback(project_root, paths: Dict, url=None, limit: int = 12) -> Tup
                                             f"b = {_pv(st.get('b'), w)} (opcode {st.get('opcode')}): "
                                             f"{ci.port or 'result'} must be {_pv(int(ci.expected_ref), w)}, "
                                             f"the design gave {got}"))
+        if not_reached:
+            items.append(('', f"- {not_reached} further example(s) were never reached: the program went somewhere "
+                              f"else before them, so nothing is known yet about their instructions"))
         ov_mode, _ = _overflow_mode(s, sess.id)
         for (tag, port), o in sorted(_probe_results(s, _probe_run_id(s, run.id)).items()):
             if o['verdict'] in _DESIGN_FAULT and tag not in main_bad:
@@ -455,12 +466,18 @@ def available(s, run_id: int, module_type: Optional[str]) -> Dict:
                             .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
                             .where(M.CheckResult.sim_run_id == run_id, M.CheckItem.tag.like('GEN:%'),
                                    M.CheckResult.status == 'fail')))
+    # CPU examples the program never reached: they can only be fixed in the design
+    missed = {tag for tag, msg in s.execute(
+        select(M.CheckItem.tag, M.CheckResult.message)
+        .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+        .where(M.CheckResult.sim_run_id == run_id, M.CheckResult.status == 'not_tested'))
+        if L.cpu_not_reached(msg)}
     run = s.get(M.SimRun, run_id)
     tb = s.get(M.Testbench, run.testbench_id)
     feat = s.get(M.Feature, tb.feature_id) if tb.feature_id else None
     duv = s.get(M.Duv, run.duv_id) if run.duv_id else None
     return {'scenario_values': len(scenario_corrections(s, run_id)),
-            'design_failures': len(main_bad | probe_bad | gen_bad),
+            'design_failures': len(main_bad | probe_bad | gen_bad | missed),
             'design_regeneration': (module_type or '') in DESIGN_REPAIR_TYPES,
             'feature_reason': feat.reason if feat else None,
             'duv_reason': duv.reason if duv else None}

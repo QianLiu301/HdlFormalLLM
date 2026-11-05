@@ -2533,6 +2533,14 @@ class TestbenchGenerator:
         跳过后面那条 store——跳了槽位保持初值，没跳则被写入，用同一个 dmem
         接口判定，不含任何时序假设。
 
+        只看槽位不够：「槽位是 0」既可能是分支跳了，也可能是程序根本没走到
+        这里（试验 cpu_v2：设计把跳转目标算成 0，程序在第一条分支后不停回到
+        开头，跳转行全部假通过，不跳转行被说成「判断错」）。所以 testbench 记下
+        CPU 取过哪些指令（imem_addr），被测指令没被取过 = 这一行没执行，不算证
+        据；分支目标处再放一条 store，那个地址（slot + LAND_OFF）没被写过 = 这
+        条分支把程序带到了别处。两者都不看写入的值：SW 数据通路坏了的设计走到
+        了这一行，只是结果错，不能报成「没执行到」。
+
         此前这个模板完全不读 scenario：硬编码 4 条指令跑 50 个周期，
         total/passed/failed 声明后再没被加过，最后无条件打印
         "CPU executed successfully"。
@@ -2549,6 +2557,11 @@ class TestbenchGenerator:
 
         M32 = 0xFFFFFFFF
         RESULT_BASE = 0x400          # 结果槽位；与被测程序用的地址分开
+        # 分支落点 = 槽位 + 这个偏移（SW 的 12 位立即数放得下）。落在 0xBFC 以上：
+        # 场景的内存地址由一条 ADDI 加偏移凑出，常用的 0x800 这类地址不能占
+        LAND_OFF = 0x7FC
+        IMEM_WORDS = 1024            # testbench 的 imem 大小
+        ROW_MAX_WORDS = 24           # 一行最多 16 个字，程序结尾再加 8 个 NOP
         MEM_BASE = 0x100             # @memory 场景的数据区
         TMP_ADDR_REG = 30            # 存放结果地址，避开 BDD 用的低编号寄存器
         # marker 必须装得进一条 ADDI（12 位有符号）——见 li_addi_only 的说明，
@@ -2577,7 +2590,7 @@ class TestbenchGenerator:
                  'skipped_imm_too_large': 0, 'skipped_register_mismatch': 0,
                  'skipped_no_expected': 0,
                  'skipped_reserved_register': 0, 'skipped_bad_address': 0,
-                 'skipped_memory_conflict': 0}
+                 'skipped_memory_conflict': 0, 'skipped_program_too_long': 0}
         dmem_init: List[Tuple[int, int]] = []
         ev = self._new_expected_values_stats(len(scenarios))
         # 数据内存的每个字被哪一行用过：('lw', 初值) 或 ('sw',)。结果在整段
@@ -2588,7 +2601,8 @@ class TestbenchGenerator:
         def mem_word(addr: int, sc: Dict) -> Optional[int]:
             """字地址；未对齐、或落在结果槽位区的地址返回 None（该行跳过）。"""
             addr &= 0xFFF                     # testbench 的 dmem 按 addr[11:2] 寻址
-            if addr & 3 or RESULT_BASE <= addr < RESULT_BASE + 4 * len(scenarios):
+            if addr & 3 or any(RESULT_BASE + off <= addr < RESULT_BASE + off + 4 * len(scenarios)
+                               for off in (0, LAND_OFF)):
                 skip(sc, 'skipped_bad_address')
                 return None
             return addr // 4
@@ -2608,6 +2622,8 @@ class TestbenchGenerator:
                                    "testbench's result area",
             'skipped_memory_conflict': 'another example uses the same memory word, and results '
                                        'are read after the whole program has run',
+            'skipped_program_too_long': "the test program would not fit the testbench's "
+                                        'instruction memory',
         }
 
         def skip(sc, key):
@@ -2625,6 +2641,11 @@ class TestbenchGenerator:
             except AsmError:
                 skip(sc, 'skipped_unparsable')
                 continue
+            # JAL/JALR 写进 rd 的值取决于指令自己的地址，场景写不出来；它们还会
+            # 跳走，让后面的行执行不到，那样的「没执行」就不是设计的错了
+            if mnem in ('jal', 'jalr'):
+                skip(sc, 'skipped_unsupported')
+                continue
 
             rs1 = _int(sc.get('rs1'))
             rs2 = _int(sc.get('rs2'))
@@ -2635,7 +2656,8 @@ class TestbenchGenerator:
             # 索引用（不进 testbench 文本）：这一行实际怎么被测的。解释层据此
             # 判断场景本身是否自洽、testbench 是否真的观测到了指令的结果
             stim = {'instruction': text.strip(), 'rs1': rs1, 'rs1_value': v1, 'rs2': rs2,
-                    'rs2_value': v2, 'rd': rd, 'mem_value': _int(sc.get('mem_value'))}
+                    'rs2_value': v2, 'rd': rd, 'mem_value': _int(sc.get('mem_value')),
+                    'order': len(checks)}
             b_exp = _int(sc.get('expected'))
             # 与 ALU / counter 一致：场景没写期望值（分支没写 taken）就不生成检查
             if oracle_source != 'spec' and (
@@ -2677,6 +2699,16 @@ class TestbenchGenerator:
                     continue
             offset = (regs or {}).get('offset') or 0
 
+            addr_seq = li_addi_only(TMP_ADDR_REG, slot)
+            if addr_seq is None:          # 槽位地址超出 ADDI 范围，不再加测试
+                skip(sc, 'skipped_imm_too_large')
+                continue
+            # 放不下的行不能硬塞：超出 imem 的指令被丢掉后，这些行看起来就像
+            # 「设计没执行到」
+            if len(words) + ROW_MAX_WORDS > IMEM_WORDS:
+                skip(sc, 'skipped_program_too_long')
+                continue
+
             # ---- 分支：让它跳过后面那条 store ----
             if mnem in ('beq', 'bne', 'blt', 'bge'):
                 taken = sc.get('taken')
@@ -2693,22 +2725,22 @@ class TestbenchGenerator:
                 except AsmError:
                     skip(sc, 'skipped_unparsable')
                     continue
-                addr_seq = li_addi_only(TMP_ADDR_REG, slot)
-                if addr_seq is None:      # 槽位地址超出 ADDI 范围，不再加测试
-                    skip(sc, 'skipped_imm_too_large')
-                    continue
                 words += pre + addr_seq + li_addi_only(29, MARKER)
                 words += [NOP, NOP, NOP]
+                arrive_word = len(words)
                 words.append(br)
                 words.append(assemble(f'sw x29, 0(x{TMP_ADDR_REG})'))
+                # 分支目标：跳与不跳都要走到这里
+                words.append(assemble(f'sw x29, {LAND_OFF}(x{TMP_ADDR_REG})'))
                 words += [NOP, NOP, NOP, NOP]
                 checks.append({'tid': self._trace_tag(trace, sc), 'slot': slot // 4,
+                               'arrive': arrive_word, 'land': (slot + LAND_OFF) // 4,
                                'expected': 0 if want_taken else MARKER,
                                'label': f'{text.strip()} '
                                         f'({"taken" if want_taken else "not taken"})'})
                 stats['branch'] += 1
-                # 分支的结论按「跳 / 不跳」记（1 / 0）；槽位里 0 表示跳了，
-                # MARKER 表示没跳，其他值说明观测本身坏了
+                # 分支的结论按「跳 / 不跳」记（1 / 0）；走到落点时，槽位里 0 表示
+                # 跳了，MARKER 表示没跳，其他值说明观测本身坏了
                 nominal = self._branch_taken(mnem, v1 or 0, v2 or 0)
                 self._trace_detail(trace, sc, port='taken', width=1, operation=mnem.upper(),
                                    stimulus={**stim, 'path': 'branch', 'marker': MARKER},
@@ -2733,13 +2765,14 @@ class TestbenchGenerator:
                     continue
                 mem_use[word] = ('sw',)
                 words += pre + [NOP, NOP, NOP]
+                arrive_word = len(words)
                 words.append(encoded)
                 words += [NOP, NOP, NOP]
                 exp = _int(sc.get('expected'))
                 if oracle_source == 'spec' or exp is None:
                     exp = v2
                 checks.append({'tid': self._trace_tag(trace, sc), 'slot': word, 'expected': exp,
-                               'label': text.strip()})
+                               'arrive': arrive_word, 'label': text.strip()})
                 stats['memory'] += 1
                 self._trace_detail(trace, sc, port='mem', width=bitwidth, operation='SW',
                                    stimulus={**stim, 'path': 'memory', 'offset_applied': True},
@@ -2788,17 +2821,14 @@ class TestbenchGenerator:
                     exp = ref
                 stats['arith'] += 1
 
-            addr_seq = li_addi_only(TMP_ADDR_REG, slot)
-            if addr_seq is None:
-                skip(sc, 'skipped_imm_too_large')
-                continue
             words += pre + addr_seq + [NOP, NOP, NOP]
+            arrive_word = len(words)
             words.append(encoded)
             words += [NOP, NOP, NOP]
             words.append(assemble(f'sw x{rd}, 0(x{TMP_ADDR_REG})'))
             words += [NOP, NOP, NOP]
             checks.append({'tid': self._trace_tag(trace, sc), 'slot': slot // 4, 'expected': exp & M32,
-                           'label': text.strip()})
+                           'arrive': arrive_word, 'label': text.strip()})
             nominal = (_int(sc.get('mem_value')) if mnem == 'lw'
                        else self._rv32i_reference(mnem, v1 or 0, v2 or 0, imm))
             self._trace_detail(trace, sc, port='rd', width=bitwidth, operation=mnem.upper(),
@@ -2838,6 +2868,8 @@ class TestbenchGenerator:
         A('    integer total, passed, failed, i;')
         A('    reg [31:0] imem [0:1023];')
         A('    reg [31:0] dmem [0:1023];')
+        A('    reg fetched [0:1023];   // instruction words the CPU asked for')
+        A('    reg written [0:1023];   // data words the CPU wrote, whatever the value')
         A('')
         A(f'    {dut} dut (')
         A('        .clk(clk), .rst_n(rst_n),')
@@ -2854,16 +2886,24 @@ class TestbenchGenerator:
         # MEM/WB register stores dmem_rdata), stated in prompts/duv_cpu/v2. A
         # registered read made every load of such a design return the word of
         # the previous bus address (trials first and cpu_fix, 2026-11-04).
-        A('    always @(*) imem_data = imem[imem_addr[11:2]];')
+        # Past the end of the memory the CPU reads NOPs. imem_addr[11:2] alone wraps
+        # around, and a program that had finished started again from word 0, so a
+        # result could be overwritten after the first pass.
+        A("    always @(*) imem_data = (imem_addr < 32'd4096) ? imem[imem_addr[11:2]] : 32'h00000013;")
         A('    always @(*) dmem_rdata = dmem[dmem_addr[11:2]];')
         A('    always @(posedge clk) begin')
-        A('        if (dmem_wen) dmem[dmem_addr[11:2]] <= dmem_wdata;')
+        A('        if (dmem_wen) begin')
+        A('            dmem[dmem_addr[11:2]] <= dmem_wdata;')
+        A("            written[dmem_addr[11:2]] <= 1'b1;")
+        A('        end')
+        A("        if (rst_n && imem_addr < 32'd4096) fetched[imem_addr[11:2]] <= 1'b1;")
         A('    end')
         A('')
         A('    initial begin')
         A('        total = 0; passed = 0; failed = 0; rst_n = 0;')
         A("        for (i = 0; i < 1024; i = i + 1) imem[i] = 32'h00000013;")
         A("        for (i = 0; i < 1024; i = i + 1) dmem[i] = 32'h0;")
+        A("        for (i = 0; i < 1024; i = i + 1) begin fetched[i] = 1'b0; written[i] = 1'b0; end")
         for slot, val in dmem_init:
             A(f"        dmem[{slot}] = 32'h{val & M32:08X};")
         for n, w in enumerate(words):
@@ -2878,7 +2918,15 @@ class TestbenchGenerator:
         for c in checks:
             lbl = c['label'].replace('"', "'")[:60]
             A('        total = total + 1;')
-            A(f"        if (dmem[{c['slot']}] === 32'h{c['expected'] & M32:08X}) begin")
+            # src/xdb/library.py reads these two endings (CPU_NOT_REACHED, CPU_ASTRAY)
+            A(f"        if (!fetched[{c['arrive']}]) begin")
+            A('            failed = failed + 1;')
+            A(f'            $display("\\u2717 FAIL  {lbl} - not reached{c["tid"]}");')
+            if c.get('land') is not None:
+                A(f"        end else if (!written[{c['land']}]) begin")
+                A('            failed = failed + 1;')
+                A(f'            $display("\\u2717 FAIL  {lbl} - did not continue after the branch{c["tid"]}");')
+            A(f"        end else if (dmem[{c['slot']}] === 32'h{c['expected'] & M32:08X}) begin")
             A('            passed = passed + 1;')
             A(f'            $display("\\u2713 PASS  {lbl}{c["tid"]}");')
             A('        end else begin')

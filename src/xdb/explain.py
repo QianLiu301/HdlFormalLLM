@@ -30,7 +30,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.9'   # v1.9: steps the testbench does not do make a check undecided
+ALGORITHM = 'bdx_v1.10'  # v1.10: a CPU example the program never reached is not judged
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -38,14 +38,24 @@ _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL'
 
 # ----------------------------------------------------------------- loading helpers
 
-def _steps(s, scenario_id: int, row_vals: Optional[Dict], module_type: str, width: Optional[int]):
-    """Scenario steps instantiated for one row, with their canonical mapping."""
+def _step_rows(s, scenario_id: int, canon: Optional[Dict] = None) -> Tuple[Dict, Dict, List]:
+    """What _steps reads from the database. It is the same for every row of a
+    scenario, so a loop over rows loads it once: at 75 ms per query (a laptop to
+    Neon) three queries per row made the Step-4 summary take over 20 seconds."""
     maps = {m.position: m for m in s.scalars(select(M.StepMapping).where(
         M.StepMapping.scenario_id == scenario_id, M.StepMapping.method == 'rule'))}
-    canon = {c.id: c for c in s.scalars(select(M.CanonicalStep))} if maps else {}
+    if canon is None:
+        canon = {c.id: c for c in s.scalars(select(M.CanonicalStep))} if maps else {}
+    return maps, canon, list(s.scalars(select(M.ScenarioStep).where(M.ScenarioStep.scenario_id == scenario_id)
+                                       .order_by(M.ScenarioStep.position)))
+
+
+def _steps(s, scenario_id: int, row_vals: Optional[Dict], module_type: str, width: Optional[int],
+           loaded: Optional[Tuple] = None):
+    """Scenario steps instantiated for one row, with their canonical mapping."""
+    maps, canon, rows = loaded or _step_rows(s, scenario_id)
     out = []
-    for st in s.scalars(select(M.ScenarioStep).where(M.ScenarioStep.scenario_id == scenario_id)
-                        .order_by(M.ScenarioStep.position)):
+    for st in rows:
         m = maps.get(st.position)
         c = canon.get(m.canonical_step_id) if m and m.canonical_step_id else None
         vals = L.resolve(m.params, row_vals) if m and m.params else {}
@@ -818,13 +828,15 @@ def check_specification(feature_id: int, sim_run_id: Optional[int] = None, url=N
         width = width or _width_from_steps(s, feature_id, mt)
         ov_mode, ov_basis = _overflow_mode(s, sess.id)
         per: Dict[str, Dict] = {}
+        canon = {c.id: c for c in s.scalars(select(M.CanonicalStep))}
         for sc in s.scalars(select(M.Scenario).where(M.Scenario.feature_id == feature_id,
                                                      M.Scenario.is_current)
                             .order_by(M.Scenario.scenario_key)):
+            loaded = _step_rows(s, sc.id, canon)
             for er in s.scalars(select(M.ExampleRow).where(M.ExampleRow.scenario_id == sc.id,
                                                            M.ExampleRow.is_current)
                                 .order_by(M.ExampleRow.row_no)):
-                steps = _steps(s, sc.id, er.vals, mt, width)
+                steps = _steps(s, sc.id, er.vals, mt, width, loaded)
                 op = next((x['values'].get('OP') for x in steps if x['canonical'] == 'ALU.A.OP'), None)
                 a = next((x['value'] for x in steps if x['canonical'] == 'ALU.P.A'), None)
                 b = next((x['value'] for x in steps if x['canonical'] == 'ALU.P.B'), None)
@@ -1293,6 +1305,9 @@ def _plain_local_cpu(st: Dict) -> Dict:
                      f'value is {f(R)} — and that is what the design gives.' if port != 'taken' else
                      f'The scenario is wrong, not the design. It says the branch is {f(B)}, but it is {f(R)} '
                      f'— and the design does that.')
+    elif v == 'design_wrong' and port == 'taken' and L.cpu_astray((st.get('evidence') or {}).get('log_line')):
+        lines.append(f'The design is wrong. The branch should be {f(R)}, but after it the program did not arrive '
+                     f'where it should, so the branch sent it somewhere else.')
     elif v == 'design_wrong':
         got = f(O) if O is not None else 'neither (the result store went wrong)'
         lines.append(f'The design is wrong: {who} should be {f(R)}, as the scenario expects, '
@@ -1306,6 +1321,9 @@ def _plain_local_cpu(st: Dict) -> Dict:
                      f'correct is {f(R)}.')
     elif v == 'undecided':
         lines.append(f'There is no reference value for this example. Expected {f(B)}, the design gave {f(O)}.')
+    elif L.cpu_not_reached((st.get('evidence') or {}).get('log_line')):
+        lines.append('The program never reached this example, so it says nothing about this instruction. '
+                     'An instruction before it sent the program somewhere else.')
     else:
         lines.append('This check was not executed.')
     r = st.get('rule')
@@ -1505,12 +1523,16 @@ def _stateful_problem(s, testbench_id, v, op, n, m, ci, B, R, O, w, h) -> Tuple[
                    f'point{why}. The design is right.')
 
 
-def _cpu_problem(v, op, n, m, ci, B, R, O) -> Tuple[str, str]:
+def _cpu_problem(v, op, n, m, ci, B, R, O, astray=False) -> Tuple[str, str]:
     stim, port = ci.stimulus or {}, ci.port or 'rd'
     ex = _cpu_example(stim)
     f = lambda x: _cpu_val(x, port)
     branch = port == 'taken'
     st = {'stimulus': stim, 'cpu': L.cpu_reference(stim), 'target': {'port': port}}
+    if v == 'design_wrong' and astray:
+        return (f'A {op} branch sends the program to the wrong place',
+                f'{n} of {m} {op} examples. E.g. {ex}: the branch should be {f(R)}, but after it the program '
+                f'did not arrive where it should.')
     if v == 'design_wrong':
         hint = _cpu_design_hint(st, O)
         got = f(O) if O is not None else 'neither (the result store went wrong)'
@@ -1559,6 +1581,29 @@ def _blocked_problems(s, main) -> List[Dict]:
                        + (f' ({n_sc} scenarios.)' if n_sc > 1 else '')
                        + ' These results are not used to judge the design or the scenarios.',
              'explain': {'kind': 'check', 'tag': first.tag}}]
+
+
+def _cpu_not_reached(main) -> List[Dict]:
+    """Examples the program never got to. They prove nothing about their own
+    instruction; the fault is in what ran before them."""
+    order = lambda ci: (ci.stimulus or {}).get('order', 0)
+    missed = sorted((ci for ci, cr in main if ci.tag.startswith('BDD:') and cr.status == 'not_tested'
+                     and L.cpu_not_reached(cr.message)), key=order)
+    if not missed:
+        return []
+    ran = [ci for ci, cr in main if ci.tag.startswith('BDD:') and cr.status in ('pass', 'fail')
+           and order(ci) < order(missed[0])]
+    n = len(missed)
+    if ran:
+        detail = (f'The last example the program reached is {_cpu_example(max(ran, key=order).stimulus)}. '
+                  'After it the program went somewhere else, so the examples behind it never ran and say '
+                  'nothing about their instructions.')
+    else:
+        detail = 'Not even the first example ran: the CPU does not get through its first instructions.'
+    return [{'severity': 'error', 'who': 'design',
+             'title': ('The program never reached one example' if n == 1
+                       else f'The program never reached {n} examples'),
+             'detail': detail, 'explain': {'kind': 'check', 'tag': missed[0].tag}}]
 
 
 def _cpu_unchecked(s, main) -> List[Dict]:
@@ -1630,7 +1675,11 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
         n, m = len(items), total_op.get(op, len(items))
         B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
         if _is_cpu(mt):
-            title, detail = _cpu_problem(v, op, n, m, ci, B, R, O)
+            lost = next(((c_, r_) for c_, r_ in items if L.cpu_astray(r_.message)), None)
+            if lost:
+                ci, cr = lost
+                B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
+            title, detail = _cpu_problem(v, op, n, m, ci, B, R, O, astray=bool(lost))
             probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                           'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
             continue
@@ -1659,6 +1708,7 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
 
     probs += _blocked_problems(s, main)
     if _is_cpu(mt):
+        probs += _cpu_not_reached(main)
         probs += _cpu_unchecked(s, main)
         n_bad = sum(len(x) for (v_, _), x in by_op.items() if v_ in ('design_wrong', 'both_wrong'))
         bad_ops = {op_ for (v_, op_) in by_op if v_ in ('design_wrong', 'both_wrong')}
@@ -1773,8 +1823,9 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     if _is_cpu(mt):
         checked = [f'{n_checks} instructions were simulated, each in its own short program (the operands '
                    f'loaded with ADDI, the result stored with SW), and compared with a reference model of RV32I.',
-                   'Not checked: the program counter and the pipeline timing; a branch is judged by whether '
-                   'it skips the instruction after it.']
+                   'Not checked: the pipeline timing. Each instruction runs on its own, with NOPs around it. '
+                   'A branch is judged by whether it skips the instruction after it and the program then '
+                   'arrives at the instruction behind that one.']
     elif _stateful(mt):
         checked = [f'{n_checks} register reads were simulated, in the order of the scenarios, and each was '
                    f'compared with a reference model that replays every write and reset before it.']

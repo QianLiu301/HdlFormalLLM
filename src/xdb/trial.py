@@ -568,8 +568,8 @@ def summarize(records: List[Dict]) -> str:
         groups.setdefault((r['llm'], r['design']), []).append(r)
     lines = ['| model | design | runs | reached explanations | checks | pass | design wrong | scenario wrong '
              '| other | steps read | skipped rows | clear at start | clear at end | design repairs '
-             '| compile fixes | errors |',
-             '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
+             '| compile fixes | requirements | errors |',
+             '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
     for (llm, design), rs in sorted(groups.items()):
         ok = [r for r in rs if r.get('initial') and not (r['initial'] or {}).get('error')]
         tot = {k: sum((r['initial']['verdicts'] or {}).get(k, 0) for r in ok) for k in VERDICTS}
@@ -589,12 +589,14 @@ def summarize(records: List[Dict]) -> str:
                 k = (r['error'].split(':')[0] or 'error') + (' (API)' if failure_kind(r) == 'api' else '')
                 stops[k] = stops.get(k, 0) + 1
         errors = [f'{k} ×{v}' for k, v in sorted(stops.items())]
+        tried = [r for r in rs if r.get('step0')]
+        req_txt = f"{sum(1 for r in tried if r['step0'].get('ok'))}/{len(tried)}" if tried else '—'
         lines.append(f"| {llm} | {design} | {len(rs)} | {len(ok)} | {n} | {pct(tot['pass'])} "
                      f"| {pct(tot['design_wrong'])} | {pct(tot['scenario_wrong'])} "
                      f"| {pct(tot['both_wrong'] + tot['consistent_wrong'] + tot['undecided'])} "
                      f"| {f'{100 * mapped / (mapped + unmapped):.0f}%' if mapped + unmapped else '—'} "
                      f"| {skipped} | {clear0}/{len(ok)} | {clear1}/{len(ok)} | {drep} | {cfix_txt} "
-                     f"| {', '.join(e for e in errors if e) or '—'} |")
+                     f"| {req_txt} | {', '.join(e for e in errors if e) or '—'} |")
     unread = sorted({t for r in records for t in (r.get('initial') or {}).get('unmapped_examples') or []})
     out = ['# Trial summary', '', *lines]
     lost = [r for r in records if failure_kind(r) == 'api']
@@ -603,6 +605,16 @@ def summarize(records: List[Dict]) -> str:
                     'errors: rate limit, quota, timeout, network, balance). They say nothing about the model; '
                     'running the same trial command again retries them.']
         out += [f"- {r['llm']} {r['design']} #{r['rep']}: {r['error'][:160]}" for r in lost]
+    no_req = [r for r in records if r.get('step0') and not r['step0'].get('ok')]
+    if no_req:
+        out += ['', f'{len(no_req)} run(s) have no requirements because Step 0 failed: the design and the '
+                    'scenarios were generated without them, so these runs are not comparable to the others.']
+        out += [f"- {r['llm']} {r['design']} #{r['rep']}: {(r['step0'].get('error') or 'no reason given')[:160]}"
+                for r in no_req]
+    bad_calls = sum((r.get('llm_calls') or 0) - (r.get('llm_calls_ok') or 0) for r in records)
+    if bad_calls:
+        out += ['', f'{bad_calls} model call(s) failed or came back empty. An empty answer caused by the output '
+                    'budget is retried once with twice the budget.']
     if unread:
         out += ['', 'Scenario steps the rule library could not read (up to 20 per run):', '']
         out += [f'- `{t}`' for t in unread[:60]]

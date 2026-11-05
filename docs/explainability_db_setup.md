@@ -294,8 +294,40 @@ The tests need a PostgreSQL they may wipe (never point them at Neon) and
 iverilog:
 
 ```bash
-XDB_TEST_URL=postgresql://USER:PASS@localhost/bdx_test python -m pytest tests/test_xdb.py -q
+XDB_TEST_URL=postgresql://USER:PASS@localhost/bdx_test python -m pytest tests -q
 ```
+
+`tests/conftest.py` keeps every test away from the `.env` database. Without
+`XDB_TEST_URL` pointing at a running server, `tests/test_xdb.py` is skipped.
+
+On a Mac (Homebrew), a throwaway server that needs no background service:
+
+```bash
+brew install postgresql@17 pgvector
+```
+
+```bash
+LC_ALL=en_US.UTF-8 /opt/homebrew/opt/postgresql@17/bin/initdb -D /tmp/bdx_pg -U bdx --auth=trust -E UTF-8 --locale=en_US.UTF-8
+```
+
+```bash
+LC_ALL=en_US.UTF-8 /opt/homebrew/opt/postgresql@17/bin/pg_ctl -D /tmp/bdx_pg -w -l /tmp/bdx_pg/server.log -o "-p 5544 -c listen_addresses=127.0.0.1 -k /tmp" start
+```
+
+```bash
+/opt/homebrew/opt/postgresql@17/bin/createdb -h 127.0.0.1 -p 5544 -U bdx bdx_test
+```
+
+```bash
+XDB_TEST_URL=postgresql://bdx@127.0.0.1:5544/bdx_test python -m pytest tests -q
+```
+
+```bash
+/opt/homebrew/opt/postgresql@17/bin/pg_ctl -D /tmp/bdx_pg stop
+```
+
+`LC_ALL` is needed: without it the server stops at startup with "postmaster
+became multithreaded during startup".
 
 ## Notes on Neon's free plan
 

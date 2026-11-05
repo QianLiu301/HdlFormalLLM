@@ -1,4 +1,4 @@
-# Handover: context for a new session (2026-11-04)
+# Handover: context for a new session (updated 2026-11-05)
 
 Development of the explainability track ran in one long cloud session until
 2026-11-04. From then on the work happens in a Claude Code session on the
@@ -7,7 +7,7 @@ says what the user wants, what the sources were, how we work, where things
 stand and what comes next. Details live in the documents it points to.
 
 Read first: `CLAUDE.md`, then `docs/explainability_db_design.md` (decision
-log D1–D32, §1 users, §2 BDX mapping, §6d–§6h milestones and trial findings),
+log D1–D35, §1 users, §2 BDX mapping, §6d–§6i milestones and trial findings),
 `docs/explainability_db_setup.md` (how to run everything),
 `docs/research_outline.md` (candidate papers and feature roadmap R1–R7).
 
@@ -58,29 +58,38 @@ Done: explainability DB and verdicts (M1), rule libraries and explanations
 (M2), Step-4 UI (M3), repairs (M4), register file (M5a), RV32I CPU (M5b),
 batch trial runner (R1), D29 (steps the testbench cannot run), D30
 (compile-error repair), D31 (CPU memory timing, prompt duv_cpu v2), D32
-(credentials). 153 tests (`tests/`), browser checks in `tests/ui/`.
+(credentials), D33 (a CPU check counts only if the program got there), D34
+(empty answers), D35 (Step 4 says when it is waiting). 173 tests (`tests/`),
+browser checks in `tests/ui/`.
 
-Trials (results in `data/trials/`, findings in design doc §6g, §6h):
+Trials (`first`, `cpu_fix` in `data/trials/`; `cpu_v2`, `cpu_v3` in
+`output/trials/`, local; findings in design doc §6g–§6i):
 - `first`: DeepSeek + Gemini × ALU / register file / CPU × 2 → D29 and the
   parser fixes.
 - `cpu_fix`: CPU only. Gemini hit its quota (429); DeepSeek timed out or
   returned empty answers in 2 of 3 runs; the one finished DeepSeek CPU was
   blamed for wrong loads, which was the testbench's memory timing (D31).
-  The compile-error repair has not yet run on real model output.
+- `cpu_v2`, `cpu_v3`: gpt-5-mini, CPU × 3, before and after D33/D34. All 178
+  scenario values agree with an independent instruction-set simulator; `cpu_v3`
+  ends with no failing check in all 3 runs, 94 checks, one real LW bug repaired.
+  The compile-error repair worked on real model output. JAL is wrong in all 3
+  designs and no scenario tests it: "no failing check" is not "a correct CPU".
 
 ## 5. Next steps
 
-1. Check the local setup with the mock model:
-   `python -m src.xdb.trial run --llms mock --tag dryrun_local`.
-2. Re-run the CPU with DeepSeek (prompt v2, fixed memory timing, compile
-   fixes on): `python -m src.xdb.trial run --llms deepseek --designs cpu --reps 3 --tag cpu_v2`,
-   then read `output/trials/cpu_v2/` (summary.md, runs.jsonl, logs/).
-   Gemini again when its quota allows.
-3. Check whether other design types have unstated interface contracts like
+1. Optional: the same CPU trial with DeepSeek (balance 7.09 CNY on 2026-11-04,
+   no balance error so far) or Gemini when its quota allows, to compare models:
+   `python -m src.xdb.trial run --llms deepseek --designs cpu --reps 3 --tag cpu_v3_deepseek`.
+2. Check whether other design types have unstated interface contracts like
    D31 (timing of reads, reset polarity, flag meanings).
+3. R3 first: the independent simulator of §6i (`output/trials/cpu_v3/check/`) finds
+   what the padded one-instruction programs cannot (JAL, forwarding, stalls).
 4. Then the roadmap in `docs/research_outline.md` §5: R2 coverage view,
-   R3 deep check with counterexamples, R4 history page, R5 SVA view,
-   R6 counter reference model, R7 free-text questions.
+   R4 history page (could also store what only `output/trials/` holds today, such
+   as a failed Step 0 per run), R5 SVA view, R6 counter reference model,
+   R7 free-text questions.
 
-Running the tests locally needs iverilog and a local, wipeable PostgreSQL
-for `XDB_TEST_URL` (never the Neon database); see the setup document.
+Running the tests locally needs iverilog, pytest and a local, wipeable PostgreSQL
+with pgvector for `XDB_TEST_URL` (never the Neon database: the tests drop the
+schema); step by step for the Mac in the setup document, §8. Runs of the website
+and of the trial runner do go to Neon, from any machine with `DATABASE_URL`.

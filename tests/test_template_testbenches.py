@@ -286,6 +286,106 @@ def test_loads_pass_with_either_load_timing(tmp_path, design):
     assert len(lines) == 3 and not any('FAIL' in l for l in lines), lines
 
 
+# ---- a branch check proves that the program went where it should (trial cpu_v2) ----
+_PC_UPDATE = 'pc <= (is_br && taken) ? pc + imm_b : pc + 4;'
+STRAY_CPU = CPU.replace(_PC_UPDATE, "pc <= (is_br && taken) ? 32'd0 : pc + 4;")
+OFF_BY_FOUR_CPU = CPU.replace(_PC_UPDATE, 'pc <= (is_br && taken) ? pc + imm_b + 4 : pc + 4;')
+BAD_STORE_CPU = CPU.replace('assign dmem_wdata = b;', "assign dmem_wdata = b ^ 32'd1;")
+
+
+def _branches(rows):
+    body = '\n'.join(f'      | {r} |' for r in rows)
+    return f"""
+  @branch
+  Scenario Outline: branch rows
+    Given register x<rs1> contains <rs1_value>
+    And register x<rs2> contains <rs2_value>
+    When I execute <instruction>
+    Then the branch is taken should be <taken>
+
+    Examples:
+      | instruction | rs1 | rs1_value | rs2 | rs2_value | taken |
+{body}
+"""
+
+
+BRANCH_PROGRAM = (HEADER + _outline('before', ['add x3, x1, x2 | 1 | 10 | 2 | 20 | 3 | 0 | 30'])
+                  + _branches(['beq x1, x2, 8 | 1 | 5 | 2 | 5 | yes', 'beq x1, x2, 8 | 1 | 5 | 2 | 6 | no'])
+                  + _outline('after', ['add x4, x1, x2 | 1 | 1 | 2 | 2 | 4 | 0 | 3']))
+
+
+def _ends(lines):
+    return [re.sub(r'^.*?(PASS|FAIL)\s+', r'\1 ', re.sub(r'\s*\[BDD:.*$', '', ln)) for ln in lines]
+
+
+@needs_iverilog
+def test_branch_rows_pass_on_a_correct_cpu(tmp_path):
+    assert STRAY_CPU != CPU and OFF_BY_FOUR_CPU != CPU and BAD_STORE_CPU != CPU
+    r = _generate(tmp_path, BRANCH_PROGRAM, CPU_DUT)
+    assert _ends(_run(tmp_path, r['filepath'], CPU)) == [
+        'PASS add x3, x1, x2', 'PASS beq x1, x2, 8 (taken)', 'PASS beq x1, x2, 8 (not taken)', 'PASS add x4, x1, x2']
+
+
+@needs_iverilog
+def test_a_taken_branch_that_goes_elsewhere_does_not_pass(tmp_path):
+    r = _generate(tmp_path, BRANCH_PROGRAM, CPU_DUT)
+    assert _ends(_run(tmp_path, r['filepath'], STRAY_CPU)) == [
+        'PASS add x3, x1, x2',
+        'FAIL beq x1, x2, 8 (taken) - did not continue after the branch',
+        'FAIL beq x1, x2, 8 (not taken) - not reached',
+        'FAIL add x4, x1, x2 - not reached']
+
+
+@needs_iverilog
+def test_a_branch_target_off_by_one_instruction_is_found(tmp_path):
+    r = _generate(tmp_path, BRANCH_PROGRAM, CPU_DUT)
+    assert _ends(_run(tmp_path, r['filepath'], OFF_BY_FOUR_CPU)) == [
+        'PASS add x3, x1, x2',
+        'FAIL beq x1, x2, 8 (taken) - did not continue after the branch',
+        'PASS beq x1, x2, 8 (not taken)',
+        'PASS add x4, x1, x2']
+
+
+@needs_iverilog
+def test_a_broken_store_is_a_wrong_result_not_an_unreached_row(tmp_path):
+    r = _generate(tmp_path, BRANCH_PROGRAM, CPU_DUT)
+    assert _ends(_run(tmp_path, r['filepath'], BAD_STORE_CPU)) == [
+        'FAIL add x3, x1, x2 - expected 30, got 31',
+        'PASS beq x1, x2, 8 (taken)',
+        'FAIL beq x1, x2, 8 (not taken) - expected 677, got 676',
+        'FAIL add x4, x1, x2 - expected 3, got 2']
+
+
+def test_a_finished_program_does_not_start_again(tmp_path):
+    r = _generate(tmp_path, BRANCH_PROGRAM, CPU_DUT)
+    assert "imem_data = (imem_addr < 32'd4096) ? imem[imem_addr[11:2]] : 32'h00000013;" in \
+        Path(r['filepath']).read_text(encoding='utf-8')
+
+
+@needs_iverilog
+def test_memory_rows_keep_their_addresses_and_avoid_the_landing_words(tmp_path):
+    rows = ['sw x2, 0(x1) | 1 | -2048 | 2 | 5 | 0 | 0 | 5',      # word 512: models use this boundary
+            'sw x2, 0(x1) | 1 | -1028 | 2 | 6 | 0 | 0 | 6']      # 0xBFC: where the first branch lands
+    r = _generate(tmp_path, HEADER + _outline('memory', rows) + _branches(['beq x1, x2, 8 | 1 | 5 | 2 | 5 | yes']),
+                  CPU_DUT)
+    assert _ends(_run(tmp_path, r['filepath'], CPU)) == ['PASS sw x2, 0(x1)', 'PASS beq x1, x2, 8 (taken)']
+
+
+def test_jumps_are_skipped_because_they_would_leave_the_program(tmp_path):
+    r = _generate(tmp_path, HEADER + _outline('jump', ['jal x1, 100 | 0 | 0 | 0 | 0 | 1 | 0 | 4',
+                                                       'add x3, x1, x2 | 1 | 10 | 2 | 20 | 3 | 0 | 30']), CPU_DUT)
+    tb = Path(r['filepath']).read_text(encoding='utf-8')
+    assert 'jal x1' not in tb and 'add x3, x1, x2' in tb
+
+
+@needs_iverilog
+def test_rows_that_do_not_fit_the_instruction_memory_are_skipped_not_lost(tmp_path):
+    rows = [f'add x3, x1, x2 | 1 | {i} | 2 | 1 | 3 | 0 | {i + 1}' for i in range(120)]
+    r = _generate(tmp_path, HEADER + _outline('many', rows), CPU_DUT)
+    lines = _run(tmp_path, r['filepath'], CPU)
+    assert 60 < len(lines) < 120 and all('PASS' in ln for ln in lines)   # nothing reported as not reached
+
+
 def test_cpu_prompt_states_the_memory_timing_and_is_the_web_default():
     from src import prompt_store
     with contextlib.redirect_stdout(io.StringIO()):

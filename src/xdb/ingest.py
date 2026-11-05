@@ -433,7 +433,8 @@ def _log_by_test(log: str) -> Dict[int, Dict]:
 def _observed(status: str, got, c: M.CheckItem):
     """O of one assertion. A CPU branch is observed through a result slot: 0
     means the branch skipped the marker store (taken), the marker means it did
-    not; anything else means the observation itself went wrong (None)."""
+    not; anything else, or a branch after which the program did not arrive at
+    its landing marker, means there is no decision to report (None)."""
     if c.port == 'taken' and status == 'fail':
         try:
             raw = int(str(got), 0)
@@ -660,6 +661,8 @@ def _ingest_run(project_root, paths, run_id, url, data) -> Dict:
                 msg = r.get('message') or r.get('reason')
                 mm = _EXP_RE.search(msg or '')
                 exp_txt, got = (mm.group(1), mm.group(2)) if mm else (None, None)
+            if status == 'fail' and L.cpu_not_reached(msg):
+                status = 'not_tested'          # the program never got to this example
             o = _observed(status, got, c)
             v = _verdict(status, o, c)
             if v is not None and c.scenario_id in blocked:
