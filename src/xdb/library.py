@@ -655,3 +655,71 @@ def flag_alternatives(module_type: str, port: str, op, a, b, width: int,
 def alternative_by_name(name: str) -> Optional[Dict]:
     return next(({'name': d['name'], 'text': d['short']} for d in OVERFLOW_DEFINITIONS.values()
                  if d['name'] == name), None)
+
+
+# ----------------------------------------------------------------- ALU mix-ups
+# What a design or a scenario may have done instead of the rule. Like
+# FLAG_ALTERNATIVES these only describe a result, they never judge one: the
+# verdict comes from verdict.classify alone. A mix-up is reported only when it
+# reproduces every example of the operation, so the cause on a card is proven by
+# the run itself, and "the cause is unknown" stays the answer otherwise.
+_shift = lambda b, w: b & (w - 1)
+ALU_MIXUPS = {
+    'SLT': {'fn': lambda a, b, w: int(a < b), 'as': 'SLTU',
+            'says': 'compares SLT operands as unsigned numbers',
+            'fix': 'the comparison needs $signed on both operands'},
+    'SLTU': {'fn': lambda a, b, w: int(_signed(a, w) < _signed(b, w)), 'as': 'SLT',
+             'says': 'compares SLTU operands as signed numbers',
+             'fix': 'the comparison must not use $signed'},
+    'SRA': {'fn': lambda a, b, w: a >> _shift(b, w), 'as': 'SRL',
+            'says': 'shifts SRA with zeros instead of copying the sign bit',
+            'fix': 'the operand needs $signed for >>> to copy the sign bit'},
+    'SRL': {'fn': lambda a, b, w: (_signed(a, w) >> _shift(b, w)) % (1 << w), 'as': 'SRA',
+            'says': 'shifts SRL with the sign bit instead of zeros',
+            'fix': 'SRL must fill with zeros'},
+    'ADD': {'fn': lambda a, b, w: (a - b) % (1 << w), 'as': 'SUB',
+            'says': 'subtracts instead of adding', 'fix': 'ADD must add'},
+    'SUB': {'fn': lambda a, b, w: (a + b) % (1 << w), 'as': 'ADD',
+            'says': 'adds instead of subtracting', 'fix': 'SUB must subtract'},
+}
+# Operands an operation reads as signed; a reader should see them that way.
+SIGNED_OPERANDS = {'SLT': ('a', 'b'), 'SRA': ('a',)}
+ALU_WORKING = {'SLT': lambda a, b, w: f"{_signed(a, w)} < {_signed(b, w)} is {'true' if _signed(a, w) < _signed(b, w) else 'false'}",
+               'SLTU': lambda a, b, w: f"{a} < {b} is {'true' if a < b else 'false'}",
+               'SRA': lambda a, b, w: f"{_signed(a, w)} >> {_shift(b, w)} = {_signed(a, w) >> _shift(b, w)}"}
+
+
+def signed_value(op: Optional[str], operand: str, value, width: Optional[int]) -> Optional[int]:
+    """The negative number a reader should see for this operand, else None."""
+    if width and isinstance(value, int) and operand in SIGNED_OPERANDS.get((op or '').upper(), ()) \
+            and value >= 1 << (width - 1):
+        return _signed(value, width)
+    return None
+
+
+def alu_working(op: Optional[str], a, b, width: Optional[int]) -> Optional[str]:
+    fn = ALU_WORKING.get((op or '').upper())
+    return fn(a, b, width) if fn and width and isinstance(a, int) and isinstance(b, int) else None
+
+
+def alu_mixup(op: Optional[str], rows: List[Tuple[int, int, int]], width: Optional[int]) -> Optional[Dict]:
+    """The mix-up that reproduces every (a, b, value) of an operation and differs
+    from the rule at least once, with the number of rows it explains."""
+    key = (op or '').upper()
+    mix, rule = ALU_MIXUPS.get(key), (library_for('alu') or {}).get('rules', {}).get(key)
+    if not mix or not rule or not rows or not width:
+        return None
+    if any(mix['fn'](a, b, width) != v for a, b, v in rows):
+        return None
+    if all(rule['fn'](a, b, width) == v for a, b, v in rows):
+        return None
+    return {'op': key, 'says': mix['says'], 'fix': mix['fix'], 'rows': len(rows)}
+
+
+def alu_swap_partner(op: Optional[str]) -> Optional[str]:
+    return (ALU_MIXUPS.get((op or '').upper()) or {}).get('as')
+
+
+def alu_mixup_value(op: Optional[str], a: int, b: int, width: int) -> Optional[int]:
+    mix = ALU_MIXUPS.get((op or '').upper())
+    return mix['fn'](a, b, width) if mix else None
