@@ -79,6 +79,7 @@ def load_config():
         'QWEN_API_KEY': 'qwen',
         'LLAMA_API_KEY': 'llama',
         'GPTOSS_API_KEY': 'gptoss',
+        'GEMMA_API_KEY': 'gemma',
         'DEEPSEEKV4_API_KEY': 'deepseekv4',
         'GLM_API_KEY': 'glm',
         'MISTRAL_API_KEY': 'mistral',
@@ -164,6 +165,7 @@ def setup_api_keys():
         'qwen': 'QWEN_API_KEY',
         'llama': 'LLAMA_API_KEY',
         'gptoss': 'GPTOSS_API_KEY',
+        'gemma': 'GEMMA_API_KEY',
         'deepseekv4': 'DEEPSEEKV4_API_KEY',
         'glm': 'GLM_API_KEY',
         'mistral': 'MISTRAL_API_KEY',
@@ -185,6 +187,7 @@ def setup_api_keys():
         'QWEN': 'QWEN_API_KEY',
         'LLAMA': 'LLAMA_API_KEY',
         'GPTOSS': 'GPTOSS_API_KEY',
+        'GEMMA': 'GEMMA_API_KEY',
         'DEEPSEEKV4': 'DEEPSEEKV4_API_KEY',
         'GLM': 'GLM_API_KEY',
         'MISTRAL': 'MISTRAL_API_KEY',
@@ -378,7 +381,7 @@ def allowed_file(filename):
 # DeepSeek 的 deepseek-chat、Together 的 Llama-4-Maverick 都已下线），所以候选表
 # 要用 benchmark/check_models_live.py 定期核对。
 MODEL_OVERRIDE_PROVIDERS = ('openai', 'gemini', 'deepseek', 'groq', 'mistral',
-                            'together', 'qwen', 'llama', 'gptoss', 'glm')
+                            'together', 'qwen', 'llama', 'gptoss', 'gemma', 'glm')
 
 # 网页端 Step 1 在调用方没有指定版本时用的模板版本。
 #
@@ -2012,11 +2015,13 @@ def generate_hardware_stream():
 
             # Guard: LLM API 失败时会降级返回模板文本，绝不能把非 Verilog 内容存成 .v
             if 'module' not in verilog_code:
+                reason = (_last_call_meta(run_id) or {}).get('api_error')
                 yield make_sse_message(
                     "error",
-                    message=f"{llm_name.upper()} did not return Verilog code — the API call "
-                            f"likely failed (check server console for proxy/API-key errors). "
-                            f"Response preview: {full_content[:200]}")
+                    message=(f"{llm_name.upper()} could not answer: {reason}" if reason else
+                             f"{llm_name.upper()} did not return Verilog code — the API call "
+                             f"likely failed (check server console for proxy/API-key errors). "
+                             f"Response preview: {full_content[:200]}"))
                 return
 
             # Fix module name and save based on module type
@@ -2359,7 +2364,9 @@ def generate_bdd_stream():
             # 只保护了没人走的那条路——provider 静默失败时假 .feature 照样落盘、
             # 界面照样报成功，直到 Step 3 才以「No test scenarios found」爆出来。
             if is_fallback_text(full_content):
+                reason = (_last_call_meta(run_id) or {}).get('api_error')
                 yield make_sse_message("error", message=(
+                    f"{llm_name.upper()} could not answer: {reason}. Nothing was saved." if reason else
                     f"{llm_name.upper()} returned its fallback placeholder text, which "
                     f"means the API call actually failed even though no error was raised "
                     f"— usually a missing/invalid API key or a retired model name. "
@@ -2581,7 +2588,7 @@ def sampling_info():
     info = {}
     for name in ('groq', 'gemini', 'deepseek', 'openai', 'claude',
                  'grok', 'qwen', 'mistral', 'together', 'llama',
-                 'gptoss', 'deepseekv4', 'glm'):
+                 'gptoss', 'gemma', 'deepseekv4', 'glm'):
         cls = _provider_class(name)
         if cls is None:
             continue
@@ -2612,7 +2619,7 @@ def _provider_class(name):
         'deepseek': 'DeepSeekProvider', 'openai': 'OpenAIProvider',
         'claude': 'ClaudeProvider', 'grok': 'GrokProvider',
         'qwen': 'QwenProvider3', 'mistral': 'MistralProvider',
-        'llama': 'LlamaProvider', 'gptoss': 'GptOssProvider',
+        'llama': 'LlamaProvider', 'gptoss': 'GptOssProvider', 'gemma': 'GemmaProvider',
         'deepseekv4': 'DeepSeekV4Provider', 'glm': 'GlmProvider',
         'together': 'TogetherProvider',
     }

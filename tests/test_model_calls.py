@@ -10,10 +10,12 @@ cpu_v2 did not show in the summary although that run had no requirements.
 Run from the repository root:  python -m pytest tests/test_model_calls.py
 """
 import json
+import re
 import sqlite3
 from pathlib import Path
 
 import pytest
+import requests
 
 from src import experiment_logger as X
 
@@ -135,3 +137,166 @@ def test_the_trial_summary_shows_runs_without_requirements():
     assert '1 run(s) have no requirements because Step 0 failed' in text
     assert '- openai cpu #2: The model used its whole output budget' in text
     assert '1 model call(s) failed or came back empty' in text
+
+
+# ---- providers swallow their errors: a failed call does not always look empty ----
+FALLBACK = 'Test ALU operation with various input values and verify correct output'
+
+
+class SwallowingModel(FakeModel):
+    """Like the GWDG providers: an error becomes a note and a fallback text."""
+
+    def _call_api(self, prompt, max_tokens=None, system_prompt=None):
+        if self._answers(max_tokens):
+            return 'answer'
+        X.record_call_meta(api_error='ValueError: empty content (finish_reason=length)')
+        return FALLBACK
+
+    def _call_api_stream(self, prompt, max_tokens=None, system_prompt=None):
+        self._answers(max_tokens)
+        X.record_call_meta(api_error='ValueError: empty content (finish_reason=length)')
+        yield FALLBACK
+
+
+X.instrument_class(SwallowingModel)
+
+
+class FakeResponse:
+    def __init__(self, status, body):
+        self.status_code, self.body = status, body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f'{self.status_code} Client Error', response=self)
+
+    def json(self):
+        return self.body
+
+
+def _answer(content, finish='stop'):
+    return FakeResponse(200, {'model': 'm', 'choices': [{'finish_reason': finish, 'message': {'content': content}}]})
+
+
+def _gwdg(monkeypatch, *responses):
+    """Serve these responses to a GWDG provider; returns the request bodies."""
+    from src import llm_providers as L
+    seen, queue = [], list(responses)
+
+    def post(url, headers=None, json=None, proxies=None, timeout=None):
+        seen.append(json)
+        return queue.pop(0)
+    monkeypatch.setattr(L.requests, 'post', post)
+    return seen
+
+
+def test_a_fallback_text_after_an_api_error_is_a_failed_call(calls):
+    import src.llm_providers  # noqa: F401  registers its fallback check
+    m = SwallowingModel(needs=10 ** 9, finish='stop')
+    assert m._call_api('p', max_tokens=6000) == FALLBACK
+    assert m.budgets == [6000]
+    assert [r[:2] for r in calls()] == [(0, 'ValueError: empty content (finish_reason=length)')]
+
+
+def test_a_stale_api_error_does_not_fail_a_real_answer(calls):
+    import src.llm_providers  # noqa: F401
+
+    class Recovered(FakeModel):
+        def _call_api(self, prompt, max_tokens=None, system_prompt=None):
+            X.record_call_meta(api_error='Timeout on the first attempt')
+            return 'module m; endmodule'
+    X.instrument_class(Recovered)
+    Recovered(needs=1)._call_api('p', max_tokens=100)
+    assert [r[0] for r in calls()] == [1]
+
+
+def test_budget_exhausted_behind_a_fallback_text_is_retried(calls):
+    import src.llm_providers  # noqa: F401
+    m = SwallowingModel(needs=8000)
+    assert m._call_api('p', max_tokens=6000) == 'answer'
+    assert m.budgets == [6000, 12000]
+    assert [r[0] for r in calls()] == [0, 1]
+
+
+def test_a_stream_that_already_sent_text_is_not_retried(calls):
+    import src.llm_providers  # noqa: F401
+    m = SwallowingModel(needs=10 ** 9)
+    assert list(m._call_api_stream('p', max_tokens=6000)) == [FALLBACK]
+    assert m.budgets == [6000]
+    assert [r[0] for r in calls()] == [0]
+
+
+def test_gwdg_empty_content_is_retried_with_a_larger_budget(calls, monkeypatch):
+    from src import llm_providers as L
+    seen = _gwdg(monkeypatch, _answer(None, 'length'), _answer('answer'))
+    assert L.GlmProvider(api_key='k')._call_api('p', max_tokens=1000) == 'answer'
+    assert [b['max_tokens'] for b in seen] == [1000, 2000]
+    first, second = calls()
+    assert first[0] == 0 and 'empty content' in first[1] and second[:2] == (1, None)
+
+
+def test_only_glm_limits_its_reasoning(calls, monkeypatch):
+    from src import llm_providers as L
+    seen = _gwdg(monkeypatch, _answer('a'), _answer('b'), _answer('c'))
+    L.GlmProvider(api_key='k')._call_api('p', max_tokens=100)
+    L.QwenProvider3(api_key='k')._call_api('p', max_tokens=100)
+    L.GemmaProvider(api_key='k')._call_api('p', max_tokens=100)
+    assert [b.get('reasoning_effort') for b in seen] == ['low', None, None]
+    assert [b['model'] for b in seen] == ['glm-5.3-flash', 'qwen3-coder-next', 'gemma-4-31b-it']
+
+
+def test_the_providers_own_words_are_kept(calls, monkeypatch):
+    from src import llm_providers as L
+    _gwdg(monkeypatch, FakeResponse(403, {'error': {'message': 'Not authorized to access this Model: glm-4.7'}}))
+    assert L.GlmProvider(api_key='k')._call_api('p', max_tokens=100) == FALLBACK
+    assert calls()[0][:2] == (0, 'HTTPError 403: Not authorized to access this Model: glm-4.7')
+
+
+def test_the_page_shows_why_a_model_could_not_answer(calls, monkeypatch):
+    import main
+    from src.alu_generator import ALUGenerator
+
+    class Refused:
+        model = 'fake'
+
+        def _call_api(self, prompt, max_tokens=None, system_prompt=None):
+            return FALLBACK
+
+        def _call_api_stream(self, prompt, max_tokens=None, system_prompt=None, sampling=None):
+            X.record_call_meta(api_error='HTTPError 403: Not authorized to access this Model: glm-4.7')
+            yield FALLBACK
+    X.instrument_class(Refused)
+    for cls in {ALUGenerator, main.ALUGenerator}:
+        monkeypatch.setattr(cls, '_setup_llm', lambda self: Refused())
+    r = main.app.test_client().post('/api/generate-hardware-stream', json={
+        'module_type': 'alu', 'llm': 'qwen', 'bitwidth': 8, 'workflow_mode': 'implementation', 'run_id': 'refused'})
+    assert 'QWEN could not answer: HTTPError 403: Not authorized to access this Model: glm-4.7' in r.get_data(as_text=True)
+
+
+def _menu(select_id):
+    html = (Path(__file__).resolve().parent.parent / 'static/bdd_generator.html').read_text(encoding='utf-8')
+    block = re.search(rf'<select id="{select_id}".*?</select>', html, re.S).group(0)
+    return re.findall(r'^\s*<option value="([^"]+)"', block, re.M)
+
+
+@pytest.mark.parametrize('select_id', ['req-llm', 'hw-llm', 'bdd-llm'])
+def test_the_menus_offer_no_retired_model(select_id):
+    values = _menu(select_id)
+    assert {'qwen', 'gemma', 'glm'} <= set(values)
+    assert not {'gptoss', 'together'} & set(values)
+
+
+def test_gemma_is_registered_and_gpt_oss_is_not(monkeypatch):
+    from src import llm_providers as L
+    monkeypatch.setenv('GEMMA_API_KEY', 'k')
+    monkeypatch.delenv('GEMMA_MODEL', raising=False)
+    p = L.LLMFactory.create_provider('gemma')
+    assert type(p).__name__ == 'GemmaProvider' and p.model == 'gemma-4-31b-it'
+    assert type(L.LLMFactory.create_provider('gptoss')).__name__ == 'LocalLLMProvider'
+
+
+def test_gemma_can_use_the_qwen_key(monkeypatch):
+    from src import llm_providers as L
+    for name in ('GEMMA_API_KEY', 'ACADEMIC_API_KEY'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('QWEN_API_KEY', 'school')
+    assert L.GemmaProvider().api_key == 'school'

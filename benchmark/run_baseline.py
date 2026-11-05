@@ -43,8 +43,7 @@ from src.experiment_logger import DB_PATH                # noqa: E402
 # 矩阵定义
 # ---------------------------------------------------------------------------
 ALL_PROVIDERS = [
-    'gemini', 'mistral', 'deepseek', 'openai', 'qwen',
-    'gptoss', 'glm', 'together',
+    'gemini', 'mistral', 'deepseek', 'openai', 'qwen', 'gemma', 'glm',
 ]
 # alu 与 alu_comb 是同一个设计任务的两种时序形态：alu 用 duv_alu/v1（寄存
 # 输出），alu_comb 用 v2（纯组合）。除时序外两份 prompt 逐字相同，构成
