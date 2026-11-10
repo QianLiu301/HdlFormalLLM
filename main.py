@@ -2830,6 +2830,122 @@ def repair_design_feedback_api():
     return _repair_call(lambda d: XR.design_feedback(PROJECT_ROOT, _report_paths(d)))
 
 
+# ============================================================================
+# Local fixes and per-problem chat (src/xdb/fix.py, D46). A fix changes only
+# the located lines and is checked (compile, same testbench, random inputs)
+# before the user keeps it; keep stores a new design version and simulates it.
+# ============================================================================
+def _fix_caller(llm_name, model, run_id, task_type):
+    """(call(system, prompt) -> text, newest llm_call id in the database)."""
+    if not llm_name:
+        raise ValueError('choose a model')
+    llm = (LLMFactory.create_provider(llm_name, model=model)
+           if model and llm_name in MODEL_OVERRIDE_PROVIDERS else LLMFactory.create_provider(llm_name))
+
+    def call(system, prompt):
+        with call_context(task_type=task_type, run_id=run_id, module_name='alu'):
+            return llm._call_api(prompt, max_tokens=6000, system_prompt=system)
+    return call
+
+
+def _fix_run(d):
+    from src.xdb import repair as XR
+    with xdb.session_scope() as s:
+        hit = XR.find_run(s, PROJECT_ROOT, _report_paths(d))
+        if hit is None:
+            return None, None
+        run, tb = hit
+        from src.xdb import models as XM
+        sess = s.get(XM.Session, tb.session_id)
+        return run.id, (sess.id, sess.run_id)
+
+
+def _copy_calls(session):
+    from src.xdb.ingest import _copy_llm_calls
+    try:
+        with xdb.session_scope() as s:
+            return _copy_llm_calls(s, session[0], session[1])
+    except Exception as e:
+        print(f'⚠️  could not copy the model calls: {e}')
+        return {}
+
+
+@app.route('/api/fix/propose', methods=['POST'])
+def fix_propose_api():
+    """Ask the design's model to rewrite only the located lines, then check the result."""
+    from src.xdb import fix as XF
+
+    def _do(d):
+        run_id, sess = _fix_run(d)
+        if run_id is None:
+            return None, 'this simulation is not in the explainability database yet; try again in a moment'
+        groups = d.get('groups') or []
+        if not groups:
+            return None, 'nothing to fix'
+        proposal = d.get('proposal')
+        call = None if proposal else _fix_caller((d.get('llm') or '').strip().lower(),
+                                                (d.get('model') or '').strip() or None, sess[1], 'web_fix')
+        out, err = XF.propose(run_id, groups, call, note=d.get('note') or '', llm=d.get('llm'),
+                              proposal=proposal)
+        if out and not proposal:
+            _copy_calls(sess)
+        return out, err
+    return _repair_call(_do)
+
+
+@app.route('/api/fix/keep', methods=['POST'])
+def fix_keep_api():
+    """Save the checked fix as a new design version and run Step 3 + 4 with it."""
+    from src.xdb import fix as XF
+
+    def _do(d):
+        out, err = XF.keep(PROJECT_ROOT, int(d.get('feedback_id') or 0), d.get('duv_filepath') or '')
+        if err:
+            return None, err
+        run_id, sess = _fix_run(d)
+        data = {**d, '_version_reason': f"feedback:{out['feedback_id']}",
+                'run_id': (sess[1] if sess else None) or d.get('run_id')}
+        _log_artifact(data, data['run_id'], 'duv', out['design_path'],
+                      meta={'module_type': (d.get('dut_info') or {}).get('module_type'),
+                            'bitwidth': (d.get('dut_info') or {}).get('bitwidth'), 'compiles': True},
+                      sync=True)
+        rerun, err = _rerun_tb_and_sim(data, d.get('bdd_filepath'), out['design_path'])
+        if err:
+            return None, f"the fix was saved as {out['design_filename']}, but: {err}"
+        content = (PROJECT_ROOT / out['design_path']).read_text(encoding='utf-8', errors='replace')
+        return {**out, **rerun, 'design_content': content, 'run_id': data['run_id']}, None
+    return _repair_call(_do)
+
+
+@app.route('/api/fix/discard', methods=['POST'])
+def fix_discard_api():
+    from src.xdb import fix as XF
+
+    def _do(d):
+        XF.discard(int(d.get('feedback_id') or 0))
+        return {}, None
+    return _repair_call(_do)
+
+
+@app.route('/api/fix/chat', methods=['POST'])
+def fix_chat_api():
+    """One turn of the conversation under a problem card."""
+    from src.xdb import fix as XF
+
+    def _do(d):
+        msg = (d.get('message') or '').strip()
+        if not msg:
+            return None, 'type a message first'
+        run_id, sess = _fix_run(d)
+        if run_id is None:
+            return None, 'this simulation is not in the explainability database yet; try again in a moment'
+        llm = (d.get('llm') or '').strip().lower()
+        call = _fix_caller(llm, (d.get('model') or '').strip() or None, sess[1], 'web_chat')
+        return XF.chat(run_id, d.get('card') or {}, msg, call, thread=d.get('thread'), llm=llm,
+                       llm_call_id=lambda: _copy_calls(sess).get('web_chat'))
+    return _repair_call(_do)
+
+
 @app.route('/api/repair/rerun', methods=['POST'])
 def repair_rerun_api():
     """Step 3 + 4 for the page's feature and design (after the design was regenerated)."""

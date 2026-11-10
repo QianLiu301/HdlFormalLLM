@@ -243,6 +243,9 @@ def repair_scenarios(project_root, paths: Dict, run_id: Optional[str], data: Dic
             # simulated; a different file would be edited at the wrong places
             return None, 'the feature file is not the one this simulation was generated from'
         corrections = scenario_corrections(s, run.id)
+        only = {o.upper() for o in (data.get('operations') or []) if o}
+        if only:                     # one problem card: only its operation's values
+            corrections = [c for c in corrections if (c.get('operation') or '').upper() in only]
         if not corrections:
             return None, 'nothing to correct: no scenario value disagrees with the reference model'
         new_text, applied, skipped = apply_corrections(raw.decode('utf-8', errors='replace'),

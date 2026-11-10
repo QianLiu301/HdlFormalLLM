@@ -292,6 +292,27 @@
         .pb-title { font-weight: 600; color: var(--text-primary); }
         .pb-detail { color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; }
         .pb-checked { margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+        /* D46: code lines, fixes and the conversation under each card */
+        .pb-code { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.05); font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; overflow-x: auto; white-space: pre; }
+        .pb-code .ln { color: var(--text-secondary); user-select: none; display: inline-block; min-width: 3.2em; }
+        .pb-code-label { margin-top: 8px; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.4px; }
+        .pb-same { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+        .pb-fixbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .pb-fixbar .btn { width: auto; flex: 0 0 auto; }
+        .pb-fixout { margin-top: 8px; font-size: 12px; line-height: 1.5; }
+        .pb-fixout.ok { color: var(--text-primary); }
+        .pb-fixout.err { color: var(--error); }
+        .pb-diff { margin: 6px 0; padding: 6px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.05); font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; overflow-x: auto; white-space: pre; }
+        .pb-diff .add { color: #15803d; } .pb-diff .del { color: #b91c1c; }
+        .pb-chat { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .pb-chat-log { display: flex; flex-direction: column; gap: 6px; }
+        .pb-msg { padding: 6px 9px; border-radius: 8px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .pb-msg.user { align-self: flex-end; max-width: 85%; background: rgba(59, 130, 246, 0.10); }
+        .pb-msg.ai { align-self: flex-start; max-width: 100%; background: rgba(148, 163, 184, 0.14); }
+        .pb-msg .who { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 2px; }
+        .pb-chat-row { display: flex; gap: 6px; align-items: flex-end; }
+        .pb-chat-row textarea { flex: 1 1 auto; min-height: 0; height: 36px; resize: vertical; font: 12.5px/1.4 inherit; font-family: inherit; padding: 7px 9px; }
+        .pb-chat-row .btn { width: auto; flex: 0 0 auto; }
         details.sim-tech { margin-top: 8px; border-top: 1px solid var(--border-color); padding-top: 6px; }
         details.sim-tech > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-secondary); padding: 6px 0; list-style: none; }
         details.sim-tech > summary::-webkit-details-marker { display: none; }
@@ -6397,10 +6418,12 @@
                 : `✗ ${probs.length} problem${probs.length > 1 ? 's' : ''} found`
                   + `<span class="pb-counts">${escapeHtml(parts.join(' · '))}</span>`;
             document.getElementById('pb-list').innerHTML = probs.map((p, i) =>
-                `<div class="pb-item who-${escapeHtml(p.who)}">`
+                `<div class="pb-item who-${escapeHtml(p.who)}" id="pb-item-${i}">`
                 + `<span class="pb-tag">${escapeHtml(WHO_LABEL[p.who] || p.who)}</span>`
                 + `<div class="pb-text"><div class="pb-title">${escapeHtml(p.title)}</div>`
-                + `<div class="pb-detail">${escapeHtml(p.detail)}</div></div>`
+                + `<div class="pb-detail">${escapeHtml(p.detail)}</div>`
+                + renderCardFix(p, i, probs)
+                + `</div>`
                 + (p.explain ? `<button class="why-btn" onclick="openProblem(${i})">Details</button>` : '')
                 + `</div>`).join('');
             document.getElementById('pb-checked').innerHTML =
@@ -6439,6 +6462,14 @@
                     + `Correct the scenarios</button><span class="pb-action-text">Sets ${plural(r.scenario_values, 'expected value')} `
                     + `to what the reference model computes, saves the scenarios as a new feature file (the current one is kept) `
                     + `and runs the testbench again. No model is called.</span></div>`);
+            }
+            const heads = fixGroupHeads(j);
+            if (heads.length > 1) {
+                acts.push(`<div class="pb-action"><button class="btn btn-secondary btn-sm" onclick="fixAllDesign()">`
+                    + `Fix all design problems</button><span class="pb-action-text">Fixes the ${heads.length} spots in the `
+                    + `design one after another. Each change may touch only its own lines and is kept only if it `
+                    + `compiles, breaks no example that passed, and is right on random inputs too. You see the `
+                    + `result before anything is saved.</span></div>`);
             }
             const llm = designLlm();
             if (r.design_failures > 0 && r.design_regeneration && llm) {
@@ -6494,11 +6525,13 @@
             loadRunReport();
         }
 
-        async function repairScenarios() {
+        async function repairScenarios(operations) {
             const r0 = (explainState || {}).repairs || {};
             if (!currentSimResult || !currentSimResult.paths || !r0.scenario_values) return;
             const n = r0.scenario_values;
-            if (!confirm(`Correct ${plural(n, 'expected value')} in the scenarios?\n\n`
+            const only = Array.isArray(operations) && operations.length ? operations : null;
+            if (!confirm((only ? `Correct the ${only.join(', ')} values in the scenarios?\n\n`
+                               : `Correct ${plural(n, 'expected value')} in the scenarios?\n\n`)
                          + 'Each is set to what the reference model computes for its inputs. The corrected scenarios '
                          + 'are saved as a new feature file; the current file is kept. Then the testbench is generated '
                          + 'again and simulated.')) return;
@@ -6507,7 +6540,7 @@
                 const resp = await fetch('/api/repair/scenarios', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ ...currentSimResult.paths, session_id: getSessionId(),
-                                           dut_info: dutInfoForRerun() })
+                                           dut_info: dutInfoForRerun(), operations: only || undefined })
                 });
                 const r = await resp.json();
                 if (!r.success) throw new Error(r.error || 'The scenarios could not be corrected');
@@ -6594,6 +6627,220 @@
             } finally {
                 setRepairBusy(null);
             }
+        }
+
+        // ============================================================
+        // D46: per-card code lines, local fixes and conversation.
+        // A fix changes only the lines shown on the card; the server checks
+        // it (compile, same testbench, random inputs) before the user keeps it.
+        // ============================================================
+        const cardChats = {};      // card index -> {thread, turns: [{role, text}], proposal}
+
+        function fixModel() {
+            const llm = designLlm() || document.getElementById('hw-llm').value;
+            const hwLlm = document.getElementById('hw-llm').value;
+            const model = (hwLlm === llm && (llm === 'openai' || llm === 'gemini'))
+                ? document.getElementById('hw-model').value : null;
+            return { llm, model };
+        }
+
+        function fixGroupHeads(j) {
+            return ((j || explainState || {}).problems || [])
+                .map((p, i) => ({ p, i }))
+                .filter(({ p }) => p.fix && (p.fix.kinds || []).includes('design') && p.fix.covers);
+        }
+
+        function groupFor(i) {
+            const probs = (explainState || {}).problems || [];
+            const head = probs[i];
+            const ops = new Set();
+            (head.fix.covers || [i]).forEach(k => ((probs[k].fix || {}).ops || []).forEach(o => ops.add(o)));
+            const finding = (head.fix.covers || [i]).map(k => `${probs[k].title}. ${probs[k].detail}`).join('\n');
+            return { ops: [...ops], port: head.fix.port || null, finding };
+        }
+
+        function codeBlock(lines) {
+            return `<div class="pb-code-label">In the design</div><div class="pb-code">`
+                + lines.map(l => `<span class="ln">${l.no}</span>${escapeHtml(l.text)}`).join('\n') + `</div>`;
+        }
+
+        function renderCardFix(p, i, probs) {
+            const f = p.fix;
+            if (!f) return '';
+            const kinds = f.kinds || [];
+            let html = '';
+            if (kinds.includes('design') && (f.lines || []).length) html += codeBlock(f.lines);
+            const btns = [];
+            if (kinds.includes('design') && f.same_as !== undefined) {
+                html += `<div class="pb-same">Same lines as the problem “${escapeHtml(probs[f.same_as].title)}”: `
+                     + `fixing that one fixes this one too.</div>`;
+            } else if (kinds.includes('design') && (f.lines || []).length) {
+                btns.push(`<button class="btn btn-secondary btn-sm" onclick="fixCard(${i})">Fix this</button>`);
+            }
+            if (kinds.includes('scenario')) {
+                btns.push(`<button class="btn btn-secondary btn-sm" onclick="correctCard(${i})">Correct the scenario values</button>`);
+            }
+            if (btns.length) html += `<div class="pb-fixbar">${btns.join('')}</div>`;
+            html += `<div class="pb-fixout" id="pb-fixout-${i}"></div>`;
+            html += `<div class="pb-chat"><div class="pb-chat-log" id="pb-chat-log-${i}">${renderChatLog(i)}</div>`
+                 + `<div class="pb-chat-row"><textarea id="pb-chat-in-${i}" rows="1" `
+                 + `placeholder="Ask about this problem, or say how it should be fixed…" `
+                 + `onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendChat(${i}); }"></textarea>`
+                 + `<button class="btn btn-secondary btn-sm" onclick="sendChat(${i})">Send</button></div></div>`;
+            return html;
+        }
+
+        function renderChatLog(i) {
+            const c = cardChats[i];
+            if (!c) return '';
+            return c.turns.map(t => `<div class="pb-msg ${t.role}"><span class="who">${t.role === 'user' ? 'You' : 'AI answer'}</span>`
+                + `${escapeHtml(t.text)}</div>`).join('')
+                + (c.proposal ? `<div class="pb-fixbar"><button class="btn btn-secondary btn-sm" onclick="testProposal(${i})">`
+                                + `Test this change</button></div>` : '');
+        }
+
+        function setFixOut(i, html, kind) {
+            const el = i === null ? document.getElementById('pb-note') : document.getElementById(`pb-fixout-${i}`);
+            if (!el) return;
+            if (i === null) {
+                repairNotice = { html, kind: kind || '' };
+                renderRepairNote();
+            } else {
+                el.className = 'pb-fixout' + (kind ? ' ' + kind : '');
+                el.innerHTML = html;
+            }
+        }
+
+        function diffHtml(d) {
+            return `<div class="pb-diff">` + escapeHtml(d || '').split('\n').map(l =>
+                l.startsWith('+') && !l.startsWith('+++') ? `<span class="add">${l}</span>`
+                : l.startsWith('-') && !l.startsWith('---') ? `<span class="del">${l}</span>` : l).join('\n') + `</div>`;
+        }
+
+        function fixResultHtml(r) {
+            const s = r.summary || {};
+            const groups = (r.groups || []).map(g => {
+                const what = (g.ops || []).join(', ') + (g.port ? ` (${g.port} flag)` : '');
+                return g.accepted
+                    ? `✓ ${escapeHtml(what)}: changed lines ${escapeHtml((g.changes || []).map(c => c.line).join(', '))}`
+                      + (g.why ? ` — ${escapeHtml(g.why)}` : '')
+                    : `✗ ${escapeHtml(what)}: not applied, ${escapeHtml(g.reason || 'no reason given')}`
+                      + ((g.needs_other_lines || []).length ? ` (the model says lines ${g.needs_other_lines.join(', ')} would also have to change)` : '');
+            }).join('<br>');
+            if (!r.accepted) {
+                const tried = (r.groups || []).find(g => g.diff);
+                return `<strong>No change was kept.</strong> The design is unchanged.<br>${groups}`
+                    + (tried ? `<div>What the model proposed:</div>${diffHtml(tried.diff)}` : '');
+            }
+            const rnd = s.random_wrong_before !== null && s.random_wrong_before !== undefined
+                ? ` Random inputs: ${s.random_wrong_before} → ${s.random_wrong_after} wrong of ${s.random_total}.` : '';
+            return `<strong>Checked:</strong> examples right ${s.scenario_right_before} → ${s.scenario_right_after} `
+                + `of ${s.scenario_total}, none that passed now fails.${rnd}<br>${groups}${diffHtml(r.diff)}`
+                + `<div class="pb-fixbar"><button class="btn btn-primary btn-sm" onclick="keepFix(${r.feedback_id})">Keep</button>`
+                + `<button class="btn btn-secondary btn-sm" onclick="discardFix(${r.feedback_id}, this)">Discard</button></div>`;
+        }
+
+        async function runFix(target, groups, extra) {
+            if (!currentSimResult || !currentSimResult.paths) return;
+            const { llm, model } = fixModel();
+            setFixOut(target, extra && extra.proposal ? 'Testing the change…'
+                      : `Asking ${escapeHtml((llm || '').toUpperCase())} for a change to these lines, then testing it…`, 'busy');
+            try {
+                const r = await (await fetch('/api/fix/propose', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...currentSimResult.paths, groups, llm, model, ...(extra || {}) })
+                })).json();
+                if (!r.success) throw new Error(r.error || 'The fix could not be made');
+                setFixOut(target, fixResultHtml(r), r.accepted ? 'ok' : 'err');
+            } catch (e) {
+                setFixOut(target, escapeHtml(e.message || String(e)), 'err');
+            }
+        }
+
+        function fixCard(i) {
+            const note = (document.getElementById(`pb-chat-in-${i}`) || {}).value || '';
+            runFix(i, [groupFor(i)], { note });
+        }
+
+        function testProposal(i) {
+            const c = cardChats[i];
+            if (!c || !c.proposal) return;
+            runFix(i, [groupFor(i)], { proposal: c.proposal });
+        }
+
+        function fixAllDesign() {
+            runFix(null, fixGroupHeads().map(({ i }) => groupFor(i)), {});
+        }
+
+        async function keepFix(fbId) {
+            setRepairBusy('Saving the fixed design and simulating it…');
+            try {
+                const r = await (await fetch('/api/fix/keep', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...currentSimResult.paths, feedback_id: fbId, duv_filepath: dutFilePath(),
+                                           bdd_filepath: currentBDD.filepath, run_id: currentRunId,
+                                           session_id: getSessionId(), workflow_mode: currentWorkflowMode,
+                                           dut_info: dutInfoForRerun() })
+                })).json();
+                if (!r.success) throw new Error(r.error || 'The fix could not be saved');
+                adoptRunId(r.run_id);
+                currentDUT.filename = r.design_filename;
+                currentHwFilename = r.design_filename;
+                document.getElementById('hw-filename').textContent = r.design_filename;
+                if (r.design_content) document.getElementById('hw-preview').textContent = r.design_content;
+                Object.keys(cardChats).forEach(k => delete cardChats[k]);
+                repairNotice = { html: `<strong>Fix kept.</strong> The design was saved as ${escapeHtml(r.design_filename)} `
+                    + '(the previous file is kept), and the testbench was run again. The result below is for the fixed design.' };
+                showRepairedRun(r);
+            } catch (e) {
+                repairFailed(e);
+            } finally {
+                setRepairBusy(null);
+            }
+        }
+
+        async function discardFix(fbId, btn) {
+            try {
+                await fetch('/api/fix/discard', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ feedback_id: fbId }) });
+            } catch (e) { /* the design is unchanged either way */ }
+            const box = btn && btn.closest('.pb-fixout, .pb-note');
+            if (box) box.innerHTML = 'Discarded. The design is unchanged.';
+        }
+
+        async function correctCard(i) {
+            const p = ((explainState || {}).problems || [])[i];
+            if (!p || !p.fix) return;
+            await repairScenarios(p.fix.ops);
+        }
+
+        async function sendChat(i) {
+            const p = ((explainState || {}).problems || [])[i];
+            const box = document.getElementById(`pb-chat-in-${i}`);
+            const msg = (box.value || '').trim();
+            if (!p || !msg || !currentSimResult) return;
+            const c = cardChats[i] = cardChats[i] || { thread: null, turns: [], proposal: null };
+            c.turns.push({ role: 'user', text: msg });
+            c.proposal = null;
+            box.value = '';
+            const log = document.getElementById(`pb-chat-log-${i}`);
+            log.innerHTML = renderChatLog(i) + `<div class="pb-msg ai"><span class="who">AI answer</span>…</div>`;
+            const { llm, model } = fixModel();
+            try {
+                const r = await (await fetch('/api/fix/chat', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...currentSimResult.paths, llm, model, message: msg, thread: c.thread,
+                                           card: { title: p.title, detail: p.detail, ops: (p.fix || {}).ops || [],
+                                                   port: (p.fix || {}).port || null } })
+                })).json();
+                if (!r.success) throw new Error(r.error || 'No answer');
+                c.thread = r.thread;
+                c.turns.push({ role: 'ai', text: r.answer || '(empty answer)' });
+                c.proposal = r.proposal || null;
+            } catch (e) {
+                c.turns.push({ role: 'ai', text: `Could not answer: ${e.message || e}` });
+            }
+            log.innerHTML = renderChatLog(i);
         }
 
         function openProblem(i) {

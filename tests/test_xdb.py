@@ -2190,3 +2190,81 @@ def test_the_same_files_stored_without_their_scenarios_do_not_replace_the_run(un
     assert summarize_run(proj, q, url=db)['sim_run_id'] == full['sim_run_id']
     with xdb.session_scope(db) as s:
         assert repair.find_run(s, proj, q)[0].id == full['sim_run_id']
+
+
+# ================================================================ local fixes and chat (D46)
+
+def test_a_card_shows_its_lines_and_a_local_fix_is_checked_kept_and_recorded(run, db):
+    """The sample ALU's SLTU compares signed (line 23). The fix may touch line 23 only."""
+    from src.xdb import fix as XF
+    from src.xdb.ingest import ingest_run
+    from src.xdb.explain import summarize_run
+    from src import xdb
+    from src.xdb import models as M
+    proj, paths = run
+    ingest_run(proj, paths, run_id='web_test_run', url=db, data={'bitwidth': 32})
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    card = next(p for p in s['problems'] if p.get('fix') and 'design' in p['fix']['kinds'])
+    assert card['fix']['ops'] == ['SLTU'] and [ln['no'] for ln in card['fix']['lines']] == [23]
+
+    prompts = []
+
+    def model(system, prompt):
+        prompts.append(prompt)
+        return '{"changes": [{"line": 23, "new": "            4\'b1001: result = (a < b) ? 1 : 0;"}], "why": "unsigned"}'
+    out, err = XF.propose(s['sim_run_id'], [{'ops': ['SLTU']}], model, note='keep the style', url=db)
+    assert err is None and out['accepted'], out
+    assert 'Lines you may change: 23.' in prompts[0] and 'The engineer adds: keep the style' in prompts[0]
+    assert 'SLTU with A =' in prompts[0]                                  # the failing examples
+    assert out['summary']['scenario_right_after'] > out['summary']['scenario_right_before']
+    assert '-            4\'b1001: result = ($signed(a)' in out['diff']
+
+    kept, err = XF.keep(proj, out['feedback_id'], paths['duv'], url=db)
+    assert err is None and kept['design_filename'] == 'alu_32bit_fix1.v'
+    assert (proj / kept['design_path']).read_text(encoding='utf-8').count('(a < b) ? 1 : 0') == 1
+    assert XF.keep(proj, out['feedback_id'], paths['duv'], url=db)[1] == 'this fix is already applied'
+    with xdb.session_scope(db) as ss:
+        fb = ss.get(M.Feedback, out['feedback_id'])
+        assert fb.status == 'applied' and fb.proposed['human_note'] and fb.proposed['groups'][0]['lines'] == [23]
+
+    # a model that answers with a special case for one example: rejected, design unchanged, recorded
+    out, _ = XF.propose(s['sim_run_id'], [{'ops': ['SLTU']}],
+                        lambda sy, p: '{"changes": [{"line": 23, "new": "            4\'b1001: result = '
+                                      '(a == 1 && b == 32\'hFFFFFFFF) ? 1 : ($signed(a) < $signed(b)) ? 1 : 0;"}]}',
+                        url=db)
+    assert not out['accepted'] and out['diff'] == ''
+    with xdb.session_scope(db) as ss:
+        assert ss.get(M.Feedback, out['feedback_id']).status == 'rejected'
+
+
+def test_the_chat_under_a_card_is_grounded_stored_and_can_propose_a_change(run, db):
+    from src.xdb import fix as XF
+    from src.xdb.explain import summarize_run
+    from src import xdb
+    from src.xdb import models as M
+    proj, paths = run
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    card = next(p for p in s['problems'] if p.get('fix') and 'design' in p['fix']['kinds'])
+    seen = []
+
+    def model(system, prompt):
+        seen.append(prompt)
+        return ('Line 23 compares $signed(a) < $signed(b), so SLTU behaves like SLT.\n'
+                '```json\n{"changes": [{"line": 23, "new": "            4\'b1001: result = (a < b) ? 1 : 0;"}], '
+                '"why": "compare unsigned"}\n```')
+    first, err = XF.chat(s['sim_run_id'], {'title': card['title'], 'detail': card['detail'],
+                                           'ops': card['fix']['ops']}, 'Why is SLTU wrong?', model, url=db)
+    assert err is None and first['answer'].startswith('Line 23') and '```' not in first['answer']
+    assert first['proposal']['changes'][0]['line'] == 23
+    assert '  23 | ' in seen[0] and 'SLTU with A =' in seen[0]       # the facts it may use
+    second, _ = XF.chat(s['sim_run_id'], {'title': card['title'], 'ops': ['SLTU']}, 'And how do I fix it?',
+                        model, thread=first['thread'], url=db)
+    assert 'Engineer: Why is SLTU wrong?' in seen[1]                  # the earlier turn is in the prompt
+    with xdb.session_scope(db) as ss:
+        turns = [t.q_t[0]['turn'] for t in ss.scalars(
+            __import__('sqlalchemy').select(M.ExplanationTarget).where(M.ExplanationTarget.mode == 'chat'))
+            if t.q_t and t.q_t[0].get('thread') == first['thread']]
+    assert turns == [1, 2]
+    # the proposal from the chat is tested like any other fix, without a model call
+    out, _ = XF.propose(s['sim_run_id'], [{'ops': ['SLTU']}], None, proposal=first['proposal'], url=db)
+    assert out['accepted']

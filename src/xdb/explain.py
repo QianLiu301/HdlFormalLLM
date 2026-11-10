@@ -1071,6 +1071,11 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
     with xdb.session_scope(url) as s:
         problems, overview = build_problems(s, sim_run_id, sr, reqs, spec)
         repairs = _repair.available(s, sim_run_id, mt)
+        from src.xdb import fix as _fix
+        try:
+            _fix.attach_code(s, sim_run_id, problems)       # D46: lines to fix, per card
+        except Exception as e:                               # never lose the explanations over it
+            print(f'⚠️  locating the code of the problems failed: {e}')
     return {'sim_run_id': sim_run_id, 'session_id': session_id, 'feature_id': feature_id,
             'repairs': repairs,
             'design': design_name, 'module_type': mt,
