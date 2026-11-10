@@ -43,44 +43,6 @@ BITWIDTH = 32
 DEPTH = 32
 STAGES = 5
 
-# What the page pre-fills for Step 0 and Step 2 (static/bdd_generator.html,
-# BDD_TEMPLATES), so a trial asks the models what a user who accepts the
-# defaults would ask.
-DESCRIPTIONS = {
-    'alu': lambda bw: f"""{bw}-bit ALU with 4-bit opcode selecting:
-- ADD  (opcode 0000): A + B
-- SUB  (opcode 0001): A - B
-- AND  (opcode 0010): A & B
-- OR   (opcode 0011): A | B
-- XOR  (opcode 0100): A ^ B
-- SLL  (opcode 0101): A << B, shift amount is the low {bw.bit_length() - 1} bits of B
-- SRL  (opcode 0110): A >> B, zero-filled
-- SRA  (opcode 0111): A >>> B, sign-extended
-- SLT  (opcode 1000): 1 if A < B as signed values, else 0
-- SLTU (opcode 1001): 1 if A < B as unsigned values, else 0
-- Zero flag: high when result is 0, for every operation
-- Overflow flag: signed overflow, meaningful for ADD and SUB
-- Boundary value tests (0, 1, max, min, all-ones)
-- Contrast SRL against SRA on a negative operand
-- Contrast SLT against SLTU on the same operand pair""",
-    'regfile': lambda bw: f"""{DEPTH}x{bw}-bit Register File with:
-- Dual read ports
-- Single write port
-- x0 always returns 0
-- Concurrent read/write test""",
-    'cpu': lambda bw: f"""{STAGES}-stage RISC-V CPU (RV32I subset) with:
-- R-type: ADD, SUB, AND, OR, XOR, SLT
-- I-type: ADDI, ANDI, ORI, XORI, SLTI, LW
-- S-type: SW
-- B-type: BEQ, BNE, BLT, BGE
-- J-type: JAL, JALR
-- Forwarding: EX/MEM and MEM/WB to EX
-- Load-use hazard: stall one cycle after LW
-- Control hazard: flush the pipeline on a taken branch or jump
-- Signed comparison: contrast SLT against unsigned interpretation
-- x0 stays zero on any write""",
-}
-
 VERDICTS = ('pass', 'design_wrong', 'scenario_wrong', 'both_wrong', 'consistent_wrong', 'undecided')
 
 
@@ -308,7 +270,8 @@ class Trial:
                      'started': datetime.now().isoformat(timespec='seconds'), 'stage': 'start',
                      'error': None, 'rounds': []}
         cfg = {'module_type': design, 'bitwidth': BITWIDTH, 'depth': DEPTH, 'pipeline_stages': STAGES}
-        desc = DESCRIPTIONS[design](BITWIDTH)
+        from src import design_templates
+        desc = design_templates.description(design, cfg)     # what the page fills in
         run_ids: List[str] = []
         t_start = time.time()
         self._files = []
@@ -343,7 +306,9 @@ class Trial:
                 sv = self._post('/api/requirements/save', {
                     **common, 'config': cfg, 'description': desc, 'run_id': a.get('run_id'),
                     'accepted_all_defaults': True,
-                    'requirements': [{'text': r['text'], 'source': 'llm'} for r in a.get('requirements') or []],
+                    'source': a.get('source'),
+                    'requirements': [{'text': r['text'], 'source': r.get('source', 'llm')}
+                                     for r in a.get('requirements') or []],
                     'questions': qs})
                 req_path = sv.get('filepath') if sv.get('success') else None
                 rec['step0'] = {'ok': bool(req_path), 'requirements': len(a.get('requirements') or []),

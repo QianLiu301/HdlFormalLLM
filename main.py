@@ -36,6 +36,7 @@ sys.path.insert(0, str(SRC_DIR))
 # 会出现两个 threading.local，call_context 设的标签会静默丢失。
 from src.experiment_logger import call_context, log_artifact  # noqa: E402
 from src import prompt_store  # noqa: E402
+from src import design_templates  # noqa: E402
 from src import requirements_store  # noqa: E402
 from src import run_report  # noqa: E402
 from src import xdb  # noqa: E402  (explainability DB; inert without DATABASE_URL)
@@ -1576,13 +1577,15 @@ def generate_hardware():
     model = data.get('model')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
+    # A repair sends no input, so nothing is parsed again, and keeps the words here
+    user_request = natural_input or data.get('user_request') or ''
     workflow_mode = data.get('workflow_mode', 'implementation')
     bdd_filepath = data.get('bdd_filepath')
 
     # Parse natural language if provided
     if natural_input:
         parsed = parse_hardware_natural_language(natural_input)
-        bitwidth = parsed.get('bitwidth', bitwidth)
+        bitwidth = parsed.get('bitwidth') or bitwidth
         if parsed.get('llm'):
             llm_name = parsed['llm']
         if parsed.get('module_type'):
@@ -1677,6 +1680,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.user_request = user_request
                 generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
@@ -1696,6 +1700,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.user_request = user_request
                 generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
@@ -1716,6 +1721,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.user_request = user_request
                 generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
@@ -1736,6 +1742,7 @@ def generate_hardware():
                     debug=True
                 )
                 generator.bdd_context = bdd_context  # BDD-First: pass spec context
+                generator.user_request = user_request
                 generator.decisions = decisions      # Step 0：与 BDD 共用的确认结果
                 generator.sampling = sampling        # None = 用 provider 默认值
                 generator.prompt_version = prompt_version
@@ -1829,6 +1836,8 @@ def generate_hardware_stream():
     model = data.get('model')
     bitwidth = data.get('bitwidth', 16)
     natural_input = data.get('input', '')
+    # A repair sends no input, so nothing is parsed again, and keeps the words here
+    user_request = natural_input or data.get('user_request') or ''
     workflow_mode = data.get('workflow_mode', 'implementation')
 
     # Load BDD context for specification-first workflow
@@ -1839,7 +1848,7 @@ def generate_hardware_stream():
     # Parse natural language if provided
     if natural_input:
         parsed = parse_hardware_natural_language(natural_input)
-        bitwidth = parsed.get('bitwidth', bitwidth)
+        bitwidth = parsed.get('bitwidth') or bitwidth
         if parsed.get('llm'):
             llm_name = parsed['llm']
         if parsed.get('module_type'):
@@ -1952,6 +1961,7 @@ def generate_hardware_stream():
                 prompt += prompt_store.bdd_context_block(bdd_context)
                 yield make_sse_message("info", message="📋 BDD spec context injected into prompt...")
             # 与非流式路径（各 generator 内部）同一份文本、同一个位置
+            prompt += prompt_store.user_request_block(user_request)
             if decisions:
                 prompt += prompt_store.decisions_block(decisions)
                 yield make_sse_message(
@@ -2194,7 +2204,12 @@ def parse_hardware_natural_language(input_text):
     import re
     input_lower = input_text.lower()
 
-    result = {'bitwidth': 16, 'llm': None, 'module_type': None}
+    result = {'bitwidth': None, 'llm': None, 'module_type': None}
+
+    def _names(word):
+        # Whole words only: the box takes sentences, and "value" is not an ALU,
+        # "metastable" is not Llama. \b would fail next to Chinese characters.
+        return re.search(rf'(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])', input_lower) is not None
 
     # Parse bitwidth
     bitwidth_patterns = [
@@ -2221,12 +2236,12 @@ def parse_hardware_natural_language(input_text):
         'qwen': ['qwen', 'tongyi', 'alibaba'],
         'llama': ['llama', 'meta'],
         'mistral': ['mistral', 'codestral'],
-        'together': ['together'],
+        'together': ['together ai', 'togetherai'],
     }
 
     for provider, keywords in llm_keywords.items():
         for keyword in keywords:
-            if keyword in input_lower:
+            if _names(keyword):
                 result['llm'] = provider
                 break
 
@@ -2240,7 +2255,7 @@ def parse_hardware_natural_language(input_text):
 
     for module, keywords in module_keywords.items():
         for keyword in keywords:
-            if keyword in input_lower:
+            if _names(keyword):
                 result['module_type'] = module
                 break
 
@@ -2300,6 +2315,7 @@ def generate_bdd_stream():
             generator.prompt_version = prompt_version
             generator.prompt_override = prompt_override
             generator.system_override = system_override
+            generator.user_request = user_input
             generator.decisions = decisions  # Step 0：与 DUV 共用的确认结果
             if decisions:
                 yield make_sse_message(
@@ -2444,6 +2460,7 @@ def generate_bdd():
         generator.prompt_version = prompt_version
         generator.prompt_override = prompt_override
         generator.system_override = system_override
+        generator.user_request = user_input
         generator.decisions = decisions  # Step 0：与 DUV 共用的确认结果
 
         # 同上：非流式 BDD 端点也要用同一张表
@@ -2844,6 +2861,11 @@ def _requirements_config_line(data):
     return ', '.join(parts) + '.'
 
 
+# 需求会进入 Step 1 和 Step 2 的 prompt，所以分析时压低随机性。不支持 seed 的模型会忽略它，
+# 只接受 temperature=1 的模型（GPT-5）也不受影响。
+ANALYSIS_SAMPLING = {'temperature': 0.2, 'seed': 42}
+
+
 @app.route('/api/requirements/analyze', methods=['POST'])
 def analyze_requirements():
     """Step 0：把设计描述拆成需求条目，并找出需要用户拍板的歧义点。
@@ -2857,6 +2879,12 @@ def analyze_requirements():
     model = (data.get('model') or '').strip() or None
     module_type = (data.get('module_type') or '').strip() or None
     description = (data.get('description') or '').strip()
+    # 没改过的标准描述不需要模型：需求和问题都是固定的，秒出、每次相同、不花调用额度
+    standard = design_templates.standard_analysis(module_type, data, description)
+    if standard:
+        analysis = requirements_store.add_settled(standard, module_type, data.get('bitwidth', 32))
+        analysis = requirements_store.add_fixed_questions(analysis, module_type)
+        return jsonify({'success': True, 'run_id': None, 'llm': None, 'model': None, **analysis})
     if not llm_name:
         return jsonify({'success': False, 'error': 'No LLM provider selected'}), 400
     if not description:
@@ -2881,10 +2909,11 @@ def analyze_requirements():
     sys_prompt, user_prompt = prompt_store.render_stage(
         'req_analysis', {'config_line': _requirements_config_line(data),
                          'tool_prompt': tool_prompt,
-                         'description': description}, version='v1')
+                         'settled': requirements_store.settled_lines(module_type, data.get('bitwidth', 32)),
+                         'description': description}, version='v2')
     if user_prompt is None:
         return jsonify({'success': False,
-                        'error': 'Prompt template prompts/req_analysis/v1.yaml is missing'}), 500
+                        'error': 'Prompt template prompts/req_analysis/v2.yaml is missing'}), 500
 
     run_id, _ctx = _web_ctx(data, 'web_requirements_analysis', module_type, model_used=True)
     try:
@@ -2893,7 +2922,8 @@ def analyze_requirements():
         with call_context(**_ctx):
             # 推理模型会先花掉一部分预算在思考上，给少了只会拿到空串。
             # 6000 时 gpt-5-mini 三次里有一次全部花在推理上（试验 cpu_v2）
-            text = llm._call_api(user_prompt, max_tokens=REQUIREMENTS_MAX_TOKENS, system_prompt=sys_prompt)
+            text = llm._call_api(user_prompt, max_tokens=REQUIREMENTS_MAX_TOKENS, system_prompt=sys_prompt,
+                                 sampling=ANALYSIS_SAMPLING)
     except Exception as e:
         return jsonify({'success': False, 'error': f'{type(e).__name__}: {e}'}), 502
 
@@ -2913,7 +2943,8 @@ def analyze_requirements():
                       f"no prose, no code fences.")
         try:
             with call_context(**_ctx):
-                text = llm._call_api(fix_prompt, max_tokens=REQUIREMENTS_MAX_TOKENS, system_prompt=sys_prompt)
+                text = llm._call_api(fix_prompt, max_tokens=REQUIREMENTS_MAX_TOKENS, system_prompt=sys_prompt,
+                                     sampling=ANALYSIS_SAMPLING)
             analysis, err = requirements_store.parse_analysis(text)
         except Exception as e:
             err = f'{type(e).__name__}: {e}'
@@ -2924,6 +2955,8 @@ def analyze_requirements():
                         'raw': (text or '')[:2000]}), 502
     analysis['retried'] = retried
     # 工具固定要问的问题（如 ALU 的 overflow 含义），设计和场景必须用同一个答案
+    # 参考模型已经定死的点不算问题：选别的答案只会被判错
+    analysis = requirements_store.add_settled(analysis, module_type, data.get('bitwidth', 32))
     analysis = requirements_store.add_fixed_questions(analysis, module_type)
     return jsonify({'success': True, 'run_id': run_id, 'llm': llm_name, 'model': model,
                     **analysis})
@@ -3029,6 +3062,8 @@ def generate_testbench():
             'run_id': run_id,
             'filename': result['filename'],
             'filepath': result['filepath'],
+            # where Step 4 must look; the page used to rebuild it from the model name
+            'relpath': _rel(result['filepath']),
             'content': result['content'],
             'full_content': result['full_content'],
             'quality_summary': result['quality_summary'],

@@ -263,9 +263,9 @@ def test_counter_default_cases_unchanged_without_bdd_rows():
 # not alter a single byte. On master (85a55ef) the value was db809ca2...b047;
 # on bdx-explainability the testbench also carries the scenario tags
 # ([BDD:...]), so the value is that branch's output before this change was
-# merged (8cddb13), checked identical for all ablation variants. Since
+# merged (0a8430c), checked identical for all ablation variants. Since
 # 2026-11-04 the file's last row (SLTU, no final newline) is no longer dropped,
-# which adds one test (68); 8cddb13 gave aa829d26...f334b with 67.
+# which adds one test (68); 0a8430c gave aa829d26...f334b with 67.
 VARIANT_A_SHA256 = 'd41476e11d919fcea4388e140907adfad1e6e824069f392ca34cbe6405c2a6f6'
 
 

@@ -210,7 +210,7 @@ def _copy_llm_calls(s, session_id: int, run_id: Optional[str]) -> Dict[str, int]
                 model_served=extra.get('model_served') or extra.get('served_model')
                 or extra.get('model_effective'),
                 prompt_name=extra.get('prompt_stage') or extra.get('prompt_name'),
-                prompt_version=extra.get('prompt_version'),
+                prompt_version=extra.get('prompt_version') or extra.get('prompt_template_version'),
                 system_prompt=r['system_prompt'], prompt=r['prompt'], response=r['response'],
                 params=extra or None, latency_ms=r['latency_ms'], success=bool(r['success']),
                 error=r['error'])
@@ -236,12 +236,18 @@ def _link_provenance(s, sess: M.Session, calls: Dict[str, int]):
 
 # ----------------------------------------------------------------- Step 0
 
+_ANALYSIS_TASK = 'web_requirements_analysis'
+
+
 def _requirements(s, sess: M.Session, design: M.Design, record: Optional[Dict],
                   req_sha: Optional[str]) -> Dict[str, M.Requirement]:
     reqs: Dict[str, M.Requirement] = {}
     if not record:
         return reqs
-    prov_ref = record.get('analysis_run_id') or (f'artifact:{req_sha}' if req_sha else None)
+    # Step 0 has its own run id, so the session's copy does not bring its call along
+    run = record.get('analysis_run_id')
+    call = _copy_llm_calls(s, sess.id, run).get(_ANALYSIS_TASK)
+    prov_ref = (f'llm_call:{call}' if call else run) or (f'artifact:{req_sha}' if req_sha else None)
     for r in record.get('requirements') or []:
         q = s.scalar(select(M.Requirement).where(
             M.Requirement.session_id == sess.id, M.Requirement.req_key == r['id'],
@@ -249,7 +255,7 @@ def _requirements(s, sess: M.Session, design: M.Design, record: Optional[Dict],
         if q is None:
             q = M.Requirement(design_id=design.id, session_id=sess.id, req_key=r['id'],
                               text=r.get('text', ''), origin='req_step',
-                              prov_kind='llm' if r.get('source') == 'llm' else 'human',
+                              prov_kind={'llm': 'llm', 'template': 'rule'}.get(r.get('source'), 'human'),
                               prov_ref=prov_ref)
             s.add(q)
             s.flush()

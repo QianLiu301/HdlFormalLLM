@@ -477,6 +477,9 @@ class FeatureGeneratorLLM:
         else:
             prompt = self._create_alu_prompt(req)
 
+        # The user's own words from the Step 2 box; Step 0 below wins where they differ
+        if getattr(self, 'user_request', None) and _prompt_store is not None:
+            prompt += _prompt_store.user_request_block(self.user_request, for_scenarios=True)
         # Step 0：用户确认过的需求与决策。DUV 生成器拿到的是逐字相同的这一段，
         # 期望值和设计按同一个答案来写。流式与非流式端点都经过这里。
         if getattr(self, 'decisions', None) and _prompt_store is not None:

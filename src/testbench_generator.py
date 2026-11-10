@@ -1340,9 +1340,12 @@ class TestbenchGenerator:
 
             # Determine output path
             # Try to get LLM name from path
+            # The folder of the feature names the model that wrote it (output/bdd/<model>/).
+            # A fixed list of names left out every model added later (gemma, glm, ...):
+            # their testbench went to 'default' while the page looked under the model.
             llm_name = 'default'
-            if bdd_path.parent.name in ['groq', 'deepseek', 'openai', 'claude', 'gemini',
-                                        'qwen', 'together', 'mistral', 'grok', 'local', 'uploaded']:
+            if (bdd_path.parent.name in ('local', 'uploaded')
+                    or bdd_path.parent.parent.name == 'bdd'):
                 llm_name = bdd_path.parent.name
 
             output_dir = self.output_base_dir / llm_name

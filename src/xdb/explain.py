@@ -19,6 +19,7 @@ their Given/When steps. Here a "scenario" is one Examples row of an outline,
 i.e. the outline instantiated with that row's values.
 """
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import select
@@ -30,7 +31,7 @@ from src.xdb import models as M
 # Bump whenever the structure changes, so stored explanations are recomputed
 # instead of reused: v1.1 removed Chinese text, v1.2 added the rule check of
 # global explanations and alternative meanings of contradicting flags.
-ALGORITHM = 'bdx_v1.11'  # v1.11: one card per root cause, signed values, proven causes
+ALGORITHM = 'bdx_v1.16'  # v1.16: what the testbench cannot show is never called verified
 
 _OP_SYMBOL = {'ADD': '+', 'SUB': '−', 'AND': '&', 'OR': '|', 'XOR': '^', 'SLL': '<<',
               'SRL': '>>', 'SRA': '>>>', 'SLT': '<ₛ', 'SLTU': '<ᵤ'}
@@ -170,6 +171,10 @@ def _subject(module_type: Optional[str], text: str, outputs: List[str]) -> Optio
     return requirement_subject(text, [o for o in outputs if o in _OUTPUT_WORDS] or None)
 
 
+# A requirement that depends on these is not shown by the probe, which only applies operands.
+_NEEDS_STATE = re.compile(r'\b(reset|rst|clock|edge|enable|load|initial)', re.I)
+
+
 def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
     """Status of one requirement from the evidence that exists for its subject port.
 
@@ -179,7 +184,13 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
     fail               some check / probe observation of the subject port is not a pass
     stated_only        the scenarios state the port, nothing simulated it
     not_tested         linked scenarios, but no check ran
+    checked_unlinked   no scenario claims it, but it is a flag's definition and the probe
+                       observed that flag in every example
     not_covered        no scenario claims the requirement
+
+    cannot_test (library) overrules every status but not_covered: passing rows say
+    nothing about a requirement the testbench cannot show, and a linked scenario is
+    only the model's claim (D43).
     """
     outputs = [p.name for p in s.scalars(select(M.Port).where(M.Port.design_id == q.design_id,
                                                               M.Port.direction == 'output'))]
@@ -230,7 +241,11 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
         if not counts:
             untested.append({'scenario_key': sc.scenario_key, 'title': sc.title})
     compared = bool(subject is None or subject in main_ports_checked)
-    if not scen:
+    seen = ([o for (_, port), o in probe.items() if port == subject]
+            if not scen and subject in FLAG_PORTS and not _NEEDS_STATE.search(q.text or '') else [])
+    if seen:
+        status, evidence = 'checked_unlinked', 'flag probe'
+    elif not scen:
         status, evidence = 'not_covered', None
     elif failing:
         status, evidence = 'fail', ('testbench' if compared else 'flag probe')
@@ -244,9 +259,13 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
         status, evidence = 'stated_only', None
     else:
         status, evidence = 'not_tested', None
+    limit = L.cannot_test(design.module_type if design else None, q.text)
+    if limit and status != 'not_covered':
+        status, evidence = 'not_tested', None
     return {'subject': subject, 'compared_by_testbench': compared, 'status': status,
-            'untested_scenarios': untested, 'unchecked': unchecked,
-            'evidence': evidence, 'scenarios': scen, 'failing': failing}
+            'cannot_test': limit, 'untested_scenarios': untested, 'unchecked': unchecked,
+            'evidence': evidence, 'scenarios': scen, 'failing': failing,
+            'probe_rows': len(seen), 'probe_right': sum(o['verdict'] == 'pass' for o in seen)}
 
 
 def _call_summary(s, prov_ref: Optional[str]) -> Optional[Dict]:
@@ -434,9 +453,15 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
                 unverified.append({'port': st['port'], 'value': st['value'], 'text': st['text'],
                                    'rule_value': expect, 'consistent': consistent,
                                    'matches_alternative': alts})
+        for p in FLAG_PORTS:       # the flags the scenario leaves out: the probe saw them too
+            o = probe.get((ci.tag, p))
+            if o and p not in compared and p not in {x['port'] for x in probed}:
+                probed.append({'port': p, 'stated': o['stated'], 'observed': o['observed'], 'raw': o['raw'],
+                               'rule_value': o['rule_value'], 'verdict': o['verdict']})
+        probed.sort(key=lambda x: FLAG_PORTS.index(x['port']))
 
         # the cause of a wrong result, when a known mix-up reproduces every example
-        _alu_op = L.alu_swap_partner(ci.operation) is not None and not (L.library_for(mt) or {}).get('reference') \
+        _alu_op = L.alu_has_cause(ci.operation) and not (L.library_for(mt) or {}).get('reference') \
             and not (L.library_for(mt) or {}).get('stateful')
         cause = None
         if _alu_op and cr and cr.verdict in ('design_wrong', 'both_wrong', 'consistent_wrong'):
@@ -476,7 +501,7 @@ def explain_check(tag: str, sim_run_id: Optional[int] = None, session_id: Option
                 oc, ocr, oer = cands[0]
                 contrast = {'row_no': oer.row_no, 'tag': oc.tag, 'status': ocr.status,
                             'same_with_fault': (cause is not None and L.alu_mixup_value(
-                                ci.operation, int(oc.stimulus['a']), int(oc.stimulus['b']), width)
+                                ci.operation, int(oc.stimulus['a']), int(oc.stimulus['b']), width, cause)
                                 == _int(oc.expected_ref)),
                             'verdict': ocr.verdict, 'stimulus': oc.stimulus,
                             'expected_bdd': _int(oc.expected_bdd), 'observed': _int(ocr.observed_value),
@@ -539,6 +564,7 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
         target_w = width if port == 'result' else 1
         want = L.to_int(value, target_w)
         matches, missed, total_rows = [], [], 0
+        tally: Dict[str, Dict] = {}
         for sc in s.scalars(select(M.Scenario).where(M.Scenario.feature_id == feature_id,
                                                      M.Scenario.is_current)
                             .order_by(M.Scenario.scenario_key)):
@@ -555,6 +581,7 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
                           if port != 'result' and width else None)
                 stated = L.to_int(q[0]['value'], target_w) if q and q[0]['value_int'] is not None else None
                 if stated != want:
+                    _tally_meanings(tally, mt, port, op, a, b, width, ov_mode, stated, rule_v)
                     if q and stated is not None and rule_v == want:
                         alts_m = [x['name'] for x in L.flag_alternatives(mt, port, op, a, b, width, ov_mode)
                                   if x['value'] == stated]
@@ -564,6 +591,7 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
                     continue
                 alts = [x for x in L.flag_alternatives(mt, port, op, a, b, width, ov_mode)
                         if x['value'] == want]
+                _tally_meanings(tally, mt, port, op, a, b, width, ov_mode, stated, rule_v)
                 matches.append({'scenario_key': sc.scenario_key, 'row_no': er.row_no, 'operation': op,
                                 'P': [x['text'] for x in steps if x['role'] == 'P' and not x['background']],
                                 'example_row_id': er.id, 'rule_value': rule_v,
@@ -595,6 +623,8 @@ def explain_global(feature_id: int, port: str, value, url=None) -> Dict:
             if contra and all(name in m['alternatives'] for m in contra):
                 alt = L.alternative_by_name(name)
                 alternative = {'name': name, 'text': alt['text'], 'explains': len(contra),
+                               'follows_rule': tally.get(name, {}).get('rule', 0),
+                               'follows_other': tally.get(name, {}).get('other', 0),
                                'explains_missed': sum(name in m['alternatives'] for m in missed),
                                'missed_total': len(missed)}
         rule_check = ({'judged': len(judged), 'consistent': len(judged) - len(contra),
@@ -663,7 +693,7 @@ _REQ_STATUS = {'verified': 'verified by simulation',
                'verified_by_probe': 'verified by the flag probe (the testbench does not compare it)',
                'fail': 'failing', 'stated_only': 'stated in the scenarios, not simulated',
                'not_tested': 'not tested', 'not_covered': 'not covered by any scenario',
-               'pass': 'pass'}
+               'checked_unlinked': 'no scenario linked; the flag probe checked it', 'pass': 'pass'}
 
 
 def _num(v, width=None) -> str:
@@ -699,11 +729,8 @@ def render(st: Dict) -> str:
             for x in (st.get('cpu') or {}).get('notes') or []:
                 lines.append(f"   note: {x['text']}")
         elif stim:
-            op_ = st.get('operation')
-            shown = lambda k, v: (f'{_hex(v, w)} ({L.signed_value(op_, k, v, w)} as signed)'
-                                  if L.signed_value(op_, k, v, w) is not None else _num(v, w))
             lines.append("② Applied: " + ', '.join(
-                f"{k} = {shown(k, v) if k != 'opcode' else v}" for k, v in stim.items()))
+                f"{k} = {_value(st.get('operation'), k, v, w) if k != 'opcode' else v}" for k, v in stim.items()))
         r = st.get('rule')
         h = st.get('history')
         if r:
@@ -711,7 +738,7 @@ def render(st: Dict) -> str:
             sa, sb = (L.signed_value(r['op'], 'a', stim.get('a'), w),
                       L.signed_value(r['op'], 'b', stim.get('b'), w))
             calc = (f"{_num(stim.get('a'), w) if sa is None else sa} {sym} "
-                    f"{_num(stim.get('b'), w) if sb is None else sb} = {_num(r.get('value'), w)}"
+                    f"{_num(stim.get('b'), w) if sb is None else sb} = {_value(r['op'], 'result', r.get('value'), w)}"
                     if stim.get('a') is not None else _num(r.get('value'), w))
             lines.append(f"③ Rule: {r['text']} → {calc}   ({r['source']})")
         if h:
@@ -727,13 +754,15 @@ def render(st: Dict) -> str:
         o = vals.get('observed')
         agree = (('agrees with the rule' if r.get('value') == o else 'does not agree with the rule')
                  if r and o is not None else '')
-        lines.append(f"④ Design output: {tg.get('port')} = {_num(o, w)}  {('— ' + agree) if agree else ''}")
+        lines.append(f"④ Design output: {tg.get('port')} = {_value(st.get('operation'), 'result', o, w)}  "
+                     f"{('— ' + agree) if agree else ''}")
         c = st.get('contrast')
         if c:
             cs = c.get('stimulus') or {}
             c_status = 'passed' if c['status'] == 'pass' else 'failed'
             what = (_example(st.get('module_type'), st.get('operation'), cs, w) if _stateful(st.get('module_type'))
-                    else f"a = {_num(cs.get('a'), w)}, b = {_num(cs.get('b'), w)}")
+                    else f"a = {_operand(st.get('operation'), 'a', cs, w)}, "
+                         f"b = {_operand(st.get('operation'), 'b', cs, w)}")
             where = c['tag'][4:] if (c.get('tag') or '').startswith('BDD:') else f"row {c['row_no']}"
             lines.append(f"⑤ Contrast: {where} ({what}) {c_status} — {_VERDICT.get(c.get('verdict'), '')}")
         for d in st.get('stimulus_differs') or []:
@@ -751,7 +780,7 @@ def render(st: Dict) -> str:
                 ok = x['verdict'] == 'pass'
                 obs = x['observed'] if x['observed'] is not None else x['raw']
                 parts.append(f"{x['port']} = {obs} {'✓' if ok else '✗ ' + _SHORT.get(x['verdict'], x['verdict'])}"
-                             f" (scenario {x['stated'] if x['stated'] is not None else '—'}, rule {x['rule_value']})")
+                             f" (scenario {x['stated'] if x['stated'] is not None else 'not stated'}, rule {x['rule_value']})")
             lines.append("🔬 Flags, observed by a separate probe simulation (not part of the pass rate): "
                          + '; '.join(parts))
         if st.get('unverified'):
@@ -806,9 +835,12 @@ def render(st: Dict) -> str:
                     elif k:
                         also = f', and so do {k} of the {n} rows it omits'
                 lines.append(f"The {alt['explains']} contradicting rows all match a different definition: "
-                             f"{alt['name']} ({alt['text']}){also}. The specification seems to use "
-                             f"\"{tg['port']}\" in that sense, unlike the rule"
-                             f"{' (' + st['rule']['basis'] + ')' if (st.get('rule') or {}).get('basis') else ''}.")
+                             f"{alt['name']} ({alt['text']}){also}. "
+                             + (f"Where the two differ, {_examples(alt['follows_other'])} it and "
+                                f"{_examples(alt['follows_rule'])} the rule, so the specification mixes both."
+                                if alt.get('follows_rule') else
+                                f"The specification seems to use \"{tg['port']}\" in that sense, unlike the rule"
+                                f"{' (' + st['rule']['basis'] + ')' if (st.get('rule') or {}).get('basis') else ''}."))
         pb = st.get('probe')
         if pb:
             lines += ['', f"🔬 Design output, observed by the flag probe: {tg['port']} agrees with the rule in "
@@ -849,6 +881,22 @@ def render(st: Dict) -> str:
 FLAG_PORTS = ('zero', 'negative', 'overflow')
 
 
+def _examples(n: int, where: str = '') -> str:
+    """'1 example follows', '3 examples, in ADD and SUB, follow'."""
+    return f"{n} example{where} follows" if n == 1 else f"{n} examples{where} follow"
+
+
+def _tally_meanings(tally: Dict, mt, port, op, a, b, width, mode, stated, rule_v):
+    """Where the rule and another meaning of a flag give different values, which
+    one did the example follow? Only such examples can tell the two apart."""
+    if rule_v is None or stated is None:
+        return
+    for x in L.flag_alternatives(mt, port, op, a, b, width, mode):
+        if x['value'] != rule_v and stated in (rule_v, x['value']):
+            t = tally.setdefault(x['name'], {'rule': 0, 'other': 0})
+            t['rule' if stated == rule_v else 'other'] += 1
+
+
 def check_specification(feature_id: int, sim_run_id: Optional[int] = None, url=None) -> List[Dict]:
     """For every flag the scenarios state, compare each row with the rule.
 
@@ -881,13 +929,15 @@ def check_specification(feature_id: int, sim_run_id: Optional[int] = None, url=N
                     if x['role'] != 'Q' or x['port'] not in FLAG_PORTS:
                         continue
                     p = per.setdefault(x['port'], {'port': x['port'], 'rows_stated': 0, 'judged': 0,
-                                                   'contradicting': 0, 'examples': [], '_alts': []})
+                                                   'contradicting': 0, 'examples': [], '_alts': [],
+                                                   '_tally': {}})
                     p['rows_stated'] += 1
                     stated = L.to_int(x['value'], 1)
                     rule_v = L.flag_value(mt, x['port'], op, a, b, width, ov_mode) if width else None
                     if rule_v is None or stated is None:
                         continue
                     p['judged'] += 1
+                    _tally_meanings(p['_tally'], mt, x['port'], op, a, b, width, ov_mode, stated, rule_v)
                     if rule_v != stated:
                         p['contradicting'] += 1
                         alts = [al['name'] for al in L.flag_alternatives(mt, x['port'], op, a, b, width,
@@ -904,14 +954,15 @@ def check_specification(feature_id: int, sim_run_id: Optional[int] = None, url=N
         probe = _probe_results(s, _probe_run_id(s, sim_run_id))
         out = []
         for port, p in per.items():
-            alts = p.pop('_alts')
+            alts, meanings = p.pop('_alts'), p.pop('_tally')
             pr = [o for (tag, p_), o in probe.items() if p_ == port]
             p['probe'] = ({'rows': len(pr), 'design_agrees': sum(o['observed'] == o['rule_value'] for o in pr)}
                           if pr else None)
             alternative = None
             for name in sorted({n for x in alts for n in x}):
                 if alts and all(name in x for x in alts):
-                    alternative = {**L.alternative_by_name(name), 'explains': len(alts)}
+                    alternative = {**L.alternative_by_name(name), 'explains': len(alts),
+                                   'follows_rule': meanings.get(name, {}).get('rule', 0)}
             verified = s.scalar(select(M.CheckItem.id).join(M.Testbench)
                                 .where(M.Testbench.feature_id == feature_id, M.CheckItem.port == port,
                                        M.Testbench.generator != 'probe')
@@ -962,7 +1013,9 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
     with xdb.session_scope(url) as s:
         hit = s.execute(select(M.SimRun, M.Testbench).join(M.Testbench, M.Testbench.id == M.SimRun.testbench_id)
                         .where(M.Testbench.artifact == tb_sha, M.SimRun.log_artifact == log_sha)
-                        .order_by(M.SimRun.id.desc()).limit(1)).first()
+                        # the same files stored again without their scenarios and design
+                        # (a call with only these two paths) must not replace the full run
+                        .order_by(M.Testbench.feature_id.is_(None), M.SimRun.id.desc()).limit(1)).first()
         if hit is None:
             return None
         run, tbrow = hit
@@ -981,10 +1034,11 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
                                                        M.Requirement.is_current).order_by(M.Requirement.id)):
             rs = _requirement_status(s, q, run.id)
             reqs.append({'req_key': q.req_key, 'requirement_id': q.id, 'status': rs['status'],
+                         'cannot_test': rs.get('cannot_test'),
                          'text': q.text, 'untested_scenarios': rs.get('untested_scenarios') or [],
                          'subject': rs['subject'], 'compared_by_testbench': rs['compared_by_testbench'],
-                         'unchecked': rs.get('unchecked', 0),
-                         'evidence': rs['evidence'],
+                         'unchecked': rs.get('unchecked', 0), 'probe_rows': rs['probe_rows'],
+                         'probe_right': rs['probe_right'], 'evidence': rs['evidence'],
                          'failing_verdicts': sorted({f['verdict'] for f in rs['failing'] if f['verdict']})})
         prid = _probe_run_id(s, run.id)
         probe_info = None
@@ -1079,11 +1133,25 @@ def _with_width(text: str, w: Optional[int]) -> str:
     return text.replace('2^W', f'2^{w}').replace('log2(W)', str((w - 1).bit_length()))
 
 
-def _operand(op, name, stim, w) -> str:
-    """An operand as the operation reads it: 0xFFFF is -1 for SLT, 65535 for SLTU."""
-    v = (stim or {}).get(name)
+def _value(op, name, v, w) -> str:
+    """A value as the operation reads it: 0xFFFF is -1 for SLT, 65535 for SLTU."""
     signed = L.signed_value(op, name, v, w)
     return _pv(v, w) if signed is None else f'{_hex(v, w)} ({signed} as signed)'
+
+
+def _operand(op, name, stim, w) -> str:
+    return _value(op, name, (stim or {}).get(name), w)
+
+
+def _overflow_basis(s, session_id) -> str:
+    """Which meaning of overflow a card relies on, and who decided it."""
+    mode, basis = _overflow_mode(s, session_id)
+    name = L.OVERFLOW_DEFINITIONS.get(mode, {}).get('name')
+    if not name:
+        return ''
+    if basis.startswith('decided'):
+        return f'Overflow is judged as {name}, as decided in Step 0.'
+    return f"Overflow is judged as {name}, the design template's definition, because Step 0 did not decide it."
 
 
 def _inputs(op, stim, w) -> str:
@@ -1099,6 +1167,40 @@ def _alu_rows(main, op) -> List[Tuple[int, int, int]]:
                 and cr.observed_value is not None and st.get('a') is not None and st.get('b') is not None):
             rows.append((int(st['a']), int(st['b']), int(cr.observed_value)))
     return rows
+
+
+def _lost_bit_card(main, by_op, same_mistake, total_op, ops: List[str], cause: Dict, width: int) -> Dict:
+    """One card for every shift that loses the same bit of the shift amount, and a
+    word on the shifts whose examples pass only because they cannot show it."""
+    names = ' and '.join(ops)
+    ci, cr = by_op[('design_wrong', ops[0])][0]
+    also = sum(len(same_mistake.get(o) or []) for o in ops)
+    n = sum(len(by_op[('design_wrong', o)]) for o in ops) + also
+    fit = sum(len(_alu_rows(main, o)) for o in ops)
+    res = lambda x, op_=ops[0]: _value(op_, 'result', x, width)
+    detail = (f"{n} of {sum(total_op.get(o, 0) for o in ops)} {names} examples give a wrong result."
+              + (f' {also} of them pass the test, because the scenario makes the same mistake.' if also else '')
+              + f" E.g. {_inputs(ops[0], ci.stimulus, width)}: the design gives {res(_int(cr.observed_value))}, "
+                f"correct is {res(_int(ci.expected_ref))}. All {fit} {names} examples fit this, so {cause['fix']}.")
+    for other in [o for o in L.SHIFTS if o not in ops]:
+        rows = _alu_rows(main, other)
+        if L.alu_shift_hidden(other, rows, cause['bit'], width):
+            a, b, right, bad = L.alu_shift_witness(other, cause['bit'], width)
+            detail += (f" The {len(rows)} {other} examples pass, but none of them can show this fault, so {other} "
+                       f"may have it too: {_inputs(other, {'a': a, 'b': b}, width)} would show it, correct is "
+                       f"{res(right, other)}, with this fault {res(bad, other)}.")
+    return {'severity': 'error', 'who': 'design', 'title': f"The design {cause['says']}", 'detail': detail,
+            'explain': {'kind': 'check', 'tag': ci.tag}, 'ops': ops}
+
+
+def _with_repeats(detail: str, shown_alone: int, repeats: int) -> str:
+    """A scenario card, when in some of its examples the design makes the same
+    mistake: the test passes there, so the card must not say the design is right."""
+    if not repeats:
+        return detail
+    if not shown_alone:
+        return detail.replace(' The design is right.', ' The design gives the same wrong value, so the test passes.')
+    return detail + f' In {repeats} of them the design gives the same wrong value, so the test passes.'
 
 
 def _swapped_scenarios(s, main, width) -> Tuple[List[Dict], set]:
@@ -1128,14 +1230,21 @@ def _swapped_scenarios(s, main, width) -> Tuple[List[Dict], set]:
         cards.append({'severity': 'warning', 'who': 'scenario', 'title': f'A scenario swaps {a} and {b}',
                       'detail': f"“{sc.title}”: all {len(rows)} examples give the other operation's result. "
                                 f"E.g. {_inputs(first.operation, first.stimulus, width)}: the scenario expects "
-                                f"{_pv(_int(first.expected_bdd), width)}, correct is "
-                                f"{_pv(_int(first.expected_ref), width)}.",
+                                f"{_value(first.operation, 'result', _int(first.expected_bdd), width)}, correct is "
+                                f"{_value(first.operation, 'result', _int(first.expected_ref), width)}.",
                       'explain': {'kind': 'check', 'tag': first.tag}})
         covered |= {ci.tag for ci, _ in rows}
     return cards, covered
 
 
 _FLAG_WORD = {'zero': 'zero flag', 'negative': 'negative flag', 'overflow': 'overflow flag'}
+
+
+def _flag_list(ports: List[str]) -> str:
+    """'zero flag', 'zero and negative flags', 'zero, negative and overflow flags'."""
+    if len(ports) == 1:
+        return f'{ports[0]} flag'
+    return f"{', '.join(ports[:-1])} and {ports[-1]} flags"
 
 
 def _stateful(module_type: Optional[str]) -> bool:
@@ -1457,31 +1566,32 @@ def _plain_local_combinational(st: Dict) -> Dict:
     O, B, R = vals.get('observed'), vals.get('expected_bdd'), vals.get('expected_ref')
     title = _inputs(st.get('operation'), st.get('stimulus'), w)
     port = st['target'].get('port') or 'result'
+    val = lambda x: _value(st.get('operation'), 'result', x, w)
     lines = []
     if v == 'pass':
-        lines.append(f'Correct: the design gives {port} = {_pv(O, w)}, as the scenario expects.')
+        lines.append(f'Correct: the design gives {port} = {val(O)}, as the scenario expects.')
     elif v == 'scenario_wrong':
-        lines.append(f'The scenario is wrong, not the design. The scenario expects {_pv(B, w)}, '
-                     f'but the correct {port} is {_pv(R, w)} — and that is what the design gives.')
+        lines.append(f'The scenario is wrong, not the design. The scenario expects {val(B)}, '
+                     f'but the correct {port} is {val(R)} — and that is what the design gives.')
     elif v == 'design_wrong':
-        lines.append(f'The design is wrong. It gives {port} = {_pv(O, w)}; the correct value is '
-                     f'{_pv(R, w)}, as the scenario expects.')
+        lines.append(f'The design is wrong. It gives {port} = {val(O)}; the correct value is '
+                     f'{val(R)}, as the scenario expects.')
     elif v == 'both_wrong':
-        lines.append(f'Both are wrong: the scenario expects {_pv(B, w)}, the design gives {_pv(O, w)}, '
-                     f'the correct value is {_pv(R, w)}.')
+        lines.append(f'Both are wrong: the scenario expects {val(B)}, the design gives {val(O)}, '
+                     f'the correct value is {val(R)}.')
     elif v == 'consistent_wrong':
         lines.append(f'The test passed, but scenario and design are wrong in the same way: both say '
-                     f'{_pv(O, w)}, the correct value is {_pv(R, w)}.')
+                     f'{val(O)}, the correct value is {val(R)}.')
     elif v == 'undecided':
-        lines.append(f'There is no reference rule for this design type. Expected {_pv(B, w)}, '
-                     f'the design gave {_pv(O, w)}.')
+        lines.append(f'There is no reference rule for this design type. Expected {val(B)}, '
+                     f'the design gave {val(O)}.')
     else:
         lines.append('This check was not executed.')
     r = st.get('rule')
     stim = st.get('stimulus') or {}
     if r and v not in ('pass', None):
         work = L.alu_working(st.get('operation'), stim.get('a'), stim.get('b'), w)
-        lines.append(f"Why {_pv(R, w)}: {_with_width(r['text'], w)}" + (f"; here {work}." if work else '.'))
+        lines.append(f"Why {val(R)}: {_with_width(r['text'], w)}" + (f"; here {work}." if work else '.'))
     cause = st.get('cause')
     if cause and v not in ('pass', None):
         lines.append(f"Cause: the design {cause['says']}. That reproduces all {cause['rows']} "
@@ -1493,9 +1603,6 @@ def _plain_local_combinational(st: Dict) -> Dict:
                      + (': the fault does not show on these values.' if c.get('same_with_fault') else '.'))
     flags = st.get('probed') or []
     bad = [x for x in flags if x['verdict'] != 'pass']
-    if flags and not bad:
-        lines.append('Flags (' + ', '.join(_FLAG_WORD.get(x['port'], x['port']) for x in flags)
-                     + ') are correct.')
     for x in bad:
         word = _FLAG_WORD.get(x['port'], x['port'])
         obs = x['observed'] if x['observed'] is not None else x['raw']
@@ -1507,6 +1614,12 @@ def _plain_local_combinational(st: Dict) -> Dict:
                          + (' — a consequence of the wrong result.' if v in ('design_wrong', 'both_wrong') else '.'))
         else:
             lines.append(f"The {word}: scenario {x['stated']}, design {obs}, correct {x['rule_value']}.")
+    good = [x['port'] for x in flags if x['verdict'] == 'pass']
+    if good:
+        lines.append(f"The {_flag_list(good)} {'is' if len(good) == 1 else 'are'} correct.")
+    unstated = [x['port'] for x in flags if x['stated'] is None]
+    if unstated:
+        lines.append(f'The scenario does not state the {_flag_list(unstated)}.')
     unv = st.get('unverified') or []
     if unv:
         lines.append('Not checked: ' + ', '.join(x['text'] for x in unv) + '.')
@@ -1534,7 +1647,11 @@ def plain_global(st: Dict) -> Dict:
     if rc.get('missed_count'):
         lines.append(f"{rc['missed_count']} more examples should state it but do not.")
     alt = rc.get('alternative')
-    if alt:
+    if alt and alt.get('follows_rule'):
+        lines.append(f"The scenarios mix two meanings of “{tg['port']}”: where they differ, "
+                     f"{_examples(alt['follows_other'])} {alt['name']} ({alt['text']}) and "
+                     f"{_examples(alt['follows_rule'])} the rule.")
+    elif alt:
         lines.append(f"The scenarios seem to use “{tg['port']}” to mean {alt['name']} ({alt['text']}).")
     pb = st.get('probe')
     if pb:
@@ -1561,12 +1678,18 @@ def plain_requirement(st: Dict) -> Dict:
                'consistent_wrong': 'both (in the same way)'}
         lines.append(f"Failing in {len(st.get('failing', []))} examples; wrong: "
                      + ', '.join(who.get(k, k) for k in kinds) + '.')
+    elif st.get('cannot_test'):
+        lines.append(f"Not tested: {st['cannot_test']}, so no scenario can show this.")
     elif s_ == 'not_tested':
         sc = st.get('untested_scenarios') or []
         lines.append('Not tested: ' + (f"the scenario “{sc[0]['title']}” could not be turned into tests."
                                       if sc else 'no test ran for it.'))
     elif s_ == 'stated_only':
         lines.append(f'Stated in the scenarios, but {subj} was not simulated.')
+    elif s_ == 'checked_unlinked':
+        n, ok = st.get('probe_rows', 0), st.get('probe_right', 0)
+        lines.append(f"No scenario is linked to it, but the extra simulation checked the {_FLAG_WORD.get(subj, subj)} "
+                     f"in all {n} examples: {ok} right, {n - ok} wrong.")
     elif s_ == 'not_covered':
         lines.append('Not covered: no scenario tests this requirement.')
     lines.append('Which scenario covers which requirement was suggested by the model that wrote the scenarios.')
@@ -1749,14 +1872,12 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     width = next((ci.width for ci, _ in main if ci.width), None)
     by_op: Dict[Tuple[str, str], List] = {}
     total_op: Dict[str, int] = {}
-    main_bad_tags = set()
     for ci, cr in main:
         if not ci.tag.startswith('BDD:') or cr.status not in ('pass', 'fail'):
             continue
         total_op[ci.operation or '?'] = total_op.get(ci.operation or '?', 0) + 1
         if cr.verdict in _WHO:
             by_op.setdefault((cr.verdict, ci.operation or '?'), []).append((ci, cr))
-            main_bad_tags.add(ci.tag)
     # One card per thing to fix. Examples where the design repeats the scenario's
     # mistake are the same fault as those where it fails the test: they only pass
     # because the scenario is wrong too (D37).
@@ -1771,18 +1892,36 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     hist = _rf_history(s, run.testbench_id, width) if _stateful(mt) else {}
 
     swap_cards: List[Dict] = []
+    swapped: set = set()
     if not _is_cpu(mt) and not _stateful(mt) and width:
         swap_cards, swapped = _swapped_scenarios(s, main, width)
         for key in [k for k in by_op if k[0] == 'scenario_wrong']:
             by_op[key] = [x for x in by_op[key] if x[0].tag not in swapped]
             if not by_op[key]:
                 del by_op[key]
+    # In those same examples the scenario is wrong too: fixing the design alone
+    # would turn them into failures, so the scenario gets its card now.
+    repeated: Dict[str, List] = {}
+    for op, rows in same_mistake.items():
+        repeated[op] = [x for x in rows if x[0].tag not in swapped]
+        if repeated[op]:
+            by_op.setdefault(('scenario_wrong', op), [])
+
+    lost_bit: Dict[int, List[str]] = {}
+    if not _is_cpu(mt) and not _stateful(mt) and width:
+        for op in sorted(o for v_, o in by_op if v_ == 'design_wrong'):
+            c_ = L.alu_mixup(op, _alu_rows(main, op), width)
+            if c_ and 'bit' in c_:
+                lost_bit.setdefault(c_['bit'], []).append(op)
 
     order = ['design_wrong', 'both_wrong', 'consistent_wrong', 'scenario_wrong']
+    result_card: Dict[str, Dict] = {}       # operation -> the card of its wrong scenario results
     for (v, op), items in sorted(by_op.items(), key=lambda kv: (order.index(kv[0][0]), kv[0][1])):
-        ci, cr = items[0]
+        repeats = repeated.get(op, []) if v == 'scenario_wrong' else []
+        rows = items + repeats
+        ci, cr = rows[0]
         also = len(same_mistake.get(op) or []) if v == 'design_wrong' else 0
-        n, m = len(items) + also, total_op.get(op, len(items))
+        n, m = len(rows) + also, total_op.get(op, len(rows))
         passing = (f' {also} of them pass the test, because the scenario makes the same mistake.' if also else '')
         B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
         if _is_cpu(mt):
@@ -1791,37 +1930,46 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                 ci, cr = lost
                 B, R, O = _int(ci.expected_bdd), _int(ci.expected_ref), _int(cr.observed_value)
             title, detail = _cpu_problem(v, op, n, m, ci, B, R, O, astray=bool(lost))
-            detail += passing
+            detail = _with_repeats(detail + passing, len(items), len(repeats))
             probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                           'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
             continue
         if _stateful(mt):
             title, detail = _stateful_problem(s, run.testbench_id, v, op, n, m, ci, B, R, O, width,
                                               hist.get(ci.tag))
-            detail += passing
+            detail = _with_repeats(detail + passing, len(items), len(repeats))
             probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                           'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
             continue
         ex = _inputs(op, ci.stimulus, width)
+        res = lambda x, op_=op: _value(op_, 'result', x, width)
         cause = L.alu_mixup(op, _alu_rows(main, op), width) if v != 'scenario_wrong' else None
+        if v == 'design_wrong' and cause and 'bit' in cause:
+            if op == min(lost_bit[cause['bit']]):      # one card for all the shifts that lose this bit
+                probs.append(_lost_bit_card(main, by_op, same_mistake, total_op, lost_bit[cause['bit']],
+                                            cause, width))
+            continue
         if v == 'design_wrong':
             title = f"The design {cause['says']}" if cause else f'The design computes {op} wrong'
             detail = (f'{n} of {m} {op} examples give a wrong result.{passing} E.g. {ex}: the design gives '
-                      f'{_pv(O, width)}, correct is {_pv(R, width)}.')
+                      f'{res(O)}, correct is {res(R)}.')
         elif v == 'both_wrong':
             title = f'{op}: both the design and the scenario are wrong'
-            detail = f'{n} of {m} {op} examples. E.g. {ex}: scenario {_pv(B, width)}, design {_pv(O, width)}, correct {_pv(R, width)}.'
+            detail = f'{n} of {m} {op} examples. E.g. {ex}: scenario {res(B)}, design {res(O)}, correct {res(R)}.'
         elif v == 'consistent_wrong':
             title = f'{op}: the design repeats a mistake of the scenario'
             detail = (f'{n} of {m} {op} examples pass the test, but both give the wrong value. '
-                      f'E.g. {ex}: both say {_pv(O, width)}, correct is {_pv(R, width)}.')
+                      f'E.g. {ex}: both say {res(O)}, correct is {res(R)}.')
         else:
             title = f'A scenario expects a wrong {op} result' if n == 1 else f'{n} scenario examples expect a wrong {op} result'
-            detail = f'E.g. {ex}: the scenario expects {_pv(B, width)}, correct is {_pv(R, width)}. The design is right.'
+            detail = f'E.g. {ex}: the scenario expects {res(B)}, correct is {res(R)}. The design is right.'
         if cause:
             detail += f" All {cause['rows']} {op} examples fit this, so {cause['fix']}."
+        detail = _with_repeats(detail, len(items), len(repeats))
         probs.append({'severity': 'error' if _WHO[v] == 'design' else 'warning', 'who': _WHO[v],
                       'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
+        if v == 'scenario_wrong':
+            result_card[op] = probs[-1]
 
     probs += swap_cards
     probs += _blocked_problems(s, main)
@@ -1839,17 +1987,54 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                                        'stored with SW), so the fault is more likely in that path or in the '
                                        'pipeline than in each instruction.', 'explain': None})
 
-    # flags seen by the probe (rows whose result is already wrong are covered above)
+    # Flags seen by the probe. A wrong flag goes to whoever must fix it: the design's card
+    # when its result is wrong too, the scenario's card when that example is on it anyway,
+    # and otherwise a card of its own, so that none is lost.
     probe = _probe_results(s, _probe_run_id(s, run_id))
     fl: Dict[Tuple[str, str, str], List] = {}
-    consequences = 0
+    consequences: Dict[str, set] = {}       # operation -> flags wrong only because the result is
+    also_stated: Dict[str, Dict[str, int]] = {}    # operation -> flags its result card must mention
+    row_verdict = {ci.tag: cr.verdict for ci, cr in main}
+    on_card = {ci.tag for op_ in result_card for ci, _ in by_op[('scenario_wrong', op_)]}
     for (tag, port), o in probe.items():
+        op_ = o.get('operation') or '?'
         if o['verdict'] == 'pass':
             continue
-        if tag in main_bad_tags:
-            consequences += 1
-            continue
-        fl.setdefault((o['verdict'], port, o.get('operation') or '?'), []).append((tag, o))
+        if o['verdict'] == 'scenario_wrong' and tag in on_card:
+            flags_ = also_stated.setdefault(op_, {})
+            flags_[port] = flags_.get(port, 0) + 1
+        elif o['verdict'] != 'scenario_wrong' and row_verdict.get(tag) in ('design_wrong', 'both_wrong',
+                                                                           'consistent_wrong'):
+            consequences.setdefault(op_, set()).add(port)
+        else:
+            fl.setdefault((o['verdict'], port, op_), []).append((tag, o))
+    for op_, flags_ in also_stated.items():
+        one = len(by_op[('scenario_wrong', op_)]) == 1
+        for port, n in sorted(flags_.items()):
+            word = _FLAG_WORD.get(port, port)
+            result_card[op_]['detail'] += (f' The {word} of this example is stated wrongly too.' if one
+                                           else f' In {n} of them the {word} is stated wrongly too.')
+    # Every wrong overflow statement fits one other meaning: that is one thing to fix.
+    alt = next((it['alternative'] for it in spec if it['port'] == 'overflow' and it.get('alternative')), None)
+    wrong_over = [k for k in fl if k[0] == 'scenario_wrong' and k[1] == 'overflow']
+    over_rows = sorted((x for k in wrong_over for x in fl[k]), key=lambda x: x[0])
+    if alt and over_rows and alt.get('explains', 0) >= len(over_rows):
+        tag, o = over_rows[0]
+        ops = ' and '.join(sorted({k[2] for k in wrong_over}))
+        rule_name = L.OVERFLOW_DEFINITIONS.get(_overflow_mode(s, sess.id)[0], {}).get('name')
+        kept = alt.get('follows_rule', 0)     # examples that contradict the other meaning
+        probs.append({'severity': 'warning', 'who': 'scenario',
+                      'title': ('The scenarios mix two meanings of overflow' if kept
+                                else f"The scenarios treat overflow as {alt['name']}"),
+                      'detail': (f"Where the two meanings differ, {_examples(len(over_rows), f', in {ops},')} "
+                                 f"{alt['name']} and {_examples(kept)} {rule_name}. E.g. " if kept else
+                                 f"All {len(over_rows)} wrong overflow flags, in {ops}, fit that meaning. E.g. ")
+                                + f"{_inputs(o.get('operation'), o.get('stimulus'), width)}: the scenario says the "
+                                f"overflow flag is {o['stated']}, but it should be {o['rule_value']}. "
+                                f"{_overflow_basis(s, sess.id)} The design is right.",
+                      'explain': {'kind': 'global', 'port': 'overflow'}})
+        for k in wrong_over:
+            del fl[k]
     for (v, port, op), items in sorted(fl.items(), key=lambda kv: (order.index(kv[0][0]) if kv[0][0] in order else 9, kv[0][1], kv[0][2])):
         tag, o = items[0]
         word = _FLAG_WORD.get(port, port)
@@ -1858,12 +2043,16 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
         if v == 'scenario_wrong':
             title = f'A scenario states a wrong {word} for {op}' if len(items) == 1 else \
                 f'{len(items)} scenario examples state a wrong {word} for {op}'
+            right = ('The design is right.' if row_verdict.get(tag) == 'pass'
+                     else f"The design's {word} is right, though its result is wrong.")
             detail = (f"E.g. {ex}: the scenario says the {word} is {o['stated']}, but it should be "
-                      f"{o['rule_value']}. The design is right.")
+                      f"{o['rule_value']}. {right}")
         else:
             title = f"The design's {word} is wrong for {op}"
             detail = (f"{len(items)} examples. E.g. {ex}: the design's {word} is {obs}, but it should be "
                       f"{o['rule_value']}.")
+        if port == 'overflow':
+            detail = f'{detail} {_overflow_basis(s, sess.id)}'.rstrip()
         probs.append({'severity': 'error' if _WHO.get(v) == 'design' else 'warning', 'who': _WHO.get(v, 'design'),
                       'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': tag}})
     for it in spec:
@@ -1905,7 +2094,11 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                           'detail': f'{len(skipped)} of its examples could not be turned into tests'
                                     + (f' (e.g. {why})' if why else '') + '.', 'explain': None})
     for r in reqs:
-        if r['status'] == 'not_covered':
+        if r.get('cannot_test'):
+            probs.append({'severity': 'warning', 'who': 'test', 'title': 'The testbench cannot test a requirement',
+                          'detail': f"“{r['text'].rstrip('.')}”: {r['cannot_test']}.",
+                          'explain': {'kind': 'requirement', 'id': r['requirement_id']}})
+        elif r['status'] == 'not_covered':
             probs.append({'severity': 'warning', 'who': 'coverage', 'title': 'A requirement is not tested by any scenario',
                           'detail': f"“{r['text'].rstrip('.')}”", 'explain': {'kind': 'requirement', 'id': r['requirement_id']}})
         elif r['status'] == 'stated_only':
@@ -1928,11 +2121,13 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                              'detail': '“' + '”, “'.join(labels) + '”. This check does not come from '
                                        'the scenarios; the testbench adds it for this design type.',
                              'explain': None})
-    if consequences:
-        for pr in probs:
-            if pr['who'] == 'design' and pr['explain'] and pr['explain'].get('kind') == 'check':
-                pr['detail'] += ' The flags of these examples are wrong too, as a consequence.'
-                break
+    op_of = {ci.tag: ci.operation for ci, _ in main}
+    for pr in probs:
+        ops_ = pr.pop('ops', None) or [op_of.get((pr.get('explain') or {}).get('tag'))]
+        ports = set().union(*(consequences.get(o_, set()) for o_ in ops_))
+        if pr['who'] == 'design' and ports:
+            words = ' and '.join(_FLAG_WORD.get(p_, p_) for p_ in sorted(ports))
+            pr['detail'] += f" The {words} of these examples {'are' if len(ports) > 1 else 'is'} wrong too, as a consequence."
 
     counts = {'design': 0, 'scenario': 0, 'test': 0, 'coverage': 0}
     for pr in probs:

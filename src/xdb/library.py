@@ -472,6 +472,36 @@ def not_executable(key: Optional[str]) -> Optional[str]:
     return st.get('why') if st and st.get('executable') is False else None
 
 
+# The tag of a register-file scenario decides what the testbench runs, whatever
+# its steps say: a @read scenario only reads, so a write step in it never happens.
+_RF_RUN_BY = {'RF.A.WRITE': {'WRITE', 'WRITE_READ'}, 'RF.A.RESET': {'RESET'}}
+TAG_SKIPS_STEP = "the scenario's tag makes the testbench leave this step out"
+
+
+def runs_by_tag(key: Optional[str]) -> bool:
+    return key in _RF_RUN_BY
+
+
+def not_run(key: Optional[str], operations) -> Optional[str]:
+    """Why a step did not happen in a scenario the testbench ran as these operations."""
+    wanted = _RF_RUN_BY.get(key)
+    return TAG_SKIPS_STEP if wanted and operations and not (wanted & set(operations)) else None
+
+
+_RF_SAME_CYCLE = re.compile(r'\bsame (?:clock )?cycle\b|\bbeing written\b|\bduring (?:a |the )?write\b'
+                            r'|\bwhile (?:it is )?(?:being )?writ', re.I)
+
+
+def cannot_test(module_type: Optional[str], text: Optional[str]) -> Optional[str]:
+    """Why no scenario can show this requirement on the web testbench, or None.
+
+    Its rows run one after another, so a passing row says nothing about a read in
+    the cycle of a write, whichever scenario the model linked to the requirement."""
+    if module_type == 'regfile' and _RF_SAME_CYCLE.search(text or ''):
+        return step_by_key('RF.A.SAME_CYCLE')['why']
+    return None
+
+
 def step_by_key(key: Optional[str]) -> Optional[Dict]:
     for lib in LIBRARIES.values():
         for st in lib['steps']:
@@ -682,8 +712,13 @@ ALU_MIXUPS = {
     'SUB': {'fn': lambda a, b, w: (a + b) % (1 << w), 'as': 'ADD',
             'says': 'adds instead of subtracting', 'fix': 'SUB must subtract'},
 }
-# Operands an operation reads as signed; a reader should see them that way.
-SIGNED_OPERANDS = {'SLT': ('a', 'b'), 'SRA': ('a',)}
+# A shifter that loses one bit of the shift amount, such as a barrel shifter with
+# a stage left out: shifting by 31 moves 15 positions when bit 4 is ignored.
+SHIFTS = {'SLL': lambda a, s, w: (a << s) % (1 << w),
+          'SRL': lambda a, s, w: a >> s,
+          'SRA': lambda a, s, w: (_signed(a, w) >> s) % (1 << w)}
+# Values an operation treats as signed; a reader should see them that way.
+SIGNED_OPERANDS = {'SLT': ('a', 'b'), 'SRA': ('a', 'result')}
 ALU_WORKING = {'SLT': lambda a, b, w: f"{_signed(a, w)} < {_signed(b, w)} is {'true' if _signed(a, w) < _signed(b, w) else 'false'}",
                'SLTU': lambda a, b, w: f"{a} < {b} is {'true' if a < b else 'false'}",
                'SRA': lambda a, b, w: f"{_signed(a, w)} >> {_shift(b, w)} = {_signed(a, w) >> _shift(b, w)}"}
@@ -707,19 +742,51 @@ def alu_mixup(op: Optional[str], rows: List[Tuple[int, int, int]], width: Option
     from the rule at least once, with the number of rows it explains."""
     key = (op or '').upper()
     mix, rule = ALU_MIXUPS.get(key), (library_for('alu') or {}).get('rules', {}).get(key)
-    if not mix or not rule or not rows or not width:
-        return None
-    if any(mix['fn'](a, b, width) != v for a, b, v in rows):
+    if not rule or not rows or not width:
         return None
     if all(rule['fn'](a, b, width) == v for a, b, v in rows):
         return None
-    return {'op': key, 'says': mix['says'], 'fix': mix['fix'], 'rows': len(rows)}
+    if mix and all(mix['fn'](a, b, width) == v for a, b, v in rows):
+        return {'op': key, 'says': mix['says'], 'fix': mix['fix'], 'rows': len(rows)}
+    bits = [k for k in _shift_bits(key, width)
+            if all(_shift_without(key, a, b, width, k) == v for a, b, v in rows)]
+    if len(bits) != 1:                 # several bits fit: the run does not say which one
+        return None
+    return {'op': key, 'bit': bits[0], 'says': f'ignores bit {bits[0]} of the shift amount',
+            'fix': f'bit {bits[0]} of B must shift by {1 << bits[0]} more positions', 'rows': len(rows)}
+
+
+def _shift_bits(op: str, width: int) -> List[int]:
+    return list(range(width.bit_length() - 1)) if op in SHIFTS and width & (width - 1) == 0 else []
+
+
+def _shift_without(op: str, a: int, b: int, width: int, bit: int) -> int:
+    return SHIFTS[op](a, _shift(b, width) & ~(1 << bit), width)
+
+
+def alu_has_cause(op: Optional[str]) -> bool:
+    return (op or '').upper() in ALU_MIXUPS or (op or '').upper() in SHIFTS
+
+
+def alu_shift_hidden(op: str, rows: List[Tuple[int, int, int]], bit: int, width: int) -> bool:
+    """True when every example of a shift passes and none could show the lost bit:
+    its pass says nothing about that fault."""
+    return bool(rows) and all(SHIFTS[op](a, _shift(b, width), width) == v
+                              and _shift_without(op, a, b, width, bit) == v for a, b, v in rows)
+
+
+def alu_shift_witness(op: str, bit: int, width: int) -> Tuple[int, int, int, int]:
+    """(a, b, correct, value with the fault) of an example that shows the lost bit."""
+    a, b = (1 if op == 'SLL' else 1 << (width - 1)), 1 << bit
+    return a, b, SHIFTS[op](a, b, width), _shift_without(op, a, b, width, bit)
 
 
 def alu_swap_partner(op: Optional[str]) -> Optional[str]:
     return (ALU_MIXUPS.get((op or '').upper()) or {}).get('as')
 
 
-def alu_mixup_value(op: Optional[str], a: int, b: int, width: int) -> Optional[int]:
+def alu_mixup_value(op: Optional[str], a: int, b: int, width: int, cause: Optional[Dict] = None) -> Optional[int]:
+    if cause and 'bit' in cause:
+        return _shift_without(cause['op'], a, b, width, cause['bit'])
     mix = ALU_MIXUPS.get((op or '').upper())
     return mix['fn'](a, b, width) if mix else None

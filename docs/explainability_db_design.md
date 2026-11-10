@@ -58,7 +58,15 @@ Reference: Dominik & Drechsler, *Behavior-Driven Explainability* (arXiv
 | D34 | **An empty answer is a failed call, and one caused by the output budget gets one more try.** All 7 empty answers of 2026-11-03/04 (6 DeepSeek, 1 gpt-5-mini) had finish_reason `length`: a reasoning model used the whole budget before writing anything. They were logged as successful, and an empty Step 0 did not show in the trial summary although that run had no requirements. The instrumentation in `experiment_logger` is the one place every model call passes, so there: `success = 0` with the reason, and for `length` / `max_tokens` one retry with twice the budget, at most 32768 (the UI's limit); both attempts are rows, the second with `budget_retry`. A failed call does not always look empty: the GWDG providers catch their own error and return a fallback text. The first version of this decision missed that, so GLM and Qwen 3.6 were neither retried nor logged as failed; `_failed_call_error` now also counts an `api_error` with a fallback text. A stream is retried only while nothing has reached the reader. Step 0 budget 6000 -> 12000; its error names the budget. The trial summary has a column "requirements" (runs with / tried) and lists runs without them. Reasoning effort was left alone: it changes what the model does, the budget does not | 2026-11-05 |
 | D35 | **Step 4 never waits in silence.** From a laptop a query to Neon takes about 75 ms (a cloud session is much closer), so a summary took 22 s (222 queries) while the page polled for about 22 s and showed nothing; the panel looked as if it had disappeared. The page now says that it is preparing the explanations, waits up to 4 minutes, and on a timeout or an error says so with a Try again button (`sim-explain-wait`). `check_specification` loads the steps of a scenario once instead of per row (`_step_rows`): 93 queries, 10 s | 2026-11-05 |
 | D36 | **Which models the site offers.** Only models the GWDG documentation lists, tried through the whole web flow here; "good at coding" in the documentation is a reason to try a model, not a result. GPT-OSS 120B and GLM 4.7 left GWDG (403), Llama 3.3 70B on Together now needs a dedicated endpoint (400). Offered with the school key: Qwen 3 Coder Next, Gemma 4 31B (falls back to `QWEN_API_KEY`, same key), GLM 5.3 Flash with `reasoning_effort` low (`EXTRA_PAYLOAD`); evidence in §6j. Own accounts stay: OpenAI, Gemini, DeepSeek, Mistral. External models in the GWDG list (Claude, GPT-5.x) are "not generally available for API usage" (403/404 with this key). The menu change went to master alone as 24fd642, because the live site offered the dead models; D33-D35 did not | 2026-11-05 |
-| D37 | **A card is one thing to fix, and it says what the reader needs.** Simulation #106 had every number right and still misled: SLT read "2 of 8" although 7 of 8 were wrong, on two cards, and `32767 < 32768 gives 1` looked correct because the scenario had written -32768. The grouping of D25 by operation caused the first. Now: examples where the design repeats the scenario's mistake are counted with the design's failures of that operation; operands an operation reads as signed are shown as signed (`library.SIGNED_OPERANDS`); a cause is named only when a known mix-up (`library.ALU_MIXUPS`: unsigned compare, logical shift, add/subtract) reproduces every example of the operation, otherwise the card says what is wrong and no more; a scenario whose two operations are exchanged throughout is one card; a contrast is the example with the fewest differing bits that is really correct, never one that passes by the same mistake. No schema change: all of this is computed from the stored values. Rules in §7a, fixed example in `tests/data/unsigned_alu` | 2026-11-05 |
+| D37 | **A card is one thing to fix, and it says what the reader needs.** Simulation #106 had every number right and still misled: SLT read "2 of 8" although 7 of 8 were wrong, on two cards, and `32767 < 32768 gives 1` looked correct because the scenario had written -32768. The grouping of D25 by operation caused the first. Now: examples where the design repeats the scenario's mistake are counted with the design's failures of that operation, and the scenario gets its own card for them, because fixing the design alone would turn them into failures; operands an operation reads as signed are shown as signed (`library.SIGNED_OPERANDS`); a cause is named only when a known mix-up (`library.ALU_MIXUPS`: unsigned compare, logical shift, add/subtract) reproduces every example of the operation, otherwise the card says what is wrong and no more; a scenario whose two operations are exchanged throughout is one card; a contrast is the example with the fewest differing bits that is really correct, never one that passes by the same mistake; a consequence for the flags is named on the card of its operation; overflow statements that all fit one other meaning are one card, and every overflow card says which definition it relies on and who decided it, because without Step 0 that is only the template's. No schema change: all of this is computed from the stored values. Rules in §7a, fixed example in `tests/data/unsigned_alu` | 2026-11-05 |
+| D38 | **A name, a count or "untested" must hold for the whole run.** Walking through simulation #111 row by row showed three cards that said more than the run does. (1) "The scenarios treat overflow as unsigned carry/borrow" looked only at the wrong rows; where the two meanings differ, #111 has 2 examples for carry/borrow and 4 for signed overflow, and #106 and #109 have 3 and 1, so all three titles were wrong. Now `_tally_meanings` counts every example that can tell them apart, and the card says the scenarios mix two meanings unless none contradicts the other one. (2) SLL and SRL were two cards without a cause, though both had lost bit 4 of the shift amount, a stage left out of the barrel shifter. `library.alu_mixup` now names such a bit when exactly one bit reproduces every example; shifts losing the same bit are one card, and a shift whose examples pass but cannot show the fault is named with an example that would (`alu_shift_hidden`, `alu_shift_witness`): in #111 SRA has the fault, as a separate simulation showed, and all its examples pass. The card says "may": the run cannot prove it. (3) A requirement that defines a flag, with no linked scenario, was called untested although the probe had checked that flag in all 50 examples. New status `checked_unlinked`, no card. Reset and other requirements that need state stay `not_covered`, because the probe only applies operands. (4) A wrong flag on a row whose result was wrong too counted as a consequence, shown only on a design card of that operation. So the scenario's wrong negative flag on AND r4 appeared nowhere, a scenario's flag could be blamed on the design, and a design's wrong flag on a row the scenario got wrong could vanish. Now a wrong flag goes to whoever must fix it: the design's card if both come from the design, the scenario's result card if that row is on it, else a card of its own. Fixed example: `tests/data/shift_alu` | 2026-11-05 |
+| D39 | **Step 0 offers only what can be honoured.** The walk-through of #111 showed that of four questions only the overflow one was real: the description already settled the others, some options were filler, and a different answer could not work, because the reference R reads only overflow. In 21 logged ALU analyses, every question on a shift or on SLT/SLTU was settled by the rules. So `requirements_store.SETTLED_TOPICS` drops those questions and `settled_facts` lists the rules instead: read-only on the Step-0 page ("Fixed by the reference model"), and in the block both generators receive, so nothing the answers used to say is lost. Making R read such answers was rejected: free-form questions cannot be read back, and a non-standard shift has no use here. ALU only; the questions logged for counter and CPU are real ones, and a test ties the facts to `_reference_result`. Prompt `req_analysis/v2` also receives the facts and forbids asking what the description states and adding filler options: on the same description qwen went from 5 questions to 0, glm-5.3-flash asked 2, gemma 1. Step 0's model call has its own run id, so it never reached Neon; `_requirements` now copies it, and `requirement` and `decision` point to `llm_call:<id>`. Older sessions keep the run id | 2026-11-05 |
+| D40 | **An unchanged standard description needs no model.** Five runs of one prompt on one model gave 12 requirements each, and no requirement had the same text in two consecutive runs (temperature 0.7, no seed); these texts go into the prompts of Steps 1 and 2. So `src/design_templates.py` holds the standard description of each design (`BDD_TEMPLATES` on the page must stay the same text, a test compares them), its fixed requirements and, for the counter, the real open questions. `/api/requirements/analyze` answers an unchanged description from there: no call, the same every time, `requirement.prov_kind = rule`. An edited description still goes to a model, now at temperature 0.2 with a seed: in three runs 9 and 11 of 12 requirements kept their text, but one run asked one question fewer, so it stays a model's answer and the page says so. The page: design and size are chosen on top of Step 0 and are the same controls as Step 1; the description is folded away; decisions come first, requirements wrap in full and are edited in place, the fixed rules are folded; one button, which opens the next step. The default analysis model is Qwen. The ALU description no longer states what overflow means, because Step 0 asks it; if Step 0 is skipped, the design template's meaning applies and the card says so. Menus (user, 2026-11-06, from the evidence in §6j, provisional): Steps 1 and 2 list GLM 5.3 Flash first as the default, then Gemma, Qwen, GPT-5, DeepSeek, Mistral, Gemini; Step 0 lists Qwen first; the list has no groups | 2026-11-06 |
+| D41 | **The Step 1 and Step 2 boxes reach the model word for word.** They used to reach it only through parsed values (width, operations, opcodes, test count), so "Contrast SLT against SLTU" and "Boundary value tests" appeared in no prompt. `prompt_store.user_request_block` now follows the template and comes before Step 0, which wins where they differ. Only the web endpoints set it; a repair sends the words as `user_request`, so they are kept but not parsed again. Scenario prompts add: exact step wording, no new steps, nothing that must happen in one clock cycle. Without that, register-file runs had 14 to 17 unread steps (0 to 4 before); with "no new steps" alone the model wrote a same-cycle read as a write then a read, and 10 rows were judged scenario wrong. Final wording, GLM low effort, same Step 0: register file 5 runs, 103 checks all pass, no unread step; ALU 3 runs, 153 checks, 3 wrong scenario values, against 0 of 157 with the box held back, but §6j has this model at 2.9 per 100, so three runs cannot tell; CPU 3 runs reached Step 4 with compile fixes, all steps read, no comparison because the held-back runs did not compile. Explicit contrast scenarios: 6 of 8 ALU runs across the three wordings, 0 of 3 without the box. The box takes sentences now, so parsing it matches whole words, has no default width of 16 and no longer reads "together" as a provider; a box that names a design type still selects it, including "program counter" on a CPU. Text in a box reaches that step only; Step 0 is the way to reach both. Data: `output/trials/box_*`. | 2026-11-06 |
+| D42 | **Step 0 shows the fixed rules only when they add something.** With the standard description all five are already in the requirement list, and "reference model" means nothing to the reader, so the section is hidden. With an edited description a model wrote the list and may leave them out, so it stays, folded, as "Always checked". Display only: `build_record` takes them from the rules and both generators always receive them. | 2026-11-06 |
+| D43 | **What the testbench cannot show is never called verified.** The register-file requirement "a read in the cycle of a write returns the old value" read as verified in 2 of 3 runs without the box text and 2 of 5 with it, although the rows run one after another. Two causes, both real scenarios in `tests/test_xdb.py`: the model linked a plain write-then-read to it, and the status trusts that tag; and a `@read` scenario held a write step that never ran, so its rows passed on a reset register. `library.cannot_test` names such requirements and overrules every status but `not_covered`, without touching the rows, so the same passing row still counts for the other requirements linked to it; Step 4 shows "The testbench cannot test a requirement". `library.not_run` makes a step the tag leaves out a blocked step (D29), judged from the operations the testbench recorded, so those rows are undecided. Rows stored before this keep their verdicts; the requirement status is computed live, so it holds for them too. Register file only: a counter's "in the same cycle" can be checked. | 2026-11-06 |
+| D44 | **Step 4 uses the testbench path Step 3 reports.** A run with Gemma failed with "Testbench not found: output/testbench/gemma/...": Step 3 chose the folder from a fixed list of model names, which lacked every model added in D36 (gemma, glm, ...), and wrote to `default`, while the page rebuilt the path from the model name. The folder is now the feature's own folder under `output/bdd/`, whatever the model, `/api/generate-testbench` returns `relpath`, and the page keeps it (`currentTbPath`). The failing run's files are in `tests/data/gemma_alu_16` (`tests/test_testbench_folder.py`). | 2026-11-10 |
+| D45 | **The ALU reference is checked against Verilog, and every rule names its source.** The reference model is our code, so its correctness was only argued, not shown. `tests/test_reference_vs_verilog.py` simulates an ALU written from Verilog operators and compares every output with R: 655,360 cases at 8 bits and boundary, shift and random cases at 16, 32 and 64 bits, no difference; a planted SRA error is caught. §7b lists each rule with its source (RISC-V, IEEE 1364, x86/ARM flags) or marks it as ours, for the expert review. | 2026-11-10 |
 | D21 | Order of designs: ALU (incl. alu_comb) → regfile → CPU → counter (counter needs a reference model and multi-cycle stimulus first) | 2026-11-03 |
 
 ---
@@ -562,7 +570,7 @@ the requirement they leave untested, and requirements no scenario covers.
 `summarize_run` returns it with an overview; `/api/explain/*` return
 `plain` next to `text`.
 
-Found while testing and fixed since (commit 3ab7993, merged): the testbench
+Found while testing and fixed since (commit 6271a45, merged): the testbench
 generator's operation detection fell back to plain words in the scenario
 title, so a title such as "Compare signed and unsigned …" was tested as AND.
 It now reads only the title and the When step, in an operation-like context,
@@ -694,11 +702,11 @@ unsigned), 19 checks:
 
 The LW and SW rows were bugs of the testbench generator: offsets were
 ignored and a store row with an rd column was checked against x0. They are
-fixed in commit 41d90a9 (together with: rows whose instruction names other
+fixed in commit dbc90c4 (together with: rows whose instruction names other
 registers than the columns, x29/x30, unaligned or result-area addresses and
 contended memory words are skipped with a reason), merged here. An ALU/counter
 row without an expected value is no longer checked against 0 but skipped
-(ab9960a, reason "scenario states no expected result", shown as "Partly
+(0460cc9, reason "scenario states no expected result", shown as "Partly
 tested"). Testbenches of features without such rows
 are byte-identical. For testbenches generated before the fix, `cpu_reference`
 still reports the ignored offset and the store checked as a register as
@@ -815,8 +823,8 @@ passed 6 wrong branches. JAL remains wrong in every design checked (§6i), GLM i
 ## 7a. What a card must do (the explanation standard, D37)
 
 §7 says how to evaluate explanations; these are the rules an explanation is written to.
-Rules 1 to 5 are checked by tests on a fixed real run (`tests/data/unsigned_alu`, simulation
-#106). Rule 6 is checked per verdict. Whether a hardware engineer gets it at once can only be
+Rules 1 to 5 are checked by tests on three fixed real runs (`tests/data/unsigned_alu`, 16 bit,
+simulation #106, `tests/data/unsigned_alu_8`, 8 bit, #109, and `tests/data/shift_alu`, 32 bit, #111). Rule 6 is checked per verdict. Whether a hardware engineer gets it at once can only be
 asked of hardware engineers (Usefulness in §7), which has not been done yet.
 
 1. **Traceable.** Every number comes from O, B, R or a stated rule.
@@ -827,12 +835,57 @@ asked of hardware engineers (Usefulness in §7), which has not been done yet.
 5. **Say what to change:** the design or the scenario, and where the run shows it.
 6. **Never hide a false pass.** A test that passes because the scenario is wrong too must show.
 
+Details list every flag the probe observed for the example, and say which ones the scenario
+leaves out: a card that names a wrong flag must not meet a Details text that calls the flags correct.
+A statement about all the scenarios needs all the examples that can tell (D38): the scenarios mean
+one thing only if none contradicts it. A pass that could not have shown a proven fault is said to be one.
+
 Where a new problem belongs, in this order: did we read the data wrongly (log, index), is the
 rule wrong (`library.py`, the reference model), is the verdict wrong (`verdict.py`), or does a
 right result read badly (`explain.py`)? #106 was the last. Relation to BDX: structure and local /
 global / contrastive come from the paper, reduced and summarised explanations from its step 3;
 the verdict, the independent reference and rule 4 are ours, because BDX trusts the
 specification and ours is generated by a model.
+
+## 7b. Where the reference rules come from (D45)
+
+The reference model R is code written in this project, not a model of any
+standard body. Two questions decide whether a verdict can be trusted: does the
+code compute what its rules say, and are the rules the right ones.
+
+**Does the code compute its rules.** `tests/test_reference_vs_verilog.py` compares
+R (`TestbenchGenerator._reference_result`, `library.apply_rule`, `flag_value`,
+both overflow meanings) with an ALU written only from Verilog operators
+(`tests/data/reference_alu/ref_alu.v`) and simulated by iverilog: 8 bits for every
+input (10 operations x 256 x 256 = 655,360 cases), 16, 32 and 64 bits on boundary
+values, every shift amount and 1,500 random pairs per operation. No difference.
+A planted error (SRA without the sign) gives 28,672 differences at 8 bits, so the
+check can fail. The CPU verdicts of two trials agreed with an independent RV32I
+simulator (§6i). In the database, the only cases where design and scenario agree
+against R (`consistent_wrong`, 10 SLT rows, sessions 59 and 60) are both models
+comparing as unsigned; R is right there.
+
+**Are the rules the right ones.** Each rule, with its source. "Ours" means a choice
+made here that an expert should confirm.
+
+| Design | Rule | Source |
+|---|---|---|
+| ALU | ADD and SUB wrap to W bits | RISC-V unprivileged ISA (RV32I): arithmetic overflow is ignored |
+| ALU | A shift moves by the low log2(W) bits of B | RISC-V RV32I uses the low 5 bits of rs2; ours for other widths, and B masked with W-1 when W is not a power of two |
+| ALU | SLL and SRL fill with zeros; SRA copies the sign bit | RISC-V RV32I; Verilog (IEEE 1364-2005) `>>>` fills with the sign only for a signed operand |
+| ALU | SLT signed, SLTU unsigned, strict, result 0 or 1 | RISC-V RV32I |
+| ALU | `overflow` = signed overflow by default | x86 OF, ARM V; the user chooses in Step 0 |
+| ALU | `overflow` = carry out of ADD, borrow of SUB (other choice) | x86 CF (ARM's C means "no borrow" on SUB, the opposite) |
+| ALU | `overflow` judged for ADD and SUB only | Ours; the standard requirement text says 0 for the rest, R does not judge it |
+| ALU | `zero` and `negative` for every operation, SLT and shifts included | Ours |
+| Register file | A read returns the last value written | Definition of a register file |
+| Register file | Register 0 reads 0, writes to it are ignored | RISC-V x0 |
+| Register file | A reset sets every register to 0 | Ours |
+| Register file | Rows run in order, state carries over | Test method |
+| CPU | Instructions as RV32I defines them; immediates sign-extended; SLT, SLTI, BLT, BGE signed | RISC-V RV32I |
+| CPU | Memories are read combinationally | Test assumption (D31) |
+| CPU | A check counts only if the program reached it | Test method (D33) |
+| Counter | none | No reference model yet |
 
 ## 8. Deployment
 
@@ -892,3 +945,6 @@ Original phase list:
   (moderation).
 - Neon free-plan limits must be re-checked on the official pricing page at
   setup time.
+- The requirement status still trusts the model's `@req_N` tag: a passing scenario linked
+  to a requirement it does not test counts as verifying it. D43 closes this only for
+  what the testbench cannot show at all.

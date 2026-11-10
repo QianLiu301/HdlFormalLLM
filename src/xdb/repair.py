@@ -45,7 +45,7 @@ def find_run(s, project_root, paths: Dict) -> Optional[Tuple[M.SimRun, M.Testben
     return s.execute(select(M.SimRun, M.Testbench).join(M.Testbench, M.Testbench.id == M.SimRun.testbench_id)
                      .where(M.Testbench.artifact == tb_sha, M.SimRun.log_artifact == log_sha,
                             M.SimRun.probe_of.is_(None))
-                     .order_by(M.SimRun.id.desc()).limit(1)).first()
+                     .order_by(M.Testbench.feature_id.is_(None), M.SimRun.id.desc()).limit(1)).first()
 
 
 def _column_of(s, scenario_id: int, key: str) -> Optional[str]:

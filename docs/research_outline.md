@@ -38,7 +38,7 @@ examples, not as results):
 - The explanation layer exposed four bugs in the deterministic testbench
   generator (operations guessed from English words in titles, missing
   expected values checked against 0, CPU stores checked against x0,
-  load/store offsets ignored). See commits 3ab7993, ab9960a, 41d90a9.
+  load/store offsets ignored). See commits 6271a45, 0460cc9, dbc90c4.
 
 ---
 

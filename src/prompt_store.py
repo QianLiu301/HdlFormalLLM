@@ -154,6 +154,37 @@ Make sure the module interface and behavior match the test expectations above.
 """
 
 
+def user_request_block(text: Optional[str], for_scenarios: bool = False) -> str:
+    """What the user typed in the Step 1 or Step 2 box, word for word.
+
+    The box used to reach the model only through the values parsed from it (width,
+    operations, opcodes, number of tests), so a line such as "Contrast SLT against
+    SLTU" was dropped without a trace. This block comes before the Step 0 block,
+    which wins where the two differ. Only the web endpoints set it.
+
+    Scenarios must stay in the wording above: without that line a request such as
+    "Concurrent read/write test" made the model invent steps that neither the
+    rule library nor the testbench can read (14 to 17 per register-file run), and
+    with new steps ruled out it wrote a same-cycle read as a write followed by a
+    read, whose old value was then judged a scenario error (D41).
+
+    Empty text gives an empty string, so the prompt stays as it was.
+    """
+    text = (text or '').strip()
+    if not text:
+        return ""
+    block = ("\n\nThe user's request for this step, in their own words:\n\n"
+             f"{text}\n\n"
+             "Follow it together with the instructions above. Keep the module type, "
+             "bit width, ports and output format given above.\n")
+    if for_scenarios:
+        block += ("Write every step in the exact wording shown above, with only the "
+                  "columns shown above. Do not invent new steps; leave out anything "
+                  "that cannot be written that way. Steps run one after another, so "
+                  "also leave out anything that must happen in the same clock cycle.\n")
+    return block
+
+
 def decisions_block(record: Optional[dict]) -> str:
     """需求确认后追加到 DUV prompt 与 BDD prompt 末尾的段落。
 
@@ -167,7 +198,8 @@ def decisions_block(record: Optional[dict]) -> str:
         return ""
     reqs = [r for r in (record.get('requirements') or []) if (r.get('text') or '').strip()]
     decs = [d for d in (record.get('decisions') or []) if (d.get('answer') or '').strip()]
-    if not reqs and not decs:
+    settled = record.get('settled') or []
+    if not reqs and not decs and not settled:
         return ""
     lines = ["", "", "IMPORTANT - Confirmed Requirements and Decisions:",
              "The user confirmed the following. They apply to the design AND to its "
@@ -184,6 +216,10 @@ def decisions_block(record: Optional[dict]) -> str:
             q = (d.get('question') or '').strip()
             lines.append(f"- {d.get('id', '')}: {q} -> {d['answer'].strip()}" if q
                          else f"- {d.get('id', '')}: {d['answer'].strip()}")
+    if settled:
+        lines.append("")
+        lines.append("Fixed by the reference model the tests are judged against:")
+        lines += [f"- {f['id']}: {f['fact']}" for f in settled]
     lines.append("")
     return "\n".join(lines)
 

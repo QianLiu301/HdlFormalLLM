@@ -18,6 +18,7 @@ Skipped when that database or iverilog is unavailable.
 """
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -1640,13 +1641,13 @@ def test_trial_runner_dry_run(rf_run, db, monkeypatch, tmp_path):
                  app=main.app, project_root=proj)
     rec = t.run_one('mock', 'regfile', 1)
     assert rec['stage'] == 'done' and rec['error'] is None, rec.get('error')
-    assert rec['step0']['ok'] and rec['step0']['requirements'] == 4
+    assert rec['step0']['ok'] and rec['step0']['requirements'] == 6     # the standard list, no model
     v = rec['initial']['verdicts']
     assert (v['pass'], v['design_wrong'], v['scenario_wrong']) == (7, 1, 1)
     assert rec['initial']['steps_unmapped'] == 0 and rec['initial']['steps_mapped'] > 20
     assert [(r['action'], r['ok']) for r in rec['rounds']] == [('scenarios', True), ('design', True)]
     assert rec['final']['all_clear'] and rec['final']['verdicts']['pass'] == 9
-    assert rec['llm_calls'] >= 4                              # Step 0, design, scenarios, repair
+    assert rec['llm_calls'] >= 3                              # design, scenarios, repair
     summary = TR.write_outputs(t.out, [rec])
     assert '| mock | regfile | 1 | 1 | 9 | 78% | 11% | 11% | 0% | 100% | 0 | 0/1 | 1/1 | 1 | — |' in summary
     assert (t.out / 'runs.csv').read_text(encoding='utf-8').startswith('llm,design,rep,stage')
@@ -1765,33 +1766,342 @@ def test_scenario_the_testbench_cannot_run_decides_nothing(rf_run, db):
     assert [(c['scenario_key'], c['old'], c['new']) for c in fixes] == [('RF-READ-001', '100', '300')]
 
 
+# Real scenarios from one trial (box_after3, 2026-11-06). The first passed on a reset
+# register, because its tag left the write out. The second is a plain write and
+# read, which the model also linked to the same-cycle requirement.
+RF_SAME_CYCLE_CLAIMS = RF_FEATURE + """
+  @read @req_5
+  Scenario Outline: Read of register written in same cycle returns old value
+    Given the register file is ready
+    When I write <data> to register <addr>
+    And I read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | data | expected |
+      | 20   | 99   | 0        |
+      | 21   | 50   | 0        |
+
+  @write_read @req_1 @req_5
+  Scenario Outline: Write and immediately read back
+    Given the register file is ready
+    When I write <data> to register <addr>
+    And I read register <addr>
+    Then the value should be <expected>
+
+    Examples:
+      | addr | data | expected |
+      | 22   | 42   | 42       |
+"""
+SAME_CYCLE_REQ = 'A read of the register being written in the same cycle returns the old value.'
+
+
+@pytest.fixture(scope='module')
+def rf_claims(rf_run, db):
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.explain import summarize_run
+    from src.xdb.ingest import ingest_run
+    proj, _, _ = rf_run
+    out = proj / 'output'
+    record = {**RF_RECORD, 'requirements': RF_RECORD['requirements'] + [
+        {'id': 'REQ-5', 'text': SAME_CYCLE_REQ, 'source': 'template'}]}
+    (out / 'requirements/claims.json').write_text(json.dumps(record), encoding='utf-8')
+    (out / 'bdd/rf_claims.feature').write_text(RF_SAME_CYCLE_CLAIMS, encoding='utf-8')
+    (out / 'dut/regfile_ok.v').write_text(RF_FIXED, encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/rf_claims.feature'), {**RF_DUT, 'dut_filepath': str(out / 'dut/regfile_ok.v')},
+        output_filename='rf_claims_tb.v')
+    _simulate(proj, tb['filepath'], out / 'dut/regfile_ok.v', 'output/simulation/rf_claims.log')
+    paths = {'requirements': 'output/requirements/claims.json', 'bdd': 'output/bdd/rf_claims.feature',
+             'duv': 'output/dut/regfile_ok.v', 'testbench': Path(tb['filepath']).relative_to(proj).as_posix(),
+             'log': 'output/simulation/rf_claims.log'}
+    res = ingest_run(proj, paths, run_id='rf_claims', url=db, data={'bitwidth': 32})
+    return res, summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+
+
+def test_a_write_the_tag_leaves_out_decides_nothing(rf_claims):
+    """Both rows of the @read scenario read a register nobody wrote, so they passed."""
+    res, s = rf_claims
+    assert res['verdicts']['undecided'] == 2
+    blocked = next(p for p in s['problems'] if p['title'].startswith('The testbench cannot run'))
+    assert ("“When I write <data> to register <addr>”, but the scenario's tag makes the testbench "
+            "leave this step out.") in blocked['detail']
+
+
+def test_a_passing_scenario_does_not_verify_what_the_testbench_cannot_show(rf_claims, db):
+    from src.xdb.explain import explain_requirement
+    _, s = rf_claims
+    by_key = {r['req_key']: r for r in s['requirements']}
+    assert by_key['REQ-5']['status'] == 'not_tested' and by_key['REQ-5']['evidence'] is None
+    assert by_key['REQ-1']['status'] != 'not_tested'       # the same passing row still counts for this one
+    card = next(p for p in s['problems'] if p['title'] == 'The testbench cannot test a requirement')
+    assert card['detail'] == (f"“{SAME_CYCLE_REQ.rstrip('.')}”: the testbench reads only after a write has "
+                              f"taken effect, never in the same clock cycle.")
+    lines = explain_requirement(by_key['REQ-5']['requirement_id'], url=db)['plain']['lines']
+    assert lines[0] == ('Not tested: the testbench reads only after a write has taken effect, never in the '
+                        'same clock cycle, so no scenario can show this.')
+
+
+def test_only_the_same_cycle_requirement_is_out_of_reach():
+    from src import design_templates as T
+    from src.xdb import library as L
+    rf = T._regfile_requirements(32, 32, 5)
+    assert [t for t in rf if L.cannot_test('regfile', t)] == [SAME_CYCLE_REQ]
+    assert L.cannot_test('regfile', 'Concurrent read of the register being written returns old value')
+    # the same words on another design: a counter's zero flag can be checked in its cycle
+    assert not any(L.cannot_test('counter', t) for t in T._counter_requirements(32, 32, 5))
+    assert L.not_run('RF.A.WRITE', {'READ'}) == L.TAG_SKIPS_STEP
+    assert L.not_run('RF.A.WRITE', {'WRITE_READ'}) is None and L.not_run('RF.A.WRITE', set()) is None
+
+
 # ================================================================ reading a card (D37)
 # The fixed example of the explanation standard: a real run (simulation #106,
 # 2026-11-05), a 16-bit ALU from qwen3-coder-next. The design has no $signed at
 # all, so SLT compares unsigned and SRA fills with zeros, and one scenario swaps
 # SLT and SLTU. The numbers were always right; these tests hold how they read.
 
-@pytest.fixture(scope='module')
-def unsigned_run(db, tmp_path_factory):
+def _ingest_alu(db, tmp_path_factory, folder, module, width, run_id, edit=None, edit_design=None):
     from src.testbench_generator import TestbenchGenerator
     from src.xdb.ingest import ingest_run
-    proj = tmp_path_factory.mktemp('unsigned')
+    proj = tmp_path_factory.mktemp(folder)
     out = proj / 'output'
     for d in ('bdd', 'dut', 'simulation'):
         (out / d).mkdir(parents=True)
-    src = ROOT / 'tests/data/unsigned_alu'
-    (out / 'bdd/alu.feature').write_text((src / 'alu.feature').read_text(encoding='utf-8'), encoding='utf-8')
-    (out / 'dut/alu.v').write_text((src / 'alu.v').read_text(encoding='utf-8'), encoding='utf-8')
+    src = ROOT / 'tests/data' / folder
+    feature = (src / 'alu.feature').read_text(encoding='utf-8')
+    (out / 'bdd/alu.feature').write_text(edit(feature) if edit else feature, encoding='utf-8')
+    verilog = (src / 'alu.v').read_text(encoding='utf-8')
+    (out / 'dut/alu.v').write_text(edit_design(verilog) if edit_design else verilog, encoding='utf-8')
     tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
-        str(out / 'bdd/alu.feature'), {'module_type': 'alu', 'module_name': 'alu_16bit', 'bitwidth': 16})
+        str(out / 'bdd/alu.feature'), {'module_type': 'alu', 'module_name': module, 'bitwidth': width})
     assert tb['success'], tb
     _simulate(proj, tb['filepath'], out / 'dut/alu.v', 'output/simulation/alu.log')
     paths = {'bdd': 'output/bdd/alu.feature', 'duv': 'output/dut/alu.v',
              'testbench': Path(tb['filepath']).relative_to(proj).as_posix(), 'log': 'output/simulation/alu.log'}
-    res = ingest_run(proj, paths, run_id='unsigned_run', url=db, data={'module_type': 'alu', 'bitwidth': 16})
+    if (src / 'requirements.json').exists():      # a run with Step 0 answered
+        (out / 'requirements').mkdir()
+        (out / 'requirements/req.json').write_text((src / 'requirements.json').read_text(encoding='utf-8'),
+                                                   encoding='utf-8')
+        paths['requirements'] = 'output/requirements/req.json'
+    res = ingest_run(proj, paths, run_id=run_id, url=db, data={'module_type': 'alu', 'bitwidth': width})
     assert res['ingested'], res
     from src.xdb.explain import summarize_run
     return proj, paths, res, summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+
+
+@pytest.fixture(scope='module')
+def unsigned_run(db, tmp_path_factory):
+    return _ingest_alu(db, tmp_path_factory, 'unsigned_alu', 'alu_16bit', 16, 'unsigned_run')
+
+
+# The second fixed example: simulation #109, the same fault at 8 bits, with scenarios
+# whose results are all right. Checked against every input: SLT and SRA are its only bugs.
+@pytest.fixture(scope='module')
+def unsigned_run_8(db, tmp_path_factory):
+    return _ingest_alu(db, tmp_path_factory, 'unsigned_alu_8', 'alu_8bit', 8, 'unsigned_run_8')
+
+
+def test_an_8_bit_run_reads_like_a_16_bit_run(unsigned_run_8):
+    res, s = unsigned_run_8[2], unsigned_run_8[3]
+    assert res['verdicts'] == {'pass': 45, 'design_wrong': 5}
+    probs = s['problems']
+    assert [p['title'] for p in probs] == ['The design compares SLT operands as unsigned numbers',
+                                           'The design shifts SRA with zeros instead of copying the sign bit',
+                                           'The scenarios mix two meanings of overflow']
+    assert s['overview']['counts'] == {'design': 2, 'scenario': 1, 'test': 0, 'coverage': 0}
+
+
+def test_each_design_card_names_its_own_consequence(unsigned_run_8):
+    slt, sra = unsigned_run_8[3]['problems'][:2]
+    assert slt['detail'].endswith('The zero flag of these examples is wrong too, as a consequence.')
+    assert sra['detail'].endswith('The negative flag of these examples is wrong too, as a consequence.')
+
+
+def test_one_overflow_card_says_what_it_relies_on(unsigned_run_8):
+    card = unsigned_run_8[3]['problems'][2]
+    assert card['who'] == 'scenario' and card['explain'] == {'kind': 'global', 'port': 'overflow'}
+    # 127 + 1 states overflow and only signed overflow gives that; the other three follow carry/borrow
+    assert card['detail'].startswith('Where the two meanings differ, 3 examples, in ADD and SUB, follow unsigned '
+                                     'carry/borrow and 1 example follows signed overflow.')
+    assert ("Overflow is judged as signed overflow, the design template's definition, because Step 0 did not "
+            "decide it. The design is right.") in card['detail']
+
+
+def test_scenarios_that_keep_to_one_other_meaning_are_called_that(db, tmp_path_factory):
+    fixed = lambda text: re.sub(r'(\| *127 *\| *1 *\|[^\n]*?\| *)True', r'\1False', text, count=1)
+    s = _ingest_alu(db, tmp_path_factory, 'unsigned_alu_8', 'alu_8bit', 8, 'one_meaning', edit=fixed)[3]
+    card = next(p for p in s['problems'] if 'overflow' in p['title'])
+    assert card['title'] == 'The scenarios treat overflow as unsigned carry/borrow'
+    assert card['detail'].startswith('All 4 wrong overflow flags, in ADD and SUB, fit that meaning.')
+
+
+def test_a_signed_result_is_shown_as_signed_too(unsigned_run_8, db):
+    from src.xdb.explain import explain_check
+    sra = unsigned_run_8[3]['problems'][1]['detail']
+    assert 'SRA with A = 0xFF (-1 as signed), B = 1: the design gives 127, correct is 0xFF (-1 as signed).' in sra
+    x = explain_check('ALU-SRA-001/r3', sim_run_id=unsigned_run_8[3]['sim_run_id'], url=db)
+    assert x['plain']['lines'][0] == ('The design is wrong. It gives result = 127; the correct value is '
+                                      '0xFF (-1 as signed), as the scenario expects.')
+    assert x['plain']['lines'][1].startswith('Why 0xFF (-1 as signed): ')
+    y = explain_check('ALU-SLT-001/r3', sim_run_id=unsigned_run_8[3]['sim_run_id'], url=db)
+    assert '(a = 0xFF (-1 as signed), b = 0xFF (-1 as signed)) passed' in y['text']
+
+
+def test_details_list_every_flag_the_probe_saw(unsigned_run_8, db):
+    """The scenario states only zero, the card says negative is wrong: Details must say so too."""
+    from src.xdb.explain import explain_check
+    run_id = unsigned_run_8[3]['sim_run_id']
+    x = explain_check('ALU-SRA-001/r3', sim_run_id=run_id, url=db)
+    flags = {f['port']: f for f in x['structure']['probed']}
+    assert list(flags) == ['zero', 'negative']                  # the rule defines no overflow for SRA
+    assert (flags['negative']['stated'], flags['negative']['observed'], flags['negative']['rule_value'],
+            flags['negative']['verdict']) == (None, 0, 1, 'design_wrong')
+    assert x['plain']['lines'][-3:] == [
+        "The design's negative flag is 0, but it should be 1 — a consequence of the wrong result.",
+        'The zero flag is correct.',
+        'The scenario does not state the negative flag.']
+    assert 'negative = 0 ✗ design wrong (scenario not stated, rule 1)' in x['text']
+    ok = explain_check('ALU-SRA-001/r1', sim_run_id=run_id, url=db)
+    assert ok['plain']['lines'][-2:] == ['The zero and negative flags are correct.',
+                                         'The scenario does not state the negative flag.']
+
+
+# The third fixed example: simulation #111, 32 bits, Step 0 answered. Its shifter has no stage
+# for bit 4 of B. A separate simulation showed that SRA has the fault too; its examples cannot.
+@pytest.fixture(scope='module')
+def shift_run(db, tmp_path_factory):
+    return _ingest_alu(db, tmp_path_factory, 'shift_alu', 'alu_32bit', 32, 'shift_run')
+
+
+def test_the_verdicts_of_the_shift_run_stay(shift_run):
+    assert shift_run[2]['verdicts'] == {'pass': 42, 'design_wrong': 6, 'scenario_wrong': 2}
+
+
+def test_shifts_that_lose_the_same_bit_are_one_card(shift_run):
+    probs = shift_run[3]['problems']
+    assert [p['title'] for p in probs] == ['The design ignores bit 4 of the shift amount',
+                                           'The design compares SLT operands as unsigned numbers',
+                                           '2 scenario examples expect a wrong AND result',
+                                           'The scenarios mix two meanings of overflow',
+                                           'A scenario states a wrong negative flag for SUB',
+                                           'A requirement is not tested by any scenario']
+    assert 'ops' not in probs[0]
+    assert probs[0]['detail'] == (
+        '2 of 10 SLL and SRL examples give a wrong result. E.g. SLL with A = 1, B = 31: the design gives '
+        '32768 (0x00008000), correct is 2147483648 (0x80000000). All 10 SLL and SRL examples fit this, so '
+        'bit 4 of B must shift by 16 more positions. The 5 SRA examples pass, but none of them can show this '
+        'fault, so SRA may have it too: SRA with A = 0x80000000 (-2147483648 as signed), B = 16 would show it, '
+        'correct is 0xFFFF8000 (-32768 as signed), with this fault 0x80000000 (-2147483648 as signed). '
+        'The negative flag of these examples is wrong too, as a consequence.')
+
+
+def test_details_of_a_lost_bit_name_the_cause(shift_run, db):
+    from src.xdb.explain import explain_check
+    x = explain_check('ALU-SRL-001/r3', sim_run_id=shift_run[3]['sim_run_id'], url=db)
+    assert x['structure']['cause']['bit'] == 4
+    assert ('Cause: the design ignores bit 4 of the shift amount. That reproduces all 5 SRL examples, so '
+            'bit 4 of B must shift by 16 more positions.') in x['plain']['lines']
+    assert any(ln.endswith('passed: the fault does not show on these values.') for ln in x['plain']['lines'])
+
+
+def test_mixed_overflow_meanings_are_not_called_one_meaning(shift_run, db):
+    from src.xdb.explain import explain_global
+    s = shift_run[3]
+    card = next(p for p in s['problems'] if 'overflow' in p['title'])
+    assert card['detail'].startswith('Where the two meanings differ, 2 examples, in ADD and SUB, follow unsigned '
+                                     'carry/borrow and 4 examples follow signed overflow. E.g. ADD with A = 4294967295')
+    assert 'Overflow is judged as signed overflow, as decided in Step 0. The design is right.' in card['detail']
+    g = explain_global(s['feature_id'], 'overflow', 'True', url=db)
+    alt = g['structure']['rule_check']['alternative']
+    assert (alt['follows_other'], alt['follows_rule']) == (2, 4)
+    assert any(ln.startswith('The scenarios mix two meanings of “overflow”: where they differ, 2 examples')
+               for ln in g['plain']['lines'])
+    assert 'so the specification mixes both.' in g['text']
+
+
+def test_a_checked_flag_requirement_is_not_called_untested(shift_run, db):
+    from src.xdb.explain import explain_requirement
+    s = shift_run[3]
+    st = {r['req_key']: r for r in s['requirements']}
+    assert st['REQ-11']['status'] == 'not_covered'     # reset: nothing in the run touched it
+    r12 = st['REQ-12']
+    assert (r12['status'], r12['probe_rows'], r12['probe_right']) == ('checked_unlinked', 50, 46)
+    assert [p['detail'] for p in s['problems'] if p['who'] == 'coverage'] == [f"“{st['REQ-11']['text'].rstrip('.')}”"]
+    x = explain_requirement(r12['requirement_id'], sim_run_id=s['sim_run_id'], url=db)
+    assert x['plain']['lines'][0] == ('No scenario is linked to it, but the extra simulation checked the zero flag '
+                                      'in all 50 examples: 46 right, 4 wrong.')
+
+
+def test_the_model_call_of_step_0_reaches_the_database(db, tmp_path_factory):
+    from sqlalchemy import create_engine, text
+    from src import experiment_logger
+    record = json.loads((ROOT / 'tests/data/shift_alu/requirements.json').read_text(encoding='utf-8'))
+    conn = sqlite3.connect(experiment_logger.DB_PATH)
+    conn.execute("INSERT INTO llm_calls (created_at, provider, model, task_type, run_id, prompt, response, success, "
+                 "extra) VALUES ('2026-11-05T18:33:08Z', 'QwenProvider3', 'qwen3-coder-next', "
+                 "'web_requirements_analysis', ?, 'PROMPT', 'REPLY', 1, '{\"prompt_template_version\": \"v2\"}')",
+                 (record['analysis_run_id'],))
+    conn.commit()
+    conn.close()
+    _ingest_alu(db, tmp_path_factory, 'shift_alu', 'alu_32bit', 32, 'step0_call')     # Step 0 has another run id
+    with create_engine(db).connect() as c:
+        call, version = c.execute(text("SELECT l.id, l.prompt_version FROM llm_call l JOIN session s "
+                                       "ON s.id = l.session_id WHERE l.task_type = 'web_requirements_analysis' "
+                                       "AND s.run_id = 'step0_call'")).one()
+        refs = c.execute(text("SELECT DISTINCT r.prov_ref FROM requirement r JOIN session s ON s.id = r.session_id "
+                              "WHERE s.run_id = 'step0_call'")).scalars().all()
+    assert refs == [f'llm_call:{call}'] and version == 'v2'
+
+
+def test_a_wrong_flag_on_a_wrong_scenario_row_stays_on_its_card(shift_run):
+    card = next(p for p in shift_run[3]['problems'] if 'wrong AND result' in p['title'])
+    assert card['detail'].endswith('The design is right. In 1 of them the negative flag is stated wrongly too.')
+
+
+@pytest.fixture(scope='module')
+def flag_run(db, tmp_path_factory):
+    """The shift run with two planted flag faults: the scenario states a wrong negative flag on an
+    SLT row the design fails, and the design gets the zero flag wrong on AND rows it computes right."""
+    def scenario(text):
+        new, n = re.subn(r'(\| -1 +\| 0 +\| 1000 +\| 1 +\| False +\| )False', r'\1True', text)
+        assert n == 1
+        return new
+
+    def design(text):
+        old = 'zero <= (temp_result == 32\'b0);'
+        assert text.count(old) == 1, text.count(old)
+        return text.replace(old, "zero <= (temp_result == 32'b0) ^ (opcode == 4'b0010 && a[1]);")
+
+    return _ingest_alu(db, tmp_path_factory, 'shift_alu', 'alu_32bit', 32, 'flag_run', edit=scenario,
+                       edit_design=design)[3]
+
+
+def test_a_scenario_flag_is_not_the_design_s_consequence(flag_run):
+    titles = [p['title'] for p in flag_run['problems']]
+    assert 'A scenario states a wrong negative flag for SLT' in titles
+    card = next(p for p in flag_run['problems'] if p['title'] == 'A scenario states a wrong negative flag for SLT')
+    assert card['detail'].endswith("The design's negative flag is right, though its result is wrong.")
+    slt = next(p for p in flag_run['problems'] if p['title'].startswith('The design compares SLT'))
+    assert 'negative flag' not in slt['detail']         # the design's negative flag is right
+    assert 'The zero flag of these examples is wrong too' in slt['detail']
+
+
+def test_a_design_flag_is_not_lost_on_a_row_the_scenario_got_wrong(flag_run):
+    card = next(p for p in flag_run['problems'] if p['title'] == "The design's zero flag is wrong for AND")
+    assert card['who'] == 'design' and card['severity'] == 'error'
+
+
+def test_a_lost_bit_needs_one_bit_that_fits_every_row():
+    from src.xdb import library as L
+    assert L.alu_mixup('SLL', [(1, 31, 1 << 15), (1, 1, 2)], 32)['bit'] == 4
+    assert L.alu_mixup('SRA', [(0x80000000, 16, 0x80000000)], 32)['bit'] == 4
+    assert L.alu_mixup('SLL', [(1, 31, 1 << 15), (1, 16, 1 << 16)], 32) is None     # bit 4 works here
+    assert L.alu_mixup('SLL', [(0, 31, 1)], 32) is None                              # no bit explains it
+    assert L.alu_mixup('SLL', [(1, 3, 1)], 32) is None                               # bit 0 or bit 1: unknown
+    assert L.alu_mixup('SLL', [(1, 31, 1 << 31)], 32) is None                        # nothing is wrong
+    assert L.alu_shift_hidden('SRA', [(0xFFFFFFFF, 31, 0xFFFFFFFF)], 4, 32)
+    assert not L.alu_shift_hidden('SRA', [(0x80000000, 16, 0xFFFF8000)], 4, 32)
+    assert L.alu_shift_witness('SRL', 4, 32) == (0x80000000, 16, 0x8000, 0x80000000)
 
 
 def test_a_run_has_the_same_verdicts_as_before_the_wording_changed(unsigned_run):
@@ -1809,6 +2119,25 @@ def test_one_card_per_root_cause_with_the_true_count(unsigned_run):
                           'scenario makes the same mistake.')
     assert 'All 8 SLT examples fit this, so the comparison needs $signed on both operands.' in slt
     assert not any('repeats a mistake' in p['title'] for p in s['problems'])
+
+
+def test_a_scenario_mistake_the_design_repeats_gets_its_own_card(unsigned_run):
+    s = unsigned_run[3]
+    card = next(p for p in s['problems'] if p['title'] == '2 scenario examples expect a wrong SLT result')
+    assert card['who'] == 'scenario'
+    assert card['detail'] == ('E.g. SLT with A = 32767 (0x7FFF), B = 0x8000 (-32768 as signed): the scenario expects 1, '
+                              'correct is 0. The design gives the same wrong value, so the test passes.')
+    assert card['explain']['tag'] == 'BDD:ALU-SLT-001/r4'
+    assert s['overview']['counts'] == {'design': 2, 'scenario': 5, 'test': 0, 'coverage': 0}
+
+
+def test_a_scenario_card_keeps_saying_who_is_right():
+    from src.xdb.explain import _with_repeats
+    text = 'E.g. x: the scenario expects 1, correct is 0. The design is right.'
+    assert _with_repeats(text, 2, 0) == text
+    assert _with_repeats(text, 0, 2).endswith('The design gives the same wrong value, so the test passes.')
+    assert _with_repeats(text, 2, 1).endswith('The design is right. In 1 of them the design gives the same wrong '
+                                              'value, so the test passes.')
 
 
 def test_a_signed_operand_is_shown_as_signed(unsigned_run):
@@ -1845,3 +2174,19 @@ def test_a_cause_needs_every_example(unsigned_run):
     assert L.alu_mixup('SLT', rows, 16)['rows'] == 3
     assert L.alu_mixup('SLT', rows + [(5, 3, 1)], 16) is None      # one row no mix-up explains: cause unknown
     assert L.alu_mixup('SLT', [(1, 2, 1)], 16) is None             # nothing is wrong
+
+
+def test_the_same_files_stored_without_their_scenarios_do_not_replace_the_run(unsigned_run, db):
+    """Asking for a report with only the testbench and the log stores a second,
+    thin record of the same files. The page must keep reading the full one."""
+    from src.xdb import models as M, repair
+    from src import xdb
+    from src.xdb.explain import summarize_run
+    from src.xdb.ingest import ingest_run
+    proj, paths, _, full = unsigned_run
+    thin = ingest_run(proj, {'testbench': paths['testbench'], 'log': paths['log']}, url=db, data={})
+    assert thin['ingested'] and thin['sim_run_id'] != full['sim_run_id']
+    q = {'testbench_path': paths['testbench'], 'log_file': paths['log']}
+    assert summarize_run(proj, q, url=db)['sim_run_id'] == full['sim_run_id']
+    with xdb.session_scope(db) as s:
+        assert repair.find_run(s, proj, q)[0].id == full['sim_run_id']

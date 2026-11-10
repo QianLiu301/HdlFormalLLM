@@ -3,7 +3,8 @@ Requirements confirmation (web Step 0).
 
 One LLM call splits the user's design description into atomic requirements
 and lists the points it leaves open, each with concrete options and a
-recommended default. The user edits the list and picks answers; the result
+preselected default (an unchanged standard description needs no call, see
+design_templates.py). The user edits the list and picks answers; the result
 is saved as one JSON file under output/requirements/. Step 1 (DUV) and
 Step 2 (BDD) both receive the path, read the same file, and append the same
 text to their prompts (prompt_store.decisions_block), so the two generators
@@ -36,11 +37,57 @@ FIXED_QUESTIONS = {
     'alu': [{'topic': 'overflow', 'question': OVERFLOW_QUESTION,
              'options': [OVERFLOW_SIGNED, OVERFLOW_CARRY], 'default': 0,
              'why': ('"Overflow" is used for both. The design and the scenarios are generated '
-                     'separately, so they must be told the same meaning; the recommended answer '
-                     "is the tool's design template."),
+                     'separately, so they must be told the same meaning. The preselected answer '
+                     "is what the tool's design template uses."),
              'fixed': True}],
 }
 FIXED_QUESTIONS['alu_comb'] = FIXED_QUESTIONS['alu']
+
+# Points the reference model has already fixed. They are not choices: the verdicts
+# use these rules (TestbenchGenerator._reference_result, src/xdb/library.py), so an
+# answer that differs could only be reported as wrong. Step 0 shows them, drops the
+# model's questions about them, and both generators receive them. Keep in step with
+# those rules. A question naming these operations is about them: in 21 logged ALU
+# analyses every question on a shift or on SLT/SLTU was settled by the rules.
+SETTLED_TOPICS = {'alu': re.compile(r'\b(SLL|SRL|SRA|SLTU?)\b|\bshift', re.I)}
+SETTLED_TOPICS['alu_comb'] = SETTLED_TOPICS['alu']
+
+
+def settled_facts(module_type: Optional[str], bitwidth=None) -> List[Dict]:
+    """What the reference model fixes for this module type, [{id, fact}]."""
+    if (module_type or '').strip() not in SETTLED_TOPICS:
+        return []
+    try:
+        w = int(bitwidth or 32)
+    except (TypeError, ValueError):
+        w = 32
+    power_of_two = w > 0 and w & (w - 1) == 0
+    amount = f'the low {w.bit_length() - 1} bits of B' if power_of_two else f'B masked with {w - 1}'
+    facts = [f'A shift moves by {amount}; the other bits of B are ignored.',
+             'SLL and SRL fill with zeros; SRA copies the sign bit of A.',
+             'SLT compares as signed numbers, SLTU as unsigned. Both are strict, so A == B gives 0, '
+             'and the result is 0 or 1.',
+             f'ADD and SUB wrap to {w} bits.',
+             'zero is 1 when result is 0, and negative is the top bit of result, for every operation.']
+    return [{'id': f'F{i}', 'fact': f} for i, f in enumerate(facts, 1)]
+
+
+def settled_lines(module_type: Optional[str], bitwidth=None) -> str:
+    """The same facts as text for the analysis prompt."""
+    return '\n'.join(f"- {f['fact']}" for f in settled_facts(module_type, bitwidth)) \
+        or '(nothing is fixed for this module type)'
+
+
+def add_settled(analysis: Dict, module_type: Optional[str], bitwidth=None) -> Dict:
+    """Drop the model's questions about settled points and list the facts instead."""
+    facts = settled_facts(module_type, bitwidth)
+    if not facts:
+        return analysis
+    topic = SETTLED_TOPICS[(module_type or '').strip()]
+    qs = [q for q in analysis.get('questions') or [] if not topic.search(q.get('question') or '')]
+    for i, q in enumerate(qs, 1):
+        q['id'] = f'Q{i}'
+    return {**analysis, 'questions': qs, 'settled': facts}
 
 
 def add_fixed_questions(analysis: Dict, module_type: Optional[str]) -> Dict:
@@ -130,7 +177,7 @@ def build_record(payload: Dict) -> Tuple[Optional[Dict], Optional[str]]:
         t = (r.get('text') or '').strip() if isinstance(r, dict) else ''
         if not t:
             continue
-        src = r.get('source') if r.get('source') in ('llm', 'edited', 'user') else 'user'
+        src = r.get('source') if r.get('source') in ('llm', 'edited', 'user', 'template') else 'user'
         reqs.append({'id': f'REQ-{len(reqs) + 1}', 'text': t, 'source': src})
 
     questions, decisions = [], []
@@ -168,12 +215,15 @@ def build_record(payload: Dict) -> Tuple[Optional[Dict], Optional[str]]:
         'module_type': payload.get('module_type'),
         'config': payload.get('config') or {},
         'description': payload.get('description') or '',
+        'analysis_source': payload.get('source') or 'llm',     # template: no model was involved
         'analysis_llm': payload.get('llm'),
         'analysis_model': payload.get('model'),
         'accepted_all_defaults': bool(payload.get('accepted_all_defaults')),
         'requirements': reqs,
         'questions': questions,
         'decisions': decisions,
+        # from the rules, not from the page: this is what the verdicts will use
+        'settled': settled_facts(payload.get('module_type'), (payload.get('config') or {}).get('bitwidth')),
     }, None
 
 

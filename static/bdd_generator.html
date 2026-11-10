@@ -182,11 +182,25 @@
         .sim-failure-hint { font-size: 11px; color: var(--text-secondary); margin: 0 0 14px; line-height: 1.5; }
         /* Step 0 需求确认 */
         .req-hint { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; line-height: 1.5; }
+        #req-desc-note:empty { display: none; }
         .req-count { font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-left: 4px; }
         #req-desc { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; resize: vertical; }
-        .req-item { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-        .req-item .req-id { flex: 0 0 52px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); }
-        .req-item input { flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 6px; }
+        .req-designs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+        .req-design { text-align: left; background: none; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; cursor: pointer; font: inherit; color: var(--text-primary); }
+        .req-design strong { display: block; font-size: 13px; }
+        .req-design span { font-size: 11px; color: var(--text-secondary); }
+        .req-design.active { border: 2px solid var(--accent); padding: 9px 11px; }
+        .req-sizes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+        .req-size-label { font-size: 12px; color: var(--text-secondary); margin-left: 8px; }
+        .req-size-label:first-child { margin-left: 0; }
+        .req-size { background: none; border: 1px solid var(--border-color); border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px; color: var(--text-secondary); }
+        .req-size.active { border-color: var(--accent); color: var(--accent); }
+        @media (max-width: 640px) { .req-designs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        .req-item { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 2px; }
+        .req-item .req-id { flex: 0 0 52px; padding-top: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); }
+        .req-item textarea { flex: 1 1 auto; min-width: 0; min-height: 0; box-sizing: border-box; resize: none; overflow: hidden; font: inherit; font-size: 13px; line-height: 1.45; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-primary); }
+        .req-item textarea:hover { border-color: var(--border-color); }
+        .req-item textarea:focus { border-color: var(--accent); outline: none; }
         .req-item .req-del { flex: 0 0 auto; background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 16px; padding: 0 4px; }
         .req-item .req-del:hover { color: var(--error); }
         .req-q { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
@@ -194,7 +208,6 @@
         .req-q-why { font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; }
         .req-q label { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.45; padding: 4px 0; margin: 0; cursor: pointer; color: #333; font-weight: 400; text-transform: none; letter-spacing: normal; }
         .req-q label input { margin-top: 2px; flex: 0 0 auto; }
-        .req-q .req-rec { font-size: 10px; font-weight: 700; color: var(--accent); margin-left: 4px; white-space: nowrap; }
         .req-q .req-custom { width: 100%; box-sizing: border-box; margin-top: 4px; font-size: 12px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; }
         .req-block summary { font-size: 12px; color: var(--text-secondary); cursor: pointer; margin-bottom: 6px; }
         .req-block pre { white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; max-height: 260px; overflow: auto; }
@@ -1030,58 +1043,64 @@
                 <div class="step-number purple" id="step-0-num">0</div>
                 <div class="step-title-area">
                     <div class="step-title">📌 Requirements <span style="font-weight:400;color:var(--text-secondary);font-size:12px;">(optional)</span></div>
-                    <div class="step-subtitle">Confirm what the design must do before generating — answers are shared by Step 1 and Step 2</div>
+                    <div class="step-subtitle">Set the requirements once. The design and the tests both follow them.</div>
                 </div>
                 <div class="step-status pending" id="step-0-status">Optional</div>
                 <div class="step-toggle">▼</div>
             </div>
             <div class="step-content">
                 <div class="card" id="req-input-card">
-                    <div class="card-title">📝 Describe the design</div>
-                    <p class="req-hint">
-                        Module type and width come from the configuration below
-                        (<span id="req-config-label">—</span>). The model splits your description
-                        into requirements and asks about anything it leaves open.
-                    </p>
-                    <div class="form-group">
-                        <textarea id="req-desc" rows="5" placeholder="e.g. 32-bit counter with up, down and up-down modes, synchronous load, enable, overflow and zero flags"></textarea>
-                        <div style="margin-top:6px;"><span class="example-chip" onclick="fillReqFromConfig()">Fill from configuration</span></div>
+                    <div class="card-title">🧩 Choose a design</div>
+                    <div class="req-designs" id="req-designs">
+                        <button type="button" class="req-design" data-type="alu" onclick="setReqField('module', 'alu')"><strong>ALU</strong><span>10 operations</span></button>
+                        <button type="button" class="req-design" data-type="counter" onclick="setReqField('module', 'counter')"><strong>Counter</strong><span>Up, down, load</span></button>
+                        <button type="button" class="req-design" data-type="regfile" onclick="setReqField('module', 'regfile')"><strong>Register file</strong><span>Read and write</span></button>
+                        <button type="button" class="req-design" data-type="cpu" onclick="setReqField('module', 'cpu')"><strong>CPU</strong><span>RV32I pipeline</span></button>
                     </div>
-                    <div class="form-row">
+                    <div class="req-sizes" id="req-sizes"></div>
+                    <details class="req-block" id="req-desc-box" open>
+                        <summary>Description: <span id="req-config-label">—</span></summary>
+                        <textarea id="req-desc" rows="8" oninput="refreshReqNote()" placeholder="32-bit counter with up, down and up-down modes, synchronous load, enable, overflow and zero flags"></textarea>
+                    </details>
+                    <p class="req-hint" id="req-desc-note"></p>
+                    <div class="form-row" id="req-llm-row" style="display:none;">
                         <div class="form-group">
                             <label for="req-llm">LLM for the analysis</label>
                             <select id="req-llm">
-                                <option value="deepseek" selected>DeepSeek</option>
-                                <option value="openai">OpenAI GPT-5</option>
-                                <option value="mistral">Mistral</option>
-                                <option value="qwen">Qwen3 Coder</option>
-                                <option value="gemini">Gemini</option>
-                                <option value="gemma">Gemma 4 31B</option>
+                                <option value="qwen" selected>Qwen3 Coder</option>
                                 <option value="glm">GLM 5.3 Flash</option>
+                                <option value="gemma">Gemma 4 31B</option>
+                                <option value="openai">OpenAI GPT-5</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="mistral">Mistral</option>
+                                <option value="gemini">Gemini</option>
                             </select>
                         </div>
                     </div>
                     <div class="error-message" id="req-error"></div>
                     <button class="btn btn-primary" id="req-btn" onclick="analyzeRequirements()">
-                        <span id="req-btn-text">🔍 Analyze requirements</span>
+                        <span id="req-btn-text">Show requirements</span>
                         <div class="spinner" id="req-spinner" style="display: none;"></div>
                     </button>
                 </div>
 
                 <!-- 分析结果：可编辑的需求列表 + 需要拍板的问题 -->
                 <div class="card" id="req-review" style="display:none;">
-                    <div class="card-title">✅ Requirements <span class="req-count" id="req-count"></span></div>
+                    <div id="req-q-section">
+                        <div class="card-title">❓ Decide <span class="req-count" id="req-q-count"></span></div>
+                        <p class="req-hint" id="req-q-hint">Each answer changes what the design does and what the tests expect. One option is preselected; change it if your design needs another.</p>
+                        <div id="req-questions"></div>
+                    </div>
+
+                    <div class="card-title" style="margin-top:18px;">✅ Check the requirements <span class="req-count" id="req-count"></span></div>
                     <p class="req-hint" id="req-repair-note" style="display:none; color:#b45309;"></p>
                     <div id="req-list"></div>
                     <span class="example-chip" onclick="addRequirement()">+ Add requirement</span>
 
-                    <div class="card-title" style="margin-top:18px;">❓ Open questions <span class="req-count" id="req-q-count"></span></div>
-                    <p class="req-hint" id="req-q-hint">Each answer changes what the design does and what the tests expect. The recommended option is preselected.</p>
-                    <div id="req-questions"></div>
+                    <div id="req-settled"></div>
 
                     <div class="action-buttons">
-                        <button class="btn btn-primary" onclick="confirmRequirements(false)">✓ Confirm</button>
-                        <button class="btn btn-secondary" onclick="confirmRequirements(true)">Accept all recommended</button>
+                        <button class="btn btn-primary" onclick="confirmRequirements()">Confirm and continue</button>
                         <button class="btn btn-secondary" onclick="clearRequirements()">Discard</button>
                     </div>
                 </div>
@@ -1170,13 +1189,13 @@
                             <div class="form-group">
                                 <label>LLM Provider</label>
                                 <select id="hw-llm" onchange="onHwLlmChange()">
-                                    <option value="gemini" selected>Gemini</option>
-                                    <option value="mistral">Mistral</option>
-                                    <option value="deepseek">DeepSeek</option>
-                                    <option value="openai">OpenAI GPT-5</option>
-                                    <option value="qwen">Qwen3 Coder</option>
+                                    <option value="glm" selected>GLM 5.3 Flash</option>
                                     <option value="gemma">Gemma 4 31B</option>
-                                    <option value="glm">GLM 5.3 Flash</option>
+                                    <option value="qwen">Qwen3 Coder</option>
+                                    <option value="openai">OpenAI GPT-5</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="mistral">Mistral</option>
+                                    <option value="gemini">Gemini</option>
                                     <!-- <option value="claude">Claude</option> -->
                                     <!-- <option value="grok">Grok (xAI)</option> -->
                                 </select>
@@ -1568,13 +1587,13 @@
                         <div class="form-group">
                             <label>LLM Provider</label>
                             <select id="bdd-llm" onchange="onBddLlmChange()">
-                                <option value="gemini" selected>Gemini</option>
-                                <option value="mistral">Mistral</option>
-                                <option value="deepseek">DeepSeek</option>
-                                <option value="openai">OpenAI GPT-5</option>
-                                <option value="qwen">Qwen3 Coder</option>
+                                <option value="glm" selected>GLM 5.3 Flash</option>
                                 <option value="gemma">Gemma 4 31B</option>
-                                <option value="glm">GLM 5.3 Flash</option>
+                                <option value="qwen">Qwen3 Coder</option>
+                                <option value="openai">OpenAI GPT-5</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="mistral">Mistral</option>
+                                <option value="gemini">Gemini</option>
                                 <!-- <option value="claude">Claude</option> -->
                                 <!-- <option value="grok">Grok (xAI)</option> -->
                             </select>
@@ -3143,7 +3162,9 @@
         }
 
         function tbFilePath() {
-            return currentTbFilename ? `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}` : null;
+            if (!currentTbFilename) return null;
+            // the path Step 3 reported; rebuilding it from the model name broke for new models
+            return currentTbPath || `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}`;
         }
 
         function setFixStatus(where, msg, kind) {
@@ -3188,6 +3209,7 @@
                     module_type: currentDUT.moduleType, llm, model,
                     bitwidth: parseInt(currentDUT.bitwidth), depth: parseInt(currentDUT.depth),
                     pipeline_stages: parseInt(currentDUT.pipelineStages), input: '',
+                    user_request: hwRequestText(),
                     workflow_mode: currentWorkflowMode, sampling: collectSampling('hw'), ...promptPayload('hw'),
                     session_id: getSessionId(), run_id: currentRunId,
                     compile_fix_of: { duv_filepath: dutFilePath(),
@@ -3273,7 +3295,7 @@
 - SLT  (opcode 1000): 1 if A < B as signed values, else 0
 - SLTU (opcode 1001): 1 if A < B as unsigned values, else 0
 - Zero flag: high when result is 0, for every operation
-- Overflow flag: signed overflow, meaningful for ADD and SUB
+- Overflow flag, meaningful for ADD and SUB
 - Boundary value tests (0, 1, max, min, all-ones)
 - Contrast SRL against SRA on a negative operand
 - Contrast SLT against SLTU on the same operand pair`,
@@ -3397,6 +3419,7 @@
         // 后端读同一个文件、生成同一段文字拼进两边的 prompt。前端不自己拼文字，
         // 免得两边因为发送方式不同而出现差异。
         // ============================================================
+        let reqTemplateText = '';         // 最近一次填入的标准描述：没改过就跟着设计换
         let reqDraft = null;              // 分析结果 + 用户的编辑，尚未保存
         let currentRequirements = null;   // 已确认：{filepath, module_type, ...}
 
@@ -3420,27 +3443,77 @@
                 : `${c.module_type}, ${c.bitwidth}-bit`;
             const el = document.getElementById('req-config-label');
             if (el) el.textContent = label;
+            document.querySelectorAll('#req-designs .req-design').forEach(b =>
+                b.classList.toggle('active', b.dataset.type === c.module_type));
+            renderReqSizes(c);
+            const box = document.getElementById('req-desc');
+            if (box && (!box.value.trim() || box.value.trim() === reqTemplateText.trim())) fillReqFromConfig();
+            else if (box) refreshReqNote();
+        }
+
+        function reqFieldId(name) {
+            const spec = currentWorkflowMode === 'specification';
+            return { module: spec ? 'bdd-module-type' : 'hw-module', bitwidth: spec ? 'bdd-bitwidth' : 'hw-bitwidth',
+                     depth: spec ? 'bdd-depth' : 'hw-depth', pipeline: spec ? 'bdd-pipeline' : 'hw-pipeline' }[name];
+        }
+
+        /** Step 0 和 Step 1/2 共用一份配置：这里改的就是下方卡片里的下拉框。 */
+        function setReqField(name, value) {
+            const el = document.getElementById(reqFieldId(name));
+            if (!el || el.disabled || el.value === String(value)) return;
+            el.value = value;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            if (reqDraft || currentRequirements) clearRequirements();   // 那是上一个设计的需求
+        }
+
+        function renderReqSizes(c) {
+            const row = (label, field, current, unit) => {
+                const sel = document.getElementById(reqFieldId(field));
+                const values = sel ? Array.from(sel.options).map(o => parseInt(o.value, 10)) : [];
+                return `<span class="req-size-label">${label}</span>` + values.map(v =>
+                    `<button type="button" class="req-size${v === current ? ' active' : ''}"`
+                    + ` onclick="setReqField('${field}', ${v})">${v}${unit}</button>`).join('');
+            };
+            const rows = c.module_type === 'cpu' ? [row('Pipeline', 'pipeline', c.pipeline_stages, '-stage')]
+                : [row('Width', 'bitwidth', c.bitwidth, '-bit')];
+            if (c.module_type === 'regfile') rows.push(row('Registers', 'depth', c.depth, ''));
+            document.getElementById('req-sizes').innerHTML = rows.join('');
+        }
+
+        function reqStandardText() {
+            const c = activeConfig();
+            const tpl = BDD_TEMPLATES[c.module_type] || BDD_TEMPLATES.other;
+            return c.module_type === 'cpu' ? tpl(c.pipeline_stages)
+                : c.module_type === 'regfile' ? tpl(c.bitwidth, c.depth) : tpl(c.bitwidth);
         }
 
         function fillReqFromConfig() {
-            const c = activeConfig();
-            const tpl = BDD_TEMPLATES[c.module_type] || BDD_TEMPLATES.other;
-            document.getElementById('req-desc').value =
-                c.module_type === 'cpu' ? tpl(c.pipeline_stages)
-                : c.module_type === 'regfile' ? tpl(c.bitwidth, c.depth) : tpl(c.bitwidth);
-            refreshReqConfigLabel();
+            reqTemplateText = reqStandardText();
+            document.getElementById('req-desc').value = reqTemplateText;
+            refreshReqNote();
+        }
+
+        /** 标准描述不经过模型，改过的才需要选模型。与后端 design_templates 的判断相同。 */
+        function refreshReqNote() {
+            const standard = document.getElementById('req-desc').value.trim() === reqStandardText().trim();
+            document.getElementById('req-llm-row').style.display = standard ? 'none' : '';
+            document.getElementById('req-btn-text').textContent = standard ? 'Show requirements' : '🔍 Analyze requirements';
+            document.getElementById('req-desc-note').innerHTML = standard
+                ? ''
+                :'Your own description: a model reads it, so the wording can differ between runs. '
+                  + '<a href="#" onclick="fillReqFromConfig(); return false;">Use the standard description</a>';
         }
 
         function setReqLoading(on) {
             document.getElementById('req-btn').disabled = on;
             document.getElementById('req-spinner').style.display = on ? 'inline-block' : 'none';
-            document.getElementById('req-btn-text').textContent =
-                on ? 'Analyzing…' : '🔍 Analyze requirements';
+            if (on) document.getElementById('req-btn-text').textContent = 'Analyzing…';
+            else refreshReqNote();
         }
 
         async function analyzeRequirements() {
             const description = document.getElementById('req-desc').value.trim();
-            if (!description) { showError('req', 'Describe the design first, or click "Fill from configuration".'); return; }
+            if (!description) { showError('req', 'Describe the design first.'); return; }
             hideError('req');
             refreshReqConfigLabel();
             const cfg = activeConfig();
@@ -3473,7 +3546,7 @@
             const list = document.getElementById('req-list');
             list.innerHTML = reqDraft.requirements.map((r, i) =>
                 `<div class="req-item"><span class="req-id">REQ-${i + 1}</span>`
-                + `<input type="text" value="${escapeHtml(r.text)}" oninput="editRequirement(${i}, this.value)">`
+                + `<textarea rows="1" aria-label="Requirement ${i + 1}" oninput="editRequirement(${i}, this.value); growReqText(this)">${escapeHtml(r.text)}</textarea>`
                 + `<button class="req-del" title="Remove" onclick="removeRequirement(${i})">×</button></div>`
             ).join('') || '<p class="req-hint">No requirements. Add one below.</p>';
             document.getElementById('req-count').textContent = `(${reqDraft.requirements.length})`;
@@ -3485,36 +3558,54 @@
             note.style.display = note.textContent ? '' : 'none';
 
             const qs = reqDraft.questions;
+            document.getElementById('req-q-section').style.display = qs.length ? '' : 'none';
             document.getElementById('req-q-count').textContent = `(${qs.length})`;
-            document.getElementById('req-q-hint').style.display = qs.length ? '' : 'none';
             document.getElementById('req-questions').innerHTML = qs.length ? qs.map((q, i) => {
                 const opts = q.options.map((o, k) =>
                     `<label><input type="radio" name="req-q-${i}" ${q.chosen === k && !q.custom ? 'checked' : ''}`
                     + ` onchange="chooseAnswer(${i}, ${k})"><span>${escapeHtml(o)}`
-                    + `${k === q.default ? '<span class="req-rec">RECOMMENDED</span>' : ''}</span></label>`
+                    + `</span></label>`
                 ).join('');
                 return `<div class="req-q"><div class="req-q-text">${escapeHtml(q.id)}. ${escapeHtml(q.question)}</div>`
                      + (q.why ? `<div class="req-q-why">${escapeHtml(q.why)}</div>` : '')
                      + opts
                      + `<input class="req-custom" type="text" placeholder="Other (type your own answer)"`
                      + ` value="${escapeHtml(q.custom || '')}" oninput="customAnswer(${i}, this.value)"></div>`;
-            }).join('') : '<p class="req-hint">The model found nothing ambiguous.</p>';
+            }).join('') : '';
 
-            document.getElementById('req-review').style.display = 'block';
+            // A standard list already states these rules; only an edited description needs
+            // the reminder. Display only: both generators receive them in either case.
+            const fixed = reqDraft.source === 'template' ? [] : (reqDraft.settled || []);
+            document.getElementById('req-settled').innerHTML = fixed.length
+                ? `<details class="req-block" style="margin-top:14px;"><summary>🔒 Always checked (${fixed.length})</summary>`
+                  + '<p class="req-hint">The tests always use these rules, whatever you write above. '
+                  + 'A design that needs something else will be reported as wrong.</p>'
+                  + `<ul style="margin:0 0 12px 18px;font-size:13px;">${fixed.map(f => `<li>${escapeHtml(f.fact)}</li>`).join('')}</ul></details>`
+                : '';
+
+            const card = document.getElementById('req-review');
+            card.style.display = 'block';
             document.getElementById('req-confirmed').style.display = 'none';
+            list.querySelectorAll('textarea').forEach(growReqText);
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function growReqText(el) {
+            el.style.height = 'auto';
+            el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
         }
 
         function editRequirement(i, text) {
             const r = reqDraft.requirements[i];
             r.text = text;
-            if (r.source === 'llm') r.source = 'edited';
+            if (r.source === 'llm' || r.source === 'template') r.source = 'edited';
         }
         function removeRequirement(i) { reqDraft.requirements.splice(i, 1); renderReqReview(); }
         function addRequirement() {
             if (!reqDraft) return;
             reqDraft.requirements.push({ text: '', source: 'user' });
             renderReqReview();
-            const inputs = document.querySelectorAll('#req-list input');
+            const inputs = document.querySelectorAll('#req-list textarea');
             if (inputs.length) inputs[inputs.length - 1].focus();
         }
         function chooseAnswer(i, k) { reqDraft.questions[i].chosen = k; }
@@ -3528,14 +3619,14 @@
             });
         }
 
-        async function confirmRequirements(acceptDefaults) {
+        async function confirmRequirements() {
             if (!reqDraft) return;
-            const questions = reqDraft.questions.map(q => acceptDefaults
-                ? { ...q, chosen: q.default, custom: '' } : q);
+            const questions = reqDraft.questions;
             const payload = {
                 module_type: reqDraft.module_type, config: reqDraft.config,
                 description: reqDraft.description, llm: reqDraft.llm, model: reqDraft.model,
-                run_id: reqDraft.run_id, accepted_all_defaults: !!acceptDefaults,
+                run_id: reqDraft.run_id, source: reqDraft.source,
+                accepted_all_defaults: questions.every(q => q.chosen === q.default && !q.custom),
                 requirements: reqDraft.requirements, questions
             };
             try {
@@ -3547,7 +3638,6 @@
                 if (!data.success) throw new Error(data.error || `HTTP ${r.status}`);
                 currentRequirements = { filepath: data.filepath, module_type: reqDraft.module_type,
                                         requirements: data.requirements, decisions: data.decisions };
-                if (acceptDefaults) { reqDraft.questions = questions; }
                 hideError('req');
                 document.getElementById('req-confirmed-summary').innerHTML =
                     `<strong>${data.requirements.length}</strong> requirements and `
@@ -3561,6 +3651,10 @@
                 st.className = 'step-status completed';
                 st.textContent = 'Confirmed';
                 document.getElementById('step-0-num').classList.add('completed');
+                document.getElementById('step-0').classList.add('collapsed');
+                const next = document.getElementById(currentWorkflowMode === 'specification' ? 'step-2' : 'step-1');
+                next.classList.remove('collapsed');
+                next.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (e) {
                 showError('req', `Could not save: ${e.message}`);
             }
@@ -3598,6 +3692,8 @@
                 if (el) el.addEventListener('change', refreshReqConfigLabel);
             });
             refreshReqConfigLabel();
+            window.addEventListener('resize', () =>
+                document.querySelectorAll('#req-list textarea').forEach(growReqText));
         });
 
         function toggleStep(stepNum) {
@@ -3991,6 +4087,7 @@
 
             // Set current testbench info
             currentTbFilename = uploadedTbData.filename;
+            currentTbPath = `output/testbench/uploaded/${uploadedTbData.filename}`;
 
             // Update Step 3 status
             updateStepStatus(3, 'completed');
@@ -4599,6 +4696,14 @@
         // ============================================================
         // Hardware Generation
         // ============================================================
+        /** The words in the Step 1 box.
+         *  spec-first：不发送自然语言。该字段在后端会覆盖 module_type/bitwidth/
+         *  provider，而这一步的配置必须来自 BDD——留着它等于绕过同步。 */
+        function hwRequestText() {
+            return currentWorkflowMode === 'specification'
+                ? '' : document.getElementById('hw-input').value.trim();
+        }
+
         async function generateHardware() {
             const moduleType = document.getElementById('hw-module').value;
             const bitwidth = document.getElementById('hw-bitwidth').value;
@@ -4606,10 +4711,7 @@
             const pipelineStages = document.getElementById('hw-pipeline').value;
             const llm = document.getElementById('hw-llm').value;
             const model = (llm === 'openai' || llm === 'gemini') ? document.getElementById('hw-model').value : null;
-            // spec-first：不发送自然语言。该字段在后端会覆盖 module_type/bitwidth/
-            // provider，而这一步的配置必须来自 BDD——留着它等于绕过同步。
-            const naturalInput = currentWorkflowMode === 'specification'
-                ? '' : document.getElementById('hw-input').value.trim();
+            const naturalInput = hwRequestText();
             const useStreaming = document.getElementById('hw-stream').checked;
 
             hideError('hw');
@@ -5325,6 +5427,7 @@
         // Testbench Generation
         // ============================================================
         let currentTbFilename = null;
+        let currentTbPath = null;          // relative path Step 3 wrote
         let currentBDD = null;
 
         // ============================================================
@@ -5640,6 +5743,7 @@
                 if (!data.success) throw new Error(data.error || 'Generation failed');
 
                 currentTbFilename = data.filename;
+                currentTbPath = data.relpath || null;
                 document.getElementById('tb-filename').textContent = data.filename;
                 // Step 3 无 LLM 参与：由确定性模板从 BDD 场景编译而成
                 document.getElementById('tb-info').textContent =
@@ -5698,6 +5802,7 @@
             document.getElementById('tb-result').classList.remove('visible');
             document.getElementById('tb-preview').textContent = '';
             currentTbFilename = null;
+            currentTbPath = null;
             updateStepStatus(3, 'pending');
             document.getElementById('step-3-num').classList.remove('completed');
             if (currentBDD) {
@@ -5973,7 +6078,7 @@
             document.getElementById('sim-batch-result').classList.remove('visible');
 
             // Construct paths
-            const tbPath = `output/testbench/${currentBDD?.llm || 'default'}/${currentTbFilename}`;
+            const tbPath = tbFilePath();
 
             const dutPath = dutFilePath();
 
@@ -6377,6 +6482,7 @@
         /** Show the simulation of a repaired feature or design as if Step 3 and 4 had been run. */
         function showRepairedRun(r) {
             currentTbFilename = r.testbench_filename;
+            currentTbPath = r.testbench_path || null;
             document.getElementById('tb-filename').textContent = r.testbench_filename;
             if (r.testbench_content) document.getElementById('tb-preview').textContent = r.testbench_content;
             const sim = r.simulation || {};
@@ -6443,6 +6549,7 @@
                     module_type: currentDUT.moduleType, llm, model,
                     bitwidth: parseInt(currentDUT.bitwidth), depth: parseInt(currentDUT.depth),
                     pipeline_stages: parseInt(currentDUT.pipelineStages), input: '',
+                    user_request: hwRequestText(),
                     workflow_mode: currentWorkflowMode, sampling: collectSampling('hw'), ...promptPayload('hw'),
                     session_id: getSessionId(), run_id: currentRunId,
                     repair_of: { testbench_path: currentSimResult.paths.testbench_path,
@@ -6633,9 +6740,9 @@
         let lastTraceability = null;
         const REQ_LABEL = { verified: '✓ VERIFIED', verified_by_probe: '✓ VERIFIED', fail: '✗ FAIL',
                             stated_only: '⚠ NOT SIMULATED', not_tested: '⚠ NOT TESTED',
-                            not_covered: '⚠ NOT COVERED' };
+                            not_covered: '⚠ NOT COVERED', checked_unlinked: '✓ CHECKED, NOT LINKED' };
         const REQ_CLASS = { verified: 'pass', verified_by_probe: 'pass', fail: 'fail', stated_only: 'weak',
-                            not_tested: 'not_run', not_covered: 'not_run' };
+                            not_tested: 'not_run', not_covered: 'not_run', checked_unlinked: 'weak' };
 
         function renderCoverage(tr) {
             lastTraceability = tr;
@@ -6656,6 +6763,7 @@
                 if (n.fail) parts.push(`<span style="color:var(--error)">${n.fail} failing</span>`);
                 if (n.stated_only) parts.push(`<span class="scn-warn">${n.stated_only} stated but not simulated</span>`);
                 if (n.not_tested) parts.push(`<span class="scn-warn">${n.not_tested} not tested</span>`);
+                if (n.checked_unlinked) parts.push(`${n.checked_unlinked} checked by the flag probe, no scenario linked`);
                 if (n.not_covered) parts.push(`<span class="scn-warn">${n.not_covered} not covered by any scenario</span>`);
             } else {
                 const by = tr.by_status || {};

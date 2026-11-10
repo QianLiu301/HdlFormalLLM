@@ -1,0 +1,156 @@
+{
+ "version": 1,
+ "created_at": "2026-11-05T19:57:58",
+ "module_type": "alu",
+ "config": {
+  "module_type": "alu",
+  "bitwidth": 32,
+  "depth": 32,
+  "pipeline_stages": 5
+ },
+ "description": "32-bit ALU with 4-bit opcode selecting:\n- ADD  (opcode 0000): A + B\n- SUB  (opcode 0001): A - B\n- AND  (opcode 0010): A & B\n- OR   (opcode 0011): A | B\n- XOR  (opcode 0100): A ^ B\n- SLL  (opcode 0101): A << B, shift amount is the low 5 bits of B\n- SRL  (opcode 0110): A >> B, zero-filled\n- SRA  (opcode 0111): A >>> B, sign-extended\n- SLT  (opcode 1000): 1 if A < B as signed values, else 0\n- SLTU (opcode 1001): 1 if A < B as unsigned values, else 0\n- Zero flag: high when result is 0, for every operation\n- Overflow flag: signed overflow, meaningful for ADD and SUB\n- Boundary value tests (0, 1, max, min, all-ones)\n- Contrast SRL against SRA on a negative operand\n- Contrast SLT against SLTU on the same operand pair",
+ "analysis_llm": "qwen",
+ "analysis_model": null,
+ "accepted_all_defaults": false,
+ "requirements": [
+  {
+   "id": "REQ-1",
+   "text": "For opcode 4'b0000 (ADD), result = A + B (32-bit addition), overflow computed as signed overflow, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-2",
+   "text": "For opcode 4'b0001 (SUB), result = A - B (32-bit subtraction), overflow computed as signed overflow, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-3",
+   "text": "For opcode 4'b0010 (AND), result = A & B, overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-4",
+   "text": "For opcode 4'b0011 (OR), result = A | B, overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-5",
+   "text": "For opcode 4'b0100 (XOR), result = A ^ B, overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-6",
+   "text": "For opcode 4'b0101 (SLL), result = A << (B[4:0]), logical left shift by 0–31 bits, overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-7",
+   "text": "For opcode 4'b0110 (SRL), result = A >> (B[4:0]), logical right shift (zero-filled), overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-8",
+   "text": "For opcode 4'b0111 (SRA), result = A >>> (B[4:0]), arithmetic right shift (sign-extended), overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-9",
+   "text": "For opcode 4'b1000 (SLT), result = 1 if signed(A) < signed(B), else 0; overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-10",
+   "text": "For opcode 4'b1001 (SLTU), result = 1 if unsigned(A) < unsigned(B), else 0; overflow = 0, zero = (result == 0), negative = result[31].",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-11",
+   "text": "On synchronous reset (rst=1), all outputs (result, zero, overflow, negative) are set to 0 on the next rising clock edge.",
+   "source": "llm"
+  },
+  {
+   "id": "REQ-12",
+   "text": "The zero flag is 1 iff result == 0 for all operations.",
+   "source": "llm"
+  }
+ ],
+ "questions": [
+  {
+   "id": "Q1",
+   "question": "For SLL/SRL/SRA, should the shift amount be taken as B[4:0] (5 bits) or B[31:27] (high bits)?",
+   "options": [
+    "B[4:0] (low 5 bits), as is standard in RISC ISAs",
+    "B[31:27] (high 5 bits), to avoid using low bits that may be significant",
+    "B[9:5] (bits 5–9), as used in some older designs",
+    "B[4:0] only if B[31:5] == 0; otherwise undefined"
+   ],
+   "default": 0,
+   "why": "RISC ISAs (MIPS, RISC-V) use low 5 bits for shift amount in 32-bit registers; this is the expected convention and matches the user’s ‘low 5 bits of B’ phrasing."
+  },
+  {
+   "id": "Q2",
+   "question": "For SRA on a negative operand, does sign-extension mean replicating the sign bit into all high bits (arithmetic right shift) or zero-filling high bits (logical shift)?",
+   "options": [
+    "Arithmetic right shift: sign bit replicated (standard definition of >>>)",
+    "Logical right shift: high bits filled with sign bit only for the first shift, then zeros",
+    "Undefined behavior for negative operands (don’t care)",
+    "Zero-fill (i.e., same as SRL) for negative operands"
+   ],
+   "default": 0,
+   "why": "The user explicitly distinguishes SRA (sign-extended) from SRA (zero-filled), so SRA must be arithmetic (sign-extended), matching standard Verilog >>> semantics."
+  },
+  {
+   "id": "Q3",
+   "question": "For SLT/SLTU, what should the result be when A == B?",
+   "options": [
+    "0 (since A is not less than B)",
+    "1 (since A is less than or equal to B)",
+    "Undefined (don’t care)",
+    "Depends on overflow or carry flag"
+   ],
+   "default": 0,
+   "why": "The user defines SLT/SLTU as ‘1 if A < B …, else 0’, and strict less-than yields 0 when A == B; this is standard and unambiguous."
+  },
+  {
+   "id": "Q4",
+   "question": "What does the overflow flag mean?",
+   "options": [
+    "Signed overflow: the ADD/SUB result does not fit in W-bit two's complement (e.g. 8-bit 127 + 1)",
+    "Unsigned carry/borrow: ADD carries out of the top bit, SUB borrows when A < B (e.g. 8-bit 255 + 1)"
+   ],
+   "default": 0,
+   "why": "\"Overflow\" is used for both. The design and the scenarios are generated separately, so they must be told the same meaning; the recommended answer is the tool's design template."
+  }
+ ],
+ "decisions": [
+  {
+   "id": "D1",
+   "question_id": "Q1",
+   "question": "For SLL/SRL/SRA, should the shift amount be taken as B[4:0] (5 bits) or B[31:27] (high bits)?",
+   "answer": "B[4:0] (low 5 bits), as is standard in RISC ISAs",
+   "source": "default"
+  },
+  {
+   "id": "D2",
+   "question_id": "Q2",
+   "question": "For SRA on a negative operand, does sign-extension mean replicating the sign bit into all high bits (arithmetic right shift) or zero-filling high bits (logical shift)?",
+   "answer": "Arithmetic right shift: sign bit replicated (standard definition of >>>)",
+   "source": "default"
+  },
+  {
+   "id": "D3",
+   "question_id": "Q3",
+   "question": "For SLT/SLTU, what should the result be when A == B?",
+   "answer": "0 (since A is not less than B)",
+   "source": "default"
+  },
+  {
+   "id": "D4",
+   "question_id": "Q4",
+   "question": "What does the overflow flag mean?",
+   "answer": "Signed overflow: the ADD/SUB result does not fit in W-bit two's complement (e.g. 8-bit 127 + 1)",
+   "source": "default"
+  }
+ ],
+ "analysis_run_id": "web_20261105_193259_539fd961"
+}

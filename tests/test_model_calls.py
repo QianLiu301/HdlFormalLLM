@@ -33,7 +33,7 @@ class FakeModel:
         X.record_call_meta(finish_reason='stop' if ok else self.finish)
         return ok
 
-    def _call_api(self, prompt, max_tokens=None, system_prompt=None):
+    def _call_api(self, prompt, max_tokens=None, system_prompt=None, sampling=None):
         return 'answer' if self._answers(max_tokens) else ''
 
     def _call_api_stream(self, prompt, max_tokens=None, system_prompt=None):

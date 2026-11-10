@@ -163,7 +163,7 @@ def _md_decisions(record: Dict) -> str:
            'Points the description left open, and the answer that was given. The same '
            'text was added to the design prompt (Step 1) and the BDD prompt (Step 2).', '']
     if record.get('accepted_all_defaults'):
-        out += ['All recommended answers were accepted without changes.', '']
+        out += ['Every preselected answer was kept.', '']
     qs = {q['id']: q for q in record.get('questions') or []}
     for d in record.get('decisions') or []:
         q = qs.get(d.get('question_id'), {})
@@ -173,7 +173,7 @@ def _md_decisions(record: Dict) -> str:
         out.append('')
         for i, o in enumerate(q.get('options') or []):
             chosen = '**→**' if o == d['answer'] else '  '
-            rec = ' *(recommended)*' if i == q.get('default') else ''
+            rec = ' *(preselected)*' if i == q.get('default') else ''
             out.append(f"- {chosen} {o}{rec}")
         if d.get('source') == 'custom':
             out.append(f"- **→** {d['answer']} *(custom answer)*")

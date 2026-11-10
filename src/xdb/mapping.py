@@ -84,7 +84,8 @@ UNKNOWN_ACTION = 'the tool does not recognise this step, so it cannot tell wheth
 def blocked_steps(s, scenario_id: int) -> List[Dict]:
     """Given/When steps of a scenario that the web testbench does not do: steps
     the library marks as not executable (e.g. a write with write enable off),
-    and action (When) steps no rule recognises. A check of such a scenario
+    steps its tag leaves out (a write in a @read scenario), and action (When)
+    steps no rule recognises. A check of such a scenario
     shows what the testbench did, not what the scenario says, so it cannot
     decide whether the design or the scenario is wrong (design doc D29)."""
     rows = s.execute(select(M.ScenarioStep, M.StepMapping, M.CanonicalStep)
@@ -94,13 +95,19 @@ def blocked_steps(s, scenario_id: int) -> List[Dict]:
                      .outerjoin(M.CanonicalStep, M.CanonicalStep.id == M.StepMapping.canonical_step_id)
                      .where(M.ScenarioStep.scenario_id == scenario_id)
                      .order_by(M.ScenarioStep.position)).all()
-    out, in_when = [], False
+    out, in_when, ran = [], False, None
     for st, sm, cs in rows:
         if st.keyword in ('Given', 'When', 'Then'):
             in_when = st.keyword == 'When'
         if st.role != 'P':
             continue
-        why = L.not_executable((cs.params or {}).get('key') if cs else None)
+        key = (cs.params or {}).get('key') if cs else None
+        why = L.not_executable(key)
+        if not why and L.runs_by_tag(key):
+            if ran is None:
+                ran = {op for op in s.scalars(select(M.CheckItem.operation)
+                                              .where(M.CheckItem.scenario_id == scenario_id)) if op}
+            why = L.not_run(key, ran)
         if why:
             out.append({'text': f'{st.keyword} {st.surface_text}', 'why': why, 'kind': 'not_executable'})
         elif sm is not None and sm.canonical_step_id is None and in_when:
