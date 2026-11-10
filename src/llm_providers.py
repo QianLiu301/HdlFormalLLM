@@ -1259,7 +1259,7 @@ class OpenAIProvider(LLMProvider):
 
     GPT5_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-5.1-codex"]
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5-mini"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5.4-mini"):
         if not OPENAI_SDK_AVAILABLE:
             raise ImportError("OpenAI SDK required. Install with: pip install openai")
 
@@ -1273,8 +1273,18 @@ class OpenAIProvider(LLMProvider):
         self.max_retries = 3
 
     def _is_gpt5_model(self, model: str) -> bool:
-        """检查是否为 GPT-5 系列模型"""
-        return model in self.GPT5_MODELS
+        """GPT-5 family (gpt-5, gpt-5-mini, gpt-5.4-mini, gpt-5.5, ...): max_completion_tokens,
+        temperature fixed at 1. A fixed list left out every later version."""
+        return (model or '').lower().startswith('gpt-5')
+
+    # GPT-5 models reason before they answer, at "medium" unless told otherwise; for
+    # Verilog and Gherkin that cost 60-170 s per call (llm_calls, 2026-11). "low" keeps
+    # some reasoning and is accepted by every GPT-5 version (D49).
+    REASONING_EFFORT = 'low'
+
+    def _reasoning(self) -> Dict:
+        m = (self.model or '').lower()
+        return {'reasoning_effort': self.REASONING_EFFORT} if m.startswith('gpt-5') and 'codex' not in m else {}
 
     def _is_codex_model(self, model: str) -> bool:
         """
@@ -1388,6 +1398,7 @@ class OpenAIProvider(LLMProvider):
             if 'gpt-5' in self.model.lower():
                 params['max_completion_tokens'] = max_tokens
                 params['temperature'] = 1
+                params.update(self._reasoning())
             else:
                 params['max_tokens'] = max_tokens
                 params['temperature'] = 0.7
@@ -1479,6 +1490,7 @@ class OpenAIProvider(LLMProvider):
                     "model": self.model,
                     "messages": messages,
                     "max_completion_tokens": max_tokens,
+                    **self._reasoning(),
                 }
             else:
                 # 旧模型使用 max_tokens
@@ -1702,7 +1714,7 @@ Respond with ONLY the JSON object, no other text.
             max_tokens, _ = self._resolve_max_tokens(max_tokens, sampling)
             if self._is_gpt5_model(self.model):
                 params = {"model": self.model, "messages": messages,
-                          "max_completion_tokens": max_tokens}
+                          "max_completion_tokens": max_tokens, **self._reasoning()}
             else:
                 params = {"model": self.model, "messages": messages,
                           "max_tokens": max_tokens}
@@ -2779,7 +2791,7 @@ class LLMFactory:
             elif provider_type == 'local':
                 print("📝 Using Local Templates (FREE)")
             elif provider_type in ['openai', 'gpt', 'chatgpt']:
-                model = kwargs.get('model', 'gpt-5-mini')
+                model = kwargs.get('model', 'gpt-5.4-mini')
                 if 'gpt-5' in model:
                     if 'codex' in model.lower():
                         print(f"💰 Using OpenAI GPT-5 Codex (PAID) - Model: {model} [Completions API]")
@@ -2856,7 +2868,7 @@ class LLMConfig:
                 "api_key": ""
             },
             "openai": {
-                "model": "gpt-5-mini",
+                "model": "gpt-5.4-mini",
                 "api_key": ""
             },
             "claude": {

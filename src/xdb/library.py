@@ -499,7 +499,16 @@ def cannot_test(module_type: Optional[str], text: Optional[str]) -> Optional[str
     the cycle of a write, whichever scenario the model linked to the requirement."""
     if module_type == 'regfile' and _RF_SAME_CYCLE.search(text or ''):
         return step_by_key('RF.A.SAME_CYCLE')['why']
+    if module_type in ('alu', 'alu_comb') and _ALU_RESET.search(text or ''):
+        return ALU_RESET_WHY
     return None
+
+
+# The ALU testbench resets once, before the first example, and no ALU step asserts
+# reset later, so what reset does to the outputs is never observed (D48).
+_ALU_RESET = re.compile(r'\b(?:reset|rst)\b', re.I)
+ALU_RESET_WHY = ('the ALU testbench applies reset only once, before the first example, '
+                 'and no scenario step can apply it again')
 
 
 def step_by_key(key: Optional[str]) -> Optional[Dict]:

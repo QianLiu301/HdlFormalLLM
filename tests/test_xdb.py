@@ -743,7 +743,7 @@ def test_problems_list_in_plain_words(run, db):
     assert 'A scenario expects a wrong SUB result' in titles
     assert 'A scenario expects a wrong SRA result' in titles
     assert 'A scenario states a wrong zero flag for ADD' in titles
-    assert 'A requirement is not tested by any scenario' in titles         # REQ-3
+    assert 'The testbench cannot test a requirement' in titles             # REQ-3, reset (D48)
     assert s['overview']['ok'] is False and s['overview']['counts']['design'] == 1
     # no internal ids in what the user reads first
     for p in probs:
@@ -1850,6 +1850,9 @@ def test_only_the_same_cycle_requirement_is_out_of_reach():
     assert L.cannot_test('regfile', 'Concurrent read of the register being written returns old value')
     # the same words on another design: a counter's zero flag can be checked in its cycle
     assert not any(L.cannot_test('counter', t) for t in T._counter_requirements(32, 32, 5))
+    # D48: the ALU testbench resets once at the start, so the reset requirement is out of reach too
+    assert [t for t in T._alu_requirements(32, 32, 5) if L.cannot_test('alu', t)] == [
+        'On reset (rst = 1), result, zero, overflow and negative are 0 after the next rising clock edge.']
     assert L.not_run('RF.A.WRITE', {'READ'}) == L.TAG_SKIPS_STEP
     assert L.not_run('RF.A.WRITE', {'WRITE_READ'}) is None and L.not_run('RF.A.WRITE', set()) is None
 
@@ -1984,7 +1987,7 @@ def test_shifts_that_lose_the_same_bit_are_one_card(shift_run):
                                            '2 scenario examples expect a wrong AND result',
                                            'The scenarios mix two meanings of overflow',
                                            'A scenario states a wrong negative flag for SUB',
-                                           'A requirement is not tested by any scenario']
+                                           'The testbench cannot test a requirement']      # reset (D48)
     assert 'ops' not in probs[0]
     assert probs[0]['detail'] == (
         '2 of 10 SLL and SRL examples give a wrong result. E.g. SLL with A = 1, B = 31: the design gives '
@@ -2026,7 +2029,9 @@ def test_a_checked_flag_requirement_is_not_called_untested(shift_run, db):
     assert st['REQ-11']['status'] == 'not_covered'     # reset: nothing in the run touched it
     r12 = st['REQ-12']
     assert (r12['status'], r12['probe_rows'], r12['probe_right']) == ('checked_unlinked', 50, 46)
-    assert [p['detail'] for p in s['problems'] if p['who'] == 'coverage'] == [f"“{st['REQ-11']['text'].rstrip('.')}”"]
+    reset = [p['detail'] for p in s['problems'] if p['title'] == 'The testbench cannot test a requirement']
+    assert reset == [f"“{st['REQ-11']['text'].rstrip('.')}”: the ALU testbench applies reset only once, "
+                     f"before the first example, and no scenario step can apply it again."]   # D48
     x = explain_requirement(r12['requirement_id'], sim_run_id=s['sim_run_id'], url=db)
     assert x['plain']['lines'][0] == ('No scenario is linked to it, but the extra simulation checked the zero flag '
                                       'in all 50 examples: 46 right, 4 wrong.')
