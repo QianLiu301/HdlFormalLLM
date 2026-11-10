@@ -7,7 +7,7 @@ says what the user wants, what the sources were, how we work, where things
 stand and what comes next. Details live in the documents it points to.
 
 Read first: `CLAUDE.md`, then `docs/explainability_db_design.md` (decision
-log D1–D46, §1 users, §2 BDX mapping, §6d–§6j milestones and trial findings, §7a the
+log D1–D47, §1 users, §2 BDX mapping, §6d–§6j milestones and trial findings, §7a the
 explanation standard, §7b where the reference rules come from),
 `docs/explainability_db_setup.md` (how to run everything),
 `docs/research_outline.md` (candidate papers and feature roadmap R1–R7).
@@ -61,7 +61,7 @@ batch trial runner (R1), D29 (steps the testbench cannot run), D30
 (compile-error repair), D31 (CPU memory timing, prompt duv_cpu v2), D32
 (credentials), D33 (a CPU check counts only if the program got there), D34
 (empty answers), D35 (Step 4 says when it is waiting), D36 (the model list), D37 (a
-card is one thing to fix), D38 (what a card says must hold for the whole run), D39 (Step 0 offers only what can be honoured), D40 (an unchanged standard description needs no model), D41 (the Step 1 and Step 2 boxes reach the model), D42 (Step 0 shows the fixed rules only for an edited description), D43 (what the testbench cannot show is never called verified), D44 (Step 4 uses the testbench path Step 3 reports), D45 (the ALU reference checked against Verilog; rule sources in §7b), D46 (per-card code lines, checked local fixes and chat). 270 tests (`tests/`), browser checks in `tests/ui/`.
+card is one thing to fix), D38 (what a card says must hold for the whole run), D39 (Step 0 offers only what can be honoured), D40 (an unchanged standard description needs no model), D41 (the Step 1 and Step 2 boxes reach the model), D42 (Step 0 shows the fixed rules only for an edited description), D43 (what the testbench cannot show is never called verified), D44 (Step 4 uses the testbench path Step 3 reports), D45 (the ALU reference checked against Verilog; rule sources in §7b), D46 (per-card code lines, checked local fixes and chat), D47 (a regenerated testbench is numbered, not overwritten). 271 tests (`tests/`), browser checks in `tests/ui/`.
 
 Live site: master is 23dcb9a = the release before this work + the model list of D36
 (24fd642) + the Docker image installing `requirements-core.txt` instead of the

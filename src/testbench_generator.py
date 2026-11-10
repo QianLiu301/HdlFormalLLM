@@ -1356,6 +1356,13 @@ class TestbenchGenerator:
             else:
                 feature_name = bdd_path.stem
                 tb_filename = f"{feature_name}_tb.v"
+                # Step 3 again for the same feature (e.g. after a design repair) must not
+                # overwrite the earlier testbench: its simulation is found by the contents
+                # of the testbench and the log, so it could no longer be opened (D47).
+                n = 2
+                while (output_dir / tb_filename).exists():
+                    tb_filename = f"{feature_name}_tb_{n}.v"
+                    n += 1
 
             tb_path = output_dir / tb_filename
 

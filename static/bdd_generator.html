@@ -6515,6 +6515,8 @@
             currentTbFilename = r.testbench_filename;
             currentTbPath = r.testbench_path || null;
             document.getElementById('tb-filename').textContent = r.testbench_filename;
+            const simTb = document.getElementById('sim-tb-name');
+            if (simTb) simTb.textContent = r.testbench_filename;     // which testbench this result is for
             if (r.testbench_content) document.getElementById('tb-preview').textContent = r.testbench_content;
             const sim = r.simulation || {};
             if (!sim.success) throw new Error(sim.error || (sim.errors || []).join(', ') || 'Simulation failed');

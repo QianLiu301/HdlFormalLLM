@@ -2268,3 +2268,24 @@ def test_the_chat_under_a_card_is_grounded_stored_and_can_propose_a_change(run, 
     # the proposal from the chat is tested like any other fix, without a model call
     out, _ = XF.propose(s['sim_run_id'], [{'ops': ['SLTU']}], None, proposal=first['proposal'], url=db)
     assert out['accepted']
+
+
+def test_step3_again_keeps_the_earlier_testbench_so_its_run_still_opens(run, db):
+    """D47: the second testbench for the same feature is numbered; the first one stays,
+    so the simulation made with it is still found from its files."""
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.ingest import ingest_run
+    from src.xdb.explain import summarize_run
+    proj, paths = run
+    ingest_run(proj, paths, run_id='web_test_run', url=db, data={'bitwidth': 32})
+    first = (proj / paths['testbench']).read_bytes()
+    again = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(proj / paths['bdd']), {'module_type': 'alu', 'module_name': 'alu_32bit', 'bitwidth': 32})
+    import re as _re
+    assert again['success'] and _re.search(r'_tb_\d+\.v$', Path(again['filepath']).name)
+    assert Path(again['filepath']).name != Path(paths['testbench']).name
+    assert Path(again['filepath']).with_name(Path(again['filepath']).stem + '.scenarios.json').exists()
+    assert (proj / paths['testbench']).read_bytes() == first
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    assert s is not None and s['sim_run_id']
+    Path(again['filepath']).unlink()          # leave the module's project as the other tests expect
