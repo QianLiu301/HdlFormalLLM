@@ -1078,6 +1078,12 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
             _fix.attach_code(s, sim_run_id, problems)       # D46: lines to fix, per card
         except Exception as e:                               # never lose the explanations over it
             print(f'⚠️  locating the code of the problems failed: {e}')
+        files = None
+        try:                                                 # D52: the files and each card's place in them
+            idx = _sr.load_index(tb) or {}
+            files = _fix.attach_views(s, sim_run_id, problems, idx.get('catalog') or [])
+        except Exception as e:
+            print(f'⚠️  building the file views failed: {e}')
     return {'sim_run_id': sim_run_id, 'session_id': session_id, 'feature_id': feature_id,
             'repairs': repairs,
             'design': design_name, 'module_type': mt,
@@ -1085,7 +1091,7 @@ def summarize_run(project_root, paths: Dict[str, Optional[str]], url=None) -> Op
             'verdicts': verdicts, 'checks': checks, 'requirements': reqs,
             'compared_ports': compared_ports, 'probe': probe_info,
             'spec_check': spec, 'spec_check_text': render_spec_check(spec),
-            'problems': problems, 'overview': overview,
+            'problems': problems, 'overview': overview, 'files': files,
             'algorithm': ALGORITHM}
 
 

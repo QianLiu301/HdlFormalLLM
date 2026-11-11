@@ -88,3 +88,13 @@ def test_the_models_answer_is_read():
     p, err = F.parse_changes('Sure.\n{"changes": [{"line": 92, "new": "x"}], "why": "signed", "needs_other_lines": [33]}')
     assert err == '' and p['changes'] == [{'line': 92, 'new': 'x'}] and p['needs_other_lines'] == [33]
     assert F.parse_changes('no json here')[0] is None
+
+
+def test_each_examples_row_is_found_in_the_feature():
+    """D52: a check tag points at its line, so the file view can mark the row."""
+    idx = json.loads((DATA / 'alu_tb.scenarios.json').read_text(encoding='utf-8'))
+    feat = (DATA / 'alu.feature').read_text(encoding='utf-8')
+    rows = F.feature_row_lines(feat, idx['catalog'])
+    assert len(rows) == 50
+    line = feat.splitlines()[rows['BDD:ALU-SLT-001/r1'] - 1]
+    assert [c.strip() for c in line.strip().strip('|').split('|')][:2] == ['0', '0']   # SLT with A = 0, B = 0

@@ -2210,6 +2210,12 @@ def test_a_card_shows_its_lines_and_a_local_fix_is_checked_kept_and_recorded(run
     s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
     card = next(p for p in s['problems'] if p.get('fix') and 'design' in p['fix']['kinds'])
     assert card['fix']['ops'] == ['SLTU'] and [ln['no'] for ln in card['fix']['lines']] == [23]
+    # D52: the page shows both files and marks where the card is in them
+    assert 'SLTU' in s['files']['design']['text'] and 'Scenario' in s['files']['feature']['text']
+    assert {'file': 'design', 'line': 23, 'kind': 'design'} in card['marks']
+    rows = [m for m in card['marks'] if m['file'] == 'feature']
+    assert rows and all(m['kind'] == 'example' and 'correct:' in m['note'] for m in rows)
+    assert all('|' in s['files']['feature']['text'].splitlines()[m['line'] - 1] for m in rows)
 
     prompts = []
 
@@ -2223,6 +2229,10 @@ def test_a_card_shows_its_lines_and_a_local_fix_is_checked_kept_and_recorded(run
     assert out['summary']['scenario_right_after'] > out['summary']['scenario_right_before']
     assert '-            4\'b1001: result = ($signed(a)' in out['diff']
 
+    # lines the user selected work the same way (no card: the failing operations)
+    sel, _ = XF.propose(s['sim_run_id'], [{'ops': [], 'lines': [23]}], model, url=db)
+    assert sel['accepted'] and sel['groups'][0]['ops'] == ['SLTU']
+    XF.discard(sel['feedback_id'], url=db)
     kept, err = XF.keep(proj, out['feedback_id'], paths['duv'], url=db)
     assert err is None and kept['design_filename'] == 'alu_32bit_fix1.v'
     assert (proj / kept['design_path']).read_text(encoding='utf-8').count('(a < b) ? 1 : 0') == 1

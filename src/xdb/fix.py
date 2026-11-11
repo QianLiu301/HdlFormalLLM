@@ -193,11 +193,13 @@ def attach_code(s, run_id: int, problems: List[Dict]) -> None:
             continue
         tag = (p.get('explain') or {}).get('tag')
         ops = [o for o in (p.get('ops') or [ops_of.get(tag)]) if o]
+        port = _flag_port(p.get('title') or '')
+        if 'meanings of overflow' in (p.get('title') or ''):
+            ops, port = ['ADD', 'SUB'], 'overflow'           # its examples are in both
         if not ops:
             continue
         both = 'both the design and the scenario' in (p.get('title') or '')
         kinds = (['design', 'scenario'] if both else [p['who']])
-        port = _flag_port(p.get('title') or '')
         fix = {'kinds': kinds, 'ops': ops, 'port': port}
         if 'design' in kinds:
             found: Dict[int, Dict] = {}
@@ -213,6 +215,99 @@ def attach_code(s, run_id: int, problems: List[Dict]) -> None:
                 groups[key] = i
                 fix['covers'] = [i]
         p['fix'] = fix
+
+
+# ----------------------------------------------------------------- views (D52)
+
+def feature_row_lines(text: str, catalog: List[Dict]) -> Dict[str, int]:
+    """'BDD:<scenario>/r<n>' -> line number (1-based) of that Examples row in the feature."""
+    out: Dict[str, int] = {}
+    for entry in catalog or []:
+        span = entry.get('span') or []
+        if len(span) != 2 or not entry.get('id'):
+            continue
+        start, end = int(span[0]), int(span[1])
+        offset, row_no = start, 0
+        in_table, header_seen = False, False
+        for ln in text[start:end].splitlines(True):
+            stripped = ln.strip()
+            if re.match(r'Examples?\s*:', stripped):
+                in_table, header_seen = True, False
+            elif in_table and stripped.startswith('|'):
+                if not header_seen:
+                    header_seen = True
+                else:
+                    row_no += 1
+                    out[f"BDD:{entry['id']}/r{row_no}"] = text.count('\n', 0, offset) + 1
+            elif in_table and stripped:
+                in_table = False
+            offset += len(ln)
+    return out
+
+
+_SCEN_FAULT = ('scenario_wrong', 'both_wrong', 'consistent_wrong')
+
+
+def _dec_hex(v, w):
+    """The way the cards write a value: 2684354560 (0xA0000000)."""
+    v = int(v) % (1 << w)
+    return f'{v} (0x{v:X})'
+
+
+def attach_views(s, run_id: int, problems: List[Dict], catalog: List[Dict]) -> Optional[Dict]:
+    """The design and the feature as simulated, and for each card its marks in them:
+    {'file': 'design'|'feature', 'line', 'kind': 'design'|'scenario'|'example', 'note'}."""
+    from src.xdb.ingest import artifact_text
+    from src.xdb.explain import _probe_results, _probe_run_id
+    run = s.get(M.SimRun, run_id)
+    tb = s.get(M.Testbench, run.testbench_id)
+    sess = s.get(M.Session, tb.session_id)
+    design = s.get(M.Design, sess.design_id) if sess.design_id else None
+    w = (design.bitwidth if design else None) or 32
+    dut = s.get(M.Artifact, run.dut_artifact) if run.dut_artifact else None
+    feat_row = s.get(M.Feature, tb.feature_id) if tb.feature_id else None
+    feat = s.get(M.Artifact, feat_row.artifact) if feat_row else None
+    files = {}
+    if dut is not None:
+        files['design'] = {'name': dut.orig_name, 'text': artifact_text(dut)}
+    if feat is not None:
+        files['feature'] = {'name': feat.orig_name, 'text': artifact_text(feat)}
+    if not files:
+        return None
+    rows = feature_row_lines(files.get('feature', {}).get('text', ''), catalog)
+    main = [(ci, cr) for ci, cr in s.execute(select(M.CheckItem, M.CheckResult)
+                                             .join(M.CheckResult, M.CheckResult.check_id == M.CheckItem.id)
+                                             .where(M.CheckResult.sim_run_id == run_id, M.CheckItem.seq == 1))
+            if ci.tag.startswith('BDD:')]
+    probe = _probe_results(s, _probe_run_id(s, run_id))
+    for p in problems:
+        f = p.get('fix') or {}
+        marks: List[Dict] = [{'file': 'design', 'line': ln['no'], 'kind': 'design'} for ln in f.get('lines') or []]
+        ops, port, kinds = set(f.get('ops') or []), f.get('port'), f.get('kinds') or [p.get('who')]
+        tag = (p.get('explain') or {}).get('tag')
+        if not ops and tag:
+            ops = {ci.operation for ci, _ in main if ci.tag == tag}
+        if port:
+            for (t, pt), o in probe.items():
+                if pt == port and o.get('operation') in ops and o['verdict'] in (_SCEN_FAULT if 'scenario' in kinds
+                                                                                 else _DESIGN_FAULT) and t in rows:
+                    marks.append({'file': 'feature', 'line': rows[t], 'kind': 'scenario' if 'scenario' in kinds else 'example',
+                                  'note': f"{port} should be {o['rule_value']}"
+                                          + (f", the design gives {o['observed']}" if 'design' in kinds else '')})
+        else:
+            for ci, cr in main:
+                if ci.operation not in ops or ci.tag not in rows or (ci.port or 'result') != 'result':
+                    continue
+                if 'scenario' in kinds and cr.verdict in _SCEN_FAULT and ci.expected_ref is not None:
+                    marks.append({'file': 'feature', 'line': rows[ci.tag], 'kind': 'scenario',
+                                  'note': f'correct: {_dec_hex(ci.expected_ref, ci.width or w)}'})
+                elif 'design' in kinds and cr.verdict in _DESIGN_FAULT and ci.expected_ref is not None:
+                    got = _dec_hex(cr.observed_value, ci.width or w) if cr.observed_value is not None else 'x'
+                    marks.append({'file': 'feature', 'line': rows[ci.tag], 'kind': 'example',
+                                  'note': f'the design gives {got}, correct: {_dec_hex(ci.expected_ref, ci.width or w)}'})
+        seen = set()
+        p['marks'] = [m for m in marks if (m['file'], m['line']) not in seen and not seen.add((m['file'], m['line']))]
+    return files
 
 
 # ----------------------------------------------------------------- simulate
@@ -522,13 +617,23 @@ def propose(run_id: int, groups: List[Dict], call: Optional[Caller], note: str =
     results = []
     for g in groups:
         ops, port = [o for o in g.get('ops') or [] if o in ALU_OPS], g.get('port')
-        lines = []
-        for op in ops:
-            lines += locate(cur, op, port)
-        lines = sorted({ln['no']: ln for ln in lines}.values(), key=lambda ln: ln['no'])
+        if g.get('lines'):
+            # lines the user selected in the file view (D52); the checks are the same
+            src_lines = cur.splitlines()
+            chosen = sorted({int(n) for n in g['lines'] if str(n).isdigit() and 1 <= int(n) <= len(src_lines)})
+            lines = [{'no': n, 'text': src_lines[n - 1]} for n in chosen]
+            if not ops:                       # no card: the operations that fail anywhere
+                ops = [o for o in ctx['failing'] if o in ALU_OPS]
+        else:
+            lines = []
+            for op in ops:
+                lines += locate(cur, op, port)
+            lines = sorted({ln['no']: ln for ln in lines}.values(), key=lambda ln: ln['no'])
         r = {'ops': ops, 'port': port, 'lines': lines}
         if not lines:
-            results.append({**r, 'accepted': False, 'reason': 'the code of this operation was not found'})
+            results.append({**r, 'accepted': False,
+                            'reason': 'no lines selected' if g.get('lines') is not None
+                            else 'the code of this operation was not found'})
             continue
         if proposal is not None:
             parsed, perr = {'changes': proposal.get('changes') or [], 'why': proposal.get('why', ''),
@@ -631,9 +736,20 @@ def chat_facts(ctx: Dict, card: Dict) -> Tuple[str, List[Dict]]:
     for op in ops:
         for ln in locate(ctx['verilog'] or '', op, port):
             lines[ln['no']] = ln
+    sel = card.get('selection') or {}
+    if sel.get('file') == 'design' and sel.get('start'):
+        src_lines = (ctx['verilog'] or '').splitlines()
+        for n in range(int(sel['start']), int(sel.get('end') or sel['start']) + 1):
+            if 1 <= n <= len(src_lines):
+                lines[n] = {'no': n, 'text': src_lines[n - 1]}
+    if not ops:
+        ops = [o for o in ctx['failing'] if o in ALU_OPS]
     code = '\n'.join(f"{ln['no']:4d} | {ln['text']}" for ln in sorted(lines.values(), key=lambda x: x['no']))
-    txt = (f"The problem: {card.get('title', '')}\n{card.get('detail', '')}\n\n"
-           f"Design lines that compute it:\n{code or '(not found)'}\n\n{facts_text(ctx, ops, port)}")
+    txt = ((f"The problem: {card.get('title', '')}\n{card.get('detail', '')}\n\n" if card.get('title') else '')
+           + (f"The engineer selected lines {sel.get('start')}-{sel.get('end')} of the "
+              f"{'design' if sel.get('file') == 'design' else 'scenario file'}:\n{sel.get('text', '')[:3000]}\n\n"
+              if sel.get('text') else '')
+           + f"Design lines:\n{code or '(not found)'}\n\n{facts_text(ctx, ops, port)}")
     if ctx.get('overflow_answer'):
         txt += f"\n\nThe user chose in Step 0: overflow means {ctx['overflow_answer']}"
     return txt, sorted(lines.values(), key=lambda x: x['no'])

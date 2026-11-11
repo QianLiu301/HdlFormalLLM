@@ -294,6 +294,33 @@
         .pb-title { font-weight: 600; color: var(--text-primary); }
         .pb-detail { color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; }
         .pb-checked { margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+        /* D52: file view below the problems, one conversation */
+        .pb-item.pb-click { cursor: pointer; }
+        .pb-item.pb-sel { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45); }
+        .fv { margin-top: 12px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-primary, #fff); }
+        .fv-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border-color); background: rgba(148, 163, 184, 0.08); }
+        .fv-tab { border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 10px; font-size: 12.5px; font-weight: 600; color: var(--text-secondary); cursor: pointer; }
+        .fv-tab.on { background: var(--bg-primary, #fff); border-color: var(--border-color); color: var(--text-primary); }
+        .fv-name { font-weight: 400; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; }
+        .fv-hint { margin-left: auto; font-size: 11.5px; color: var(--text-secondary); }
+        .fv-body { max-height: 380px; overflow: auto; font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; padding: 4px 0; }
+        .fv-line { display: flex; white-space: pre; }
+        .fv-line .ln { flex: 0 0 3.6em; text-align: right; padding-right: 10px; color: var(--text-secondary); user-select: none; }
+        .fv-line .tx { flex: 1 1 auto; padding-right: 12px; }
+        .fv-line.mark-design { background: rgba(220, 38, 38, 0.07); }
+        .fv-line.mark-scenario { background: rgba(245, 158, 11, 0.10); }
+        .fv-line.mark-example { background: rgba(59, 130, 246, 0.07); }
+        .fv-line.sel.mark-design { background: rgba(220, 38, 38, 0.20); }
+        .fv-line.sel.mark-scenario { background: rgba(245, 158, 11, 0.28); }
+        .fv-line.sel.mark-example { background: rgba(59, 130, 246, 0.18); }
+        .fv-note { padding: 1px 12px 3px calc(3.6em + 10px); font: 11.5px/1.45 system-ui, -apple-system, sans-serif; white-space: normal; }
+        .fv-note.mark-design { color: var(--error); } .fv-note.mark-scenario { color: #b45309; } .fv-note.mark-example { color: #1d4ed8; }
+        .fv-bar { position: fixed; z-index: 1000; display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: #1e293b; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); }
+        .fv-bar button { border: 0; background: transparent; color: #fff; font-size: 12.5px; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+        .fv-bar button:hover { background: rgba(255, 255, 255, 0.14); }
+        .fv-chat { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; }
+        .fv-chat-head { font-size: 12px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 6px; }
+        .fv-chat-head .fv-about { margin-left: 6px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-primary); }
         /* D46: code lines, fixes and the conversation under each card */
         .pb-code { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.05); font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; overflow-x: auto; white-space: pre; }
         .pb-code .ln { color: var(--text-secondary); user-select: none; display: inline-block; min-width: 3.2em; }
@@ -1093,7 +1120,7 @@
                                 <option value="qwen" selected>Qwen3 Coder</option>
                                 <option value="glm">GLM 5.3 Flash</option>
                                 <option value="gemma">Gemma 4 31B</option>
-                                <option value="openai">OpenAI GPT-5</option>
+                                <option value="openai">OpenAI</option>
                                 <option value="deepseek">DeepSeek</option>
                                 <option value="mistral">Mistral</option>
                                 <option value="gemini">Gemini</option>
@@ -1215,7 +1242,7 @@
                                     <option value="glm" selected>GLM 5.3 Flash</option>
                                     <option value="gemma">Gemma 4 31B</option>
                                     <option value="qwen">Qwen3 Coder</option>
-                                    <option value="openai">OpenAI GPT-5</option>
+                                    <option value="openai">OpenAI</option>
                                     <option value="deepseek">DeepSeek</option>
                                     <option value="mistral">Mistral</option>
                                     <option value="gemini">Gemini</option>
@@ -1612,7 +1639,7 @@
                                 <option value="glm" selected>GLM 5.3 Flash</option>
                                 <option value="gemma">Gemma 4 31B</option>
                                 <option value="qwen">Qwen3 Coder</option>
-                                <option value="openai">OpenAI GPT-5</option>
+                                <option value="openai">OpenAI</option>
                                 <option value="deepseek">DeepSeek</option>
                                 <option value="mistral">Mistral</option>
                                 <option value="gemini">Gemini</option>
@@ -6421,7 +6448,8 @@
             const firstLimit = probs.findIndex(p => p.who === 'limit');
             document.getElementById('pb-list').innerHTML = probs.map((p, i) =>
                 (i === firstLimit ? `<div class="pb-limit-head">Not checked by this tool</div>` : '') +
-                `<div class="pb-item who-${escapeHtml(p.who)}" id="pb-item-${i}">`
+                `<div class="pb-item who-${escapeHtml(p.who)}${p.marks && p.marks.length ? ' pb-click' : ''}" `
+                + `id="pb-item-${i}" onclick="selectCard(${i}, event)">`
                 + `<span class="pb-tag">${escapeHtml(WHO_LABEL[p.who] || p.who)}</span>`
                 + `<div class="pb-text"><div class="pb-title">${escapeHtml(p.title)}</div>`
                 + `<div class="pb-detail">${escapeHtml(p.detail)}</div>`
@@ -6432,6 +6460,17 @@
             document.getElementById('pb-checked').innerHTML =
                 `<strong>What was checked:</strong> ${escapeHtml((ov.checked || []).join(' '))}`;
             renderRepairs(j);
+            // D52: the files below the problems, then one conversation
+            let fv = document.getElementById('fv');
+            if (!fv) {
+                document.getElementById('pb-actions').insertAdjacentHTML('afterend',
+                    '<div class="fv" id="fv"></div><div class="fv-chat" id="fv-chat"></div>');
+            }
+            fvSel = null;
+            fvSelection = null;
+            fvChat = { thread: null, turns: [], proposal: null, context: null };
+            renderFileView();
+            renderConversation();
             box.style.display = 'block';
         }
 
@@ -6639,7 +6678,6 @@
         // A fix changes only the lines shown on the card; the server checks
         // it (compile, same testbench, random inputs) before the user keeps it.
         // ============================================================
-        const cardChats = {};      // card index -> {thread, turns: [{role, text}], proposal}
 
         function fixModel() {
             const llm = designLlm() || document.getElementById('hw-llm').value;
@@ -6674,7 +6712,7 @@
             if (!f) return '';
             const kinds = f.kinds || [];
             let html = '';
-            if (kinds.includes('design') && (f.lines || []).length) html += codeBlock(f.lines);
+            // the lines themselves are shown, with their context, in the file view below (D52)
             const btns = [];
             if (kinds.includes('design') && f.same_as !== undefined) {
                 html += `<div class="pb-same">Same lines as the problem “${escapeHtml(probs[f.same_as].title)}”: `
@@ -6687,25 +6725,12 @@
             }
             if (btns.length) html += `<div class="pb-fixbar">${btns.join('')}</div>`;
             html += `<div class="pb-fixout" id="pb-fixout-${i}"></div>`;
-            html += `<div class="pb-chat"><div class="pb-chat-log" id="pb-chat-log-${i}">${renderChatLog(i)}</div>`
-                 + `<div class="pb-chat-row"><textarea id="pb-chat-in-${i}" rows="1" `
-                 + `placeholder="Ask about this problem, or say how it should be fixed…" `
-                 + `onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendChat(${i}); }"></textarea>`
-                 + `<button class="btn btn-secondary btn-sm" onclick="sendChat(${i})">Send</button></div></div>`;
             return html;
         }
 
-        function renderChatLog(i) {
-            const c = cardChats[i];
-            if (!c) return '';
-            return c.turns.map(t => `<div class="pb-msg ${t.role}"><span class="who">${t.role === 'user' ? 'You' : 'AI answer'}</span>`
-                + `${escapeHtml(t.text)}</div>`).join('')
-                + (c.proposal ? `<div class="pb-fixbar"><button class="btn btn-secondary btn-sm" onclick="testProposal(${i})">`
-                                + `Test this change</button></div>` : '');
-        }
-
         function setFixOut(i, html, kind) {
-            const el = i === null ? document.getElementById('pb-note') : document.getElementById(`pb-fixout-${i}`);
+            const el = i === null ? document.getElementById('pb-note')
+                : i === 'chat' ? document.getElementById('fv-fixout') : document.getElementById(`pb-fixout-${i}`);
             if (!el) return;
             if (i === null) {
                 repairNotice = { html, kind: kind || '' };
@@ -6763,14 +6788,8 @@
         }
 
         function fixCard(i) {
-            const note = (document.getElementById(`pb-chat-in-${i}`) || {}).value || '';
+            const note = (document.getElementById('fv-chat-in') || {}).value || '';
             runFix(i, [groupFor(i)], { note });
-        }
-
-        function testProposal(i) {
-            const c = cardChats[i];
-            if (!c || !c.proposal) return;
-            runFix(i, [groupFor(i)], { proposal: c.proposal });
         }
 
         function fixAllDesign() {
@@ -6793,7 +6812,6 @@
                 currentHwFilename = r.design_filename;
                 document.getElementById('hw-filename').textContent = r.design_filename;
                 if (r.design_content) document.getElementById('hw-preview').textContent = r.design_content;
-                Object.keys(cardChats).forEach(k => delete cardChats[k]);
                 repairNotice = { html: `<strong>Fix kept.</strong> The design was saved as ${escapeHtml(r.design_filename)} `
                     + '(the previous file is kept), and the testbench was run again. The result below is for the fixed design.' };
                 showRepairedRun(r);
@@ -6819,33 +6837,247 @@
             await repairScenarios(p.fix.ops);
         }
 
-        async function sendChat(i) {
+        // ============================================================
+        // D52: the generated files below the problems. A card marks its lines;
+        // selected text can be asked about or fixed; one conversation below.
+        // ============================================================
+        let fvFile = 'design';            // which file the viewer shows
+        let fvSel = null;                 // index of the selected card
+        let fvChat = { thread: null, turns: [], proposal: null, context: null };
+        let fvSelection = null;           // {file, start, end, text} of selected text
+
+        function fvMarks(file) {
+            const marks = {};             // line -> {kind, notes, sel}
+            ((explainState || {}).problems || []).forEach((p, i) => (p.marks || []).forEach(m => {
+                if (m.file !== file) return;
+                const e = marks[m.line] = marks[m.line] || { kind: m.kind, notes: [], sel: false };
+                if (i === fvSel) { e.sel = true; e.kind = m.kind; }
+                if (m.note && !e.notes.includes(m.note)) e.notes.push(m.note);
+            }));
+            return marks;
+        }
+
+        function renderFileView() {
+            const box = document.getElementById('fv');
+            const files = (explainState || {}).files;
+            if (!box) return;
+            if (!files) { box.style.display = 'none'; return; }
+            box.style.display = 'block';
+            if (!files[fvFile]) fvFile = files.design ? 'design' : 'feature';
+            const tab = (f, label) => files[f]
+                ? `<button class="fv-tab${fvFile === f ? ' on' : ''}" onclick="showFile('${f}')">${label}`
+                  + ` <span class="fv-name">${escapeHtml(files[f].name || '')}</span></button>` : '';
+            const marks = fvMarks(fvFile);
+            const lines = (files[fvFile].text || '').replace(/\n$/, '').split('\n');
+            const body = lines.map((t, k) => {
+                const n = k + 1, m = marks[n];
+                const cls = m ? ` mark-${m.kind}${m.sel ? ' sel' : ''}` : '';
+                const note = m && m.notes.length && m.sel
+                    ? `<div class="fv-note mark-${m.kind}">↳ ${escapeHtml(m.notes.join('; '))}</div>` : '';
+                return `<div class="fv-line${cls}" data-line="${n}"><span class="ln">${n}</span>`
+                     + `<span class="tx">${escapeHtml(t) || ' '}</span></div>${note}`;
+            }).join('');
+            box.innerHTML = `<div class="fv-tabs">${tab('design', 'Design')}${tab('feature', 'Scenarios')}`
+                + `<span class="fv-hint">Select text to ask about it or fix it</span></div>`
+                + `<div class="fv-body" id="fv-body">${body}</div>`;
+            const b = document.getElementById('fv-body');
+            b.addEventListener('mouseup', fvOnSelect);
+            b.addEventListener('contextmenu', fvOnContext);
+        }
+
+        function showFile(f) { fvFile = f; renderFileView(); }
+
+        function selectCard(i, ev) {
+            if (ev && ev.target.closest('button, a, textarea, input')) return;
             const p = ((explainState || {}).problems || [])[i];
-            const box = document.getElementById(`pb-chat-in-${i}`);
+            if (!p) return;
+            fvSel = i;
+            document.querySelectorAll('#pb-list .pb-item').forEach(el => el.classList.toggle('pb-sel', el.id === `pb-item-${i}`));
+            const marks = p.marks || [];
+            const first = marks.find(m => m.file === 'design') || marks[0];
+            if (first) fvFile = first.file;
+            renderFileView();
+            if (first) {
+                const b = document.getElementById('fv-body');
+                const el = b && b.querySelector(`.fv-line[data-line="${first.line}"]`);
+                if (el) b.scrollTop = Math.max(0, el.offsetTop - b.offsetTop - 60);
+            }
+            fvSetContext({ card: i });
+        }
+
+        function fvSetContext(ctx) {
+            fvChat.context = ctx;
+            const p = ctx && ctx.card !== undefined ? ((explainState || {}).problems || [])[ctx.card] : null;
+            const sel = ctx && ctx.selection;
+            const about = document.getElementById('fv-about');
+            if (!about) return;
+            about.innerHTML = 'About: ' + (sel ? `${sel.file === 'design' ? 'design' : 'scenarios'} lines ${sel.start}–${sel.end}`
+                + (p ? ` (problem “${escapeHtml(p.title)}”)` : '')
+                : p ? `the problem “${escapeHtml(p.title)}”` : 'this simulation');
+        }
+
+        function fvRange() {
+            const s_ = window.getSelection();
+            const text = s_ ? s_.toString() : '';
+            if (!text.trim()) return null;
+            const line = node => {
+                const el = node && (node.nodeType === 1 ? node : node.parentElement);
+                let l = el && el.closest('.fv-line, .fv-note');
+                while (l && l.classList.contains('fv-note')) l = l.previousElementSibling;
+                return l ? parseInt(l.dataset.line, 10) : null;
+            };
+            const a = line(s_.anchorNode), b = line(s_.focusNode);
+            if (!a || !b) return null;
+            return { file: fvFile, start: Math.min(a, b), end: Math.max(a, b), text };
+        }
+
+        function fvHideBar() { const t = document.getElementById('fv-bar'); if (t) t.remove(); }
+
+        function fvShowBar(x, y, withCopy) {
+            fvHideBar();
+            if (!fvSelection) return;
+            const bar = document.createElement('div');
+            bar.id = 'fv-bar';
+            bar.className = 'fv-bar';
+            bar.innerHTML = (withCopy ? `<button onclick="fvCopy()">Copy</button>` : '')
+                + `<button onclick="fvAsk()">Ask AI about this</button>`
+                + `<button onclick="fvFix()">${fvSelection.file === 'design' ? 'Fix with AI' : 'Correct these values'}</button>`;
+            bar.style.left = `${Math.min(x, window.innerWidth - 300)}px`;
+            bar.style.top = `${y + 10}px`;
+            document.body.appendChild(bar);
+        }
+
+        function fvOnSelect(ev) {
+            setTimeout(() => {
+                fvSelection = fvRange();
+                if (fvSelection) fvShowBar(ev.clientX, ev.clientY, false); else fvHideBar();
+            }, 0);
+        }
+
+        function fvOnContext(ev) {
+            const r = fvRange();
+            if (!r) return;                 // nothing selected: the browser's own menu
+            ev.preventDefault();
+            fvSelection = r;
+            fvShowBar(ev.clientX, ev.clientY, true);
+        }
+
+        document.addEventListener('mousedown', ev => { if (!ev.target.closest('#fv-bar')) fvHideBar(); });
+
+        async function fvCopy() {
+            const t = (fvSelection || {}).text || '';
+            try { await navigator.clipboard.writeText(t); } catch (e) { /* the selection stays for Cmd+C */ }
+            fvHideBar();
+        }
+
+        function fvAsk() {
+            fvSetContext({ card: fvSel === null ? undefined : fvSel, selection: fvSelection });
+            fvHideBar();
+            const box = document.getElementById('fv-chat-in');
+            if (box) { box.focus(); box.scrollIntoView({ block: 'center' }); }
+        }
+
+        function fvFix() {
+            const sel = fvSelection;
+            fvHideBar();
+            if (!sel) return;
+            const probs = (explainState || {}).problems || [];
+            if (sel.file === 'design') {
+                const lines = [];
+                for (let n = sel.start; n <= sel.end; n++) lines.push(n);
+                const p = fvSel !== null ? probs[fvSel] : null;
+                const ops = p && p.fix ? p.fix.ops || [] : [];
+                runFix('chat', [{ ops, port: p && p.fix ? p.fix.port : null, lines,
+                                 finding: p ? `${p.title}. ${p.detail}` : '' }],
+                       { note: (document.getElementById('fv-chat-in') || {}).value || '' });
+                return;
+            }
+            // scenario text: only the values the reference model computes are corrected, without a model
+            const ops = new Set();
+            probs.forEach(p => (p.marks || []).forEach(m => {
+                if (m.file === 'feature' && m.kind === 'scenario' && m.line >= sel.start && m.line <= sel.end)
+                    ((p.fix || {}).ops || []).forEach(o => ops.add(o));
+            }));
+            if (!ops.size) {
+                setFixOut(null, 'No wrong scenario value is in the selected lines. To change other scenario text, '
+                                + 'ask in the conversation below.', 'err');
+                return;
+            }
+            repairScenarios([...ops]);
+        }
+
+        function renderConversation() {
+            const box = document.getElementById('fv-chat');
+            if (!box) return;
+            if (!(explainState || {}).files) { box.style.display = 'none'; return; }
+            box.style.display = 'block';
+            box.innerHTML = `<div class="fv-chat-head">Conversation <span class="fv-about" id="fv-about"></span></div>`
+                + `<div class="pb-chat-log" id="fv-chat-log"></div>`
+                + `<div class="pb-fixout" id="fv-fixout"></div>`
+                + `<div class="pb-chat-row"><textarea id="fv-chat-in" rows="2" `
+                + `placeholder="Ask about the problem or the selected text, or say how it should be fixed…" `
+                + `onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendChat(); }"></textarea>`
+                + `<button class="btn btn-secondary btn-sm" onclick="sendChat()">Send</button></div>`;
+            fvSetContext(fvChat.context);
+            renderChatLog();
+        }
+
+        function renderChatLog() {
+            const log = document.getElementById('fv-chat-log');
+            if (!log) return;
+            log.innerHTML = fvChat.turns.map(t => `<div class="pb-msg ${t.role}"><span class="who">`
+                + `${t.role === 'user' ? 'You' : 'AI answer'}${t.about ? ' · ' + escapeHtml(t.about) : ''}</span>`
+                + `${escapeHtml(t.text)}</div>`).join('')
+                + (fvChat.proposal ? `<div class="pb-fixbar"><button class="btn btn-secondary btn-sm" onclick="testProposal()">`
+                                   + `Test this change</button></div>` : '');
+        }
+
+        async function sendChat() {
+            const box = document.getElementById('fv-chat-in');
             const msg = (box.value || '').trim();
-            if (!p || !msg || !currentSimResult) return;
-            const c = cardChats[i] = cardChats[i] || { thread: null, turns: [], proposal: null };
-            c.turns.push({ role: 'user', text: msg });
-            c.proposal = null;
+            if (!msg || !currentSimResult) return;
+            const ctx = fvChat.context || {};
+            const p = ctx.card !== undefined ? ((explainState || {}).problems || [])[ctx.card] : null;
+            const about = (document.getElementById('fv-about') || {}).textContent || '';
+            fvChat.turns.push({ role: 'user', text: msg, about: about.replace(/^About: /, '') });
+            fvChat.proposal = null;
             box.value = '';
-            const log = document.getElementById(`pb-chat-log-${i}`);
-            log.innerHTML = renderChatLog(i) + `<div class="pb-msg ai"><span class="who">AI answer</span>…</div>`;
+            renderChatLog();
+            const log = document.getElementById('fv-chat-log');
+            log.insertAdjacentHTML('beforeend', `<div class="pb-msg ai"><span class="who">AI answer</span>…</div>`);
             const { llm, model } = fixModel();
             try {
                 const r = await (await fetch('/api/fix/chat', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...currentSimResult.paths, llm, model, message: msg, thread: c.thread,
-                                           card: { title: p.title, detail: p.detail, ops: (p.fix || {}).ops || [],
-                                                   port: (p.fix || {}).port || null } })
+                    body: JSON.stringify({ ...currentSimResult.paths, llm, model, message: msg, thread: fvChat.thread,
+                                           card: { title: p ? p.title : '', detail: p ? p.detail : '',
+                                                   ops: p && p.fix ? p.fix.ops || [] : [],
+                                                   port: p && p.fix ? p.fix.port || null : null,
+                                                   selection: ctx.selection || null } })
                 })).json();
                 if (!r.success) throw new Error(r.error || 'No answer');
-                c.thread = r.thread;
-                c.turns.push({ role: 'ai', text: r.answer || '(empty answer)' });
-                c.proposal = r.proposal || null;
+                fvChat.thread = r.thread;
+                fvChat.turns.push({ role: 'ai', text: r.answer || '(empty answer)' });
+                fvChat.proposal = r.proposal ? { ...r.proposal, context: ctx } : null;
             } catch (e) {
-                c.turns.push({ role: 'ai', text: `Could not answer: ${e.message || e}` });
+                fvChat.turns.push({ role: 'ai', text: `Could not answer: ${e.message || e}` });
             }
-            log.innerHTML = renderChatLog(i);
+            renderChatLog();
+        }
+
+        function testProposal() {
+            const pr = fvChat.proposal;
+            if (!pr) return;
+            const ctx = pr.context || {};
+            const probs = (explainState || {}).problems || [];
+            const p = ctx.card !== undefined ? probs[ctx.card] : null;
+            const group = p && p.fix && p.fix.covers ? groupFor(ctx.card)
+                : { ops: p && p.fix ? p.fix.ops || [] : [], port: p && p.fix ? p.fix.port : null };
+            if (ctx.selection && ctx.selection.file === 'design') {
+                group.lines = [];
+                for (let n = ctx.selection.start; n <= ctx.selection.end; n++) group.lines.push(n);
+            }
+            runFix('chat', [group], { proposal: { changes: pr.changes, why: pr.why } });
         }
 
         function openProblem(i) {
