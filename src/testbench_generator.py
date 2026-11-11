@@ -432,6 +432,7 @@ def _table_cells(row: str) -> List[str]:
 
 
 EMPTY_OPERAND = 'the row leaves an operand empty'
+NO_RESET_INPUT = 'the design has no reset input'
 
 
 class FeatureParser:
@@ -664,6 +665,8 @@ class FeatureParser:
             # 根据模块类型和 tag 确定操作
             if self.module_type in ALU_LIKE_TYPES:
                 operation, opcode = self._get_alu_operation(tag, block_content)
+                if operation is None and self._alu_reset_scenario(tag, block_content):
+                    operation, opcode = 'RESET', None      # D50: reset, then check the outputs
                 if operation is None and not self._rows_name_alu_operation(block_content):
                     # 认不出来就跳过，不再伪造成 ADD。伪造出的测试因为期望值
                     # 也会被算成 ADD，在 golden 上必然通过，既抬高 test count
@@ -763,6 +766,12 @@ class FeatureParser:
                     elif self.module_type in ALU_LIKE_TYPES and operation:
                         scenario['operation'] = operation
                         scenario['opcode'] = opcode
+                        if operation == 'RESET' and not any(k in scenario for k in ('expected_result', 'result')):
+                            # "Then the result should be 0" written out instead of a column (D50)
+                            lit = re.search(r'^\s*Then\s+the\s+result\s+should\s+be\s+(-?(?:0x[0-9a-fA-F]+|\d+))\s*$',
+                                            block_content, re.I | re.M)
+                            if lit:
+                                scenario['expected_result'] = int(lit.group(1), 0)
                     elif self.module_type in ALU_LIKE_TYPES:
                         # 块级操作不明（只因各行自带 Operation 列才没被跳过），
                         # 这一行又没写出可识别的操作：没有 opcode 可用，丢弃，
@@ -814,6 +823,14 @@ class FeatureParser:
                 'operation': None, 'status': 'no_examples',
                 'reason': 'plain Scenario without an Examples table',
                 'rows': [], 'rows_malformed': [], 'rows_unmapped': []})
+
+    _ALU_RESET_STEP = re.compile(r'^\s*(?:When|And|Given)\s+(?:the\s+)?(?:reset|rst)\s+is\s+(?:asserted|applied|set)'
+                                 r'|^\s*(?:When|And|Given)\s+I\s+(?:assert|apply)\s+(?:the\s+)?reset', re.I | re.M)
+
+    def _alu_reset_scenario(self, tag: str, block_content: str) -> bool:
+        """A scenario that asserts reset (tag @reset, or a step "When reset is asserted")."""
+        return bool(re.search(r'(?<![a-z0-9])(?:reset|rst)(?![a-z0-9])', (tag or '').lower())
+                    or self._ALU_RESET_STEP.search(block_content or ''))
 
     def _get_alu_operation(self, tag: str, block_content: str) -> Tuple[str, str]:
         """Get ALU operation name and opcode from tag"""
@@ -1671,11 +1688,17 @@ class TestbenchGenerator:
                 ev['skipped_empty_operand'] = ev.get('skipped_empty_operand', 0) + 1
                 self._trace_skip(trace, scenario, EMPTY_OPERAND)
                 continue
+            if str(scenario.get('operation', '')).upper() == 'RESET' and not spec.get('dut_has_clock', True):
+                ev['skipped_no_reset'] = ev.get('skipped_no_reset', 0) + 1
+                self._trace_skip(trace, scenario, NO_RESET_INPUT)
+                continue
             expected = self._first_present(scenario, self.ALU_EXPECTED_KEYS)
             # oracle 的来源是受控变量，见 _reference_result 的说明。
             # 'bdd'  —— 用 BDD 写的期望值（默认）
             # 'spec' —— 由本生成器按规格重算；参考模型不认识的操作仍用 BDD 的值
-            if oracle_source == 'spec':
+            if oracle_source == 'spec' and str(scenario.get('operation', '')).upper() == 'RESET':
+                expected = 0
+            elif oracle_source == 'spec':
                 ref = self._reference_result(
                     scenario.get('operation', 'ADD').upper(),
                     scenario.get('a', scenario.get('A', 0)),
@@ -1821,8 +1844,12 @@ class TestbenchGenerator:
 
             ai, bi = self._as_int(a_val), self._as_int(b_val)
             bdd_exp = self._as_int(self._first_present(scenario, self.ALU_EXPECTED_KEYS))
-            ref_exp = (self._reference_result(op_name, ai, bi, bitwidth)
-                       if ai is not None and bi is not None else None)
+            if op_name == 'RESET':
+                # D50: the outputs after reset; result is 0 (the flags are read by the probe)
+                ref_exp = 0
+            else:
+                ref_exp = (self._reference_result(op_name, ai, bi, bitwidth)
+                           if ai is not None and bi is not None else None)
             used = self._as_int(expected)
             self._trace_detail(
                 trace, scenario, test=i, port='result', width=bitwidth,
@@ -1839,7 +1866,16 @@ class TestbenchGenerator:
             lines.append(f"        a = {a_str};")
             lines.append(f"        b = {b_str};")
             lines.append(f"        opcode = 4'b{op_str};")
-            lines.append(f"        #10;")
+            if op_name == 'RESET':
+                # first let the inputs reach the outputs, then reset and look one clock edge later.
+                # Written #(10): the flag probe hooks the first plain #N; of a test, which here
+                # must be the wait after reset.
+                lines.append(f"        #(10);")
+                lines.append(f"        rst = 1;")
+                lines.append(f"        @(posedge clk);")
+                lines.append(f"        #1;")
+            else:
+                lines.append(f"        #10;")
             lines.append(f"        total = total + 1;")
             lines.append(f"        if (result == {exp_str}) begin")
             lines.append(f"            passed = passed + 1;")
@@ -1849,6 +1885,8 @@ class TestbenchGenerator:
             lines.append(
                 f"            $display(\"✗ Test {i}: FAIL - Expected %d, Got %d{tid}\", {exp_str}, result);")
             lines.append(f"        end")
+            if op_name == 'RESET':
+                lines.append(f"        rst = 0;")
             lines.append("")
         quality_analysis['trace'] = trace
 

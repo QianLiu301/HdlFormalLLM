@@ -46,6 +46,10 @@ ALU_STEPS: List[Dict] = [
      'patterns': [_p(r'^I (?:perform|execute|apply) (?:the )?(?P<OP><[^>]+>|[A-Z]+) operation'
                      r'(?: with opcode (?P<CODE><[^>]+>|[01]{4}))?$')],
      'port': 'opcode', 'expr': "opcode == 4'b{CODE}"},
+    {'key': 'ALU.A.RESET', 'role': 'action', 'template': 'assert reset',
+     'patterns': [_p(r'^(?:the )?(?:reset|rst) is (?:asserted|applied|set(?: to 1)?)$'),
+                  _p(r'^I (?:assert|apply) (?:the )?reset$')],
+     'port': 'rst', 'expr': 'rst == 1'},
     {'key': 'ALU.Q.RESULT', 'role': 'outcome', 'template': 'result = <R>',
      'patterns': [_p(r'^the (?:result|output) (?:should be|should equal|is|equals) {R}$')],
      'port': 'result', 'expr': 'result == {R}'},
@@ -499,16 +503,15 @@ def cannot_test(module_type: Optional[str], text: Optional[str]) -> Optional[str
     the cycle of a write, whichever scenario the model linked to the requirement."""
     if module_type == 'regfile' and _RF_SAME_CYCLE.search(text or ''):
         return step_by_key('RF.A.SAME_CYCLE')['why']
-    if module_type in ('alu', 'alu_comb') and _ALU_RESET.search(text or ''):
+    if module_type == 'alu_comb' and _ALU_RESET.search(text or ''):
         return ALU_RESET_WHY
     return None
 
 
-# The ALU testbench resets once, before the first example, and no ALU step asserts
-# reset later, so what reset does to the outputs is never observed (D48).
+# Since D50 an ALU scenario can assert reset ("When reset is asserted"); only a purely
+# combinational ALU has no reset to test (D48 said this of every ALU before).
 _ALU_RESET = re.compile(r'\b(?:reset|rst)\b', re.I)
-ALU_RESET_WHY = ('the ALU testbench applies reset only once, before the first example, '
-                 'and no scenario step can apply it again')
+ALU_RESET_WHY = 'the design has no reset input'
 
 
 def step_by_key(key: Optional[str]) -> Optional[Dict]:
@@ -660,6 +663,8 @@ def flag_value(module_type: str, port: str, op: Optional[str], a, b, width: int,
     """What the flag rules give for a flag the testbench does not compare.
     None when the rule does not define the flag for this operation (e.g.
     overflow of AND: a specification choice, not a fact) or no rule applies."""
+    if (op or '').upper() == 'RESET':
+        return 0 if port in ('zero', 'negative', 'overflow') else None     # D50: every output is 0
     res = apply_rule(module_type, op, a, b, width)
     if res is None:
         return None

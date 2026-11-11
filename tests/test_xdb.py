@@ -743,7 +743,7 @@ def test_problems_list_in_plain_words(run, db):
     assert 'A scenario expects a wrong SUB result' in titles
     assert 'A scenario expects a wrong SRA result' in titles
     assert 'A scenario states a wrong zero flag for ADD' in titles
-    assert 'The testbench cannot test a requirement' in titles             # REQ-3, reset (D48)
+    assert 'A requirement is not tested by any scenario' in titles         # REQ-3: no reset scenario (D50)
     assert s['overview']['ok'] is False and s['overview']['counts']['design'] == 1
     # no internal ids in what the user reads first
     for p in probs:
@@ -1850,9 +1850,10 @@ def test_only_the_same_cycle_requirement_is_out_of_reach():
     assert L.cannot_test('regfile', 'Concurrent read of the register being written returns old value')
     # the same words on another design: a counter's zero flag can be checked in its cycle
     assert not any(L.cannot_test('counter', t) for t in T._counter_requirements(32, 32, 5))
-    # D48: the ALU testbench resets once at the start, so the reset requirement is out of reach too
-    assert [t for t in T._alu_requirements(32, 32, 5) if L.cannot_test('alu', t)] == [
-        'On reset (rst = 1), result, zero, overflow and negative are 0 after the next rising clock edge.']
+    # D50: an ALU scenario can assert reset now; only a combinational ALU has none to test
+    reset = 'On reset (rst = 1), result, zero, overflow and negative are 0 after the next rising clock edge.'
+    assert not any(L.cannot_test('alu', t) for t in T._alu_requirements(32, 32, 5))
+    assert L.cannot_test('alu_comb', reset) == 'the design has no reset input'
     assert L.not_run('RF.A.WRITE', {'READ'}) == L.TAG_SKIPS_STEP
     assert L.not_run('RF.A.WRITE', {'WRITE_READ'}) is None and L.not_run('RF.A.WRITE', set()) is None
 
@@ -1911,7 +1912,7 @@ def test_an_8_bit_run_reads_like_a_16_bit_run(unsigned_run_8):
     assert [p['title'] for p in probs] == ['The design compares SLT operands as unsigned numbers',
                                            'The design shifts SRA with zeros instead of copying the sign bit',
                                            'The scenarios mix two meanings of overflow']
-    assert s['overview']['counts'] == {'design': 2, 'scenario': 1, 'test': 0, 'coverage': 0}
+    assert s['overview']['counts'] == {'design': 2, 'scenario': 1, 'test': 0, 'coverage': 0, 'limit': 0}
 
 
 def test_each_design_card_names_its_own_consequence(unsigned_run_8):
@@ -1987,7 +1988,7 @@ def test_shifts_that_lose_the_same_bit_are_one_card(shift_run):
                                            '2 scenario examples expect a wrong AND result',
                                            'The scenarios mix two meanings of overflow',
                                            'A scenario states a wrong negative flag for SUB',
-                                           'The testbench cannot test a requirement']      # reset (D48)
+                                           'A requirement is not tested by any scenario']   # reset: no scenario
     assert 'ops' not in probs[0]
     assert probs[0]['detail'] == (
         '2 of 10 SLL and SRL examples give a wrong result. E.g. SLL with A = 1, B = 31: the design gives '
@@ -2029,9 +2030,7 @@ def test_a_checked_flag_requirement_is_not_called_untested(shift_run, db):
     assert st['REQ-11']['status'] == 'not_covered'     # reset: nothing in the run touched it
     r12 = st['REQ-12']
     assert (r12['status'], r12['probe_rows'], r12['probe_right']) == ('checked_unlinked', 50, 46)
-    reset = [p['detail'] for p in s['problems'] if p['title'] == 'The testbench cannot test a requirement']
-    assert reset == [f"“{st['REQ-11']['text'].rstrip('.')}”: the ALU testbench applies reset only once, "
-                     f"before the first example, and no scenario step can apply it again."]   # D48
+    assert [p['detail'] for p in s['problems'] if p['who'] == 'coverage'] == [f"“{st['REQ-11']['text'].rstrip('.')}”"]
     x = explain_requirement(r12['requirement_id'], sim_run_id=s['sim_run_id'], url=db)
     assert x['plain']['lines'][0] == ('No scenario is linked to it, but the extra simulation checked the zero flag '
                                       'in all 50 examples: 46 right, 4 wrong.')
@@ -2133,7 +2132,7 @@ def test_a_scenario_mistake_the_design_repeats_gets_its_own_card(unsigned_run):
     assert card['detail'] == ('E.g. SLT with A = 32767 (0x7FFF), B = 0x8000 (-32768 as signed): the scenario expects 1, '
                               'correct is 0. The design gives the same wrong value, so the test passes.')
     assert card['explain']['tag'] == 'BDD:ALU-SLT-001/r4'
-    assert s['overview']['counts'] == {'design': 2, 'scenario': 5, 'test': 0, 'coverage': 0}
+    assert s['overview']['counts'] == {'design': 2, 'scenario': 5, 'test': 0, 'coverage': 0, 'limit': 0}
 
 
 def test_a_scenario_card_keeps_saying_who_is_right():
@@ -2294,3 +2293,102 @@ def test_step3_again_keeps_the_earlier_testbench_so_its_run_still_opens(run, db)
     s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
     assert s is not None and s['sim_run_id']
     Path(again['filepath']).unlink()          # leave the module's project as the other tests expect
+
+
+# ================================================================ reset in the ALU testbench (D50)
+
+RESET_FEATURE = """Feature: 32-bit ALU Verification
+
+  @add @req_1
+  Scenario Outline: Verify ADD operation
+    Given I have operand A = <A>
+    And I have operand B = <B>
+    When I perform the ADD operation with opcode 0000
+    Then the result should be <Expected_Result>
+
+    Examples:
+      | A | B | Opcode | Expected_Result |
+      | 1 | 2 | 0000   | 3               |
+
+  @reset @req_2
+  Scenario Outline: Reset clears the outputs
+    Given I have operand A = <A>
+    And I have operand B = <B>
+    When reset is asserted
+    Then the result should be <Expected_Result>
+    And the zero flag should be <Zero_Flag>
+    And the negative flag should be <Negative_Flag>
+    And the overflow flag should be <Overflow_Flag>
+
+    Examples:
+      | A   | B  | Opcode | Expected_Result | Zero_Flag | Negative_Flag | Overflow_Flag |
+      | 100 | 27 | 0000   | 0               | False     | False         | False         |
+      | -1  | 0  | 0000   | 0               | False     | False         | False         |
+"""
+
+
+QWEN_RESET = RESET_FEATURE.split('  @reset')[0] + '''  @reset @req_2
+  Scenario Outline: Reset clears the outputs
+    Given I have operand A = <A>
+    And I have operand B = <B>
+    When reset is asserted
+    Then the result should be 0
+    And the zero flag should be False
+
+    Examples:
+      | A   | B  | Opcode |
+      | 100 | 27 | 0000   |
+      | -1  | 0  | 0000   |
+'''
+
+
+NO_VALUE_RESET = QWEN_RESET.replace('Then the result should be 0', 'Then the outputs are cleared')
+
+
+@pytest.mark.parametrize('broken, feature', [(False, RESET_FEATURE), (True, RESET_FEATURE), (False, QWEN_RESET),
+                                             (False, NO_VALUE_RESET)])
+def test_a_reset_scenario_is_run_and_judged(db, tmp_path, broken, feature):
+    """The real design of session 109 after its fixes clears every output on reset.
+    Broken: its reset leaves the result alone, which the reset rows must show."""
+    from src.testbench_generator import TestbenchGenerator
+    from src.xdb.ingest import ingest_run
+    from src.xdb.explain import summarize_run
+    design = (ROOT / 'tests/data/qwen_alu_32/alu_fixed.v').read_text(encoding='utf-8')
+    if broken:
+        design = design.replace("            result <= 32'b0;\n", "            result <= temp_result;\n", 1)
+    proj = tmp_path / 'proj'
+    out = proj / 'output'
+    for d in ('bdd', 'dut', 'requirements', 'simulation'):
+        (out / d).mkdir(parents=True)
+    (out / 'bdd/alu.feature').write_text(feature, encoding='utf-8')   # QWEN_RESET: values in the steps, as qwen wrote them
+    (out / 'dut/alu_32bit.v').write_text(design, encoding='utf-8')
+    record = {'module_type': 'alu', 'created_at': '2026-11-10T10:00:00', 'questions': [], 'decisions': [],
+              'requirements': [{'id': 'REQ-1', 'text': 'ADD (opcode 0000): result = A + B.', 'source': 'template'},
+                               {'id': 'REQ-2', 'text': 'On reset (rst = 1), result, zero, overflow and negative '
+                                                       'are 0 after the next rising clock edge.', 'source': 'template'}]}
+    (out / 'requirements/req.json').write_text(json.dumps(record), encoding='utf-8')
+    tb = TestbenchGenerator(project_root=str(proj), debug=False).generate_single(
+        str(out / 'bdd/alu.feature'), {'module_type': 'alu', 'module_name': 'alu_32bit', 'bitwidth': 32,
+                                       'dut_filepath': str(out / 'dut/alu_32bit.v')})
+    assert tb['success'] and tb['test_count'] == (1 if feature is NO_VALUE_RESET else 3)
+    text = Path(tb['filepath']).read_text(encoding='utf-8')
+    assert ('@(posedge clk);' in text) == (feature is not NO_VALUE_RESET)
+    log = _simulate(proj, tb['filepath'], out / 'dut/alu_32bit.v', 'output/simulation/alu.log')
+    assert ('FAILED' in log or 'FAIL -' in log) == broken
+    paths = {'requirements': 'output/requirements/req.json', 'bdd': 'output/bdd/alu.feature',
+             'duv': 'output/dut/alu_32bit.v', 'testbench': Path(tb['filepath']).relative_to(proj).as_posix(),
+             'log': 'output/simulation/alu.log'}
+    res = ingest_run(proj, paths, run_id=f'reset_{broken}_{id(feature)}', url=db, data={'bitwidth': 32})
+    s = summarize_run(proj, {'testbench_path': paths['testbench'], 'log_file': paths['log']}, url=db)
+    req = {r['req_key']: r for r in s['requirements']}
+    if feature is NO_VALUE_RESET:
+        # the reset rows state no value, so no check ran: the requirement is not verified (D50)
+        assert req['REQ-2']['status'] == 'not_tested'
+    elif broken:
+        assert res['verdicts'].get('design_wrong') == 2
+        assert s['problems'][0]['title'] == 'The design does not clear its result on reset'
+        assert req['REQ-2']['status'] == 'fail'
+    else:
+        assert res['verdicts'] == {'pass': 3}
+        assert s['overview']['ok'] and req['REQ-2']['status'] in ('verified', 'verified_by_probe')
+        assert not [p for p in s['problems'] if p['who'] != 'limit']

@@ -407,6 +407,15 @@ def _web_default_prompt_version(module_type: str) -> str:
     return WEB_DEFAULT_PROMPT_VERSION.get(module_type, 'v1')
 
 
+# Step 2 templates (prompts/bdd_*). v2 for the ALU = v1 + one reset scenario, which the
+# testbench can run since D50.
+WEB_DEFAULT_BDD_PROMPT_VERSION = {'alu': 'v2'}
+
+
+def _web_default_bdd_prompt_version(module_type) -> str:
+    return WEB_DEFAULT_BDD_PROMPT_VERSION.get((module_type or '').strip(), 'v1')
+
+
 def _new_run_id() -> str:
     import uuid
     return f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
@@ -2283,7 +2292,8 @@ def generate_bdd_stream():
         return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
     sampling = _parse_sampling(data)
-    prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+    prompt_version = ((data.get('prompt_version') or '').strip()
+                      or _web_default_bdd_prompt_version(data.get('module_type')))
     prompt_override = data.get('prompt_override') or None
     system_override = data.get('system_override') or None
     # impl-first 下 BDD 继承 DUV 的 run_id；spec-first 下 BDD 才是依赖链起点，
@@ -2436,7 +2446,8 @@ def generate_bdd():
             return jsonify({'success': False, 'error': 'Please enter your requirements'}), 400
 
         sampling = _parse_sampling(data)
-        prompt_version = (data.get('prompt_version') or '').strip() or 'v1'
+        prompt_version = ((data.get('prompt_version') or '').strip()
+                          or _web_default_bdd_prompt_version(data.get('module_type')))
         prompt_override = data.get('prompt_override') or None
         system_override = data.get('system_override') or None
         # impl-first 下 BDD 继承 DUV 的 run_id；spec-first 下 BDD 是链起点，新建
@@ -2575,6 +2586,8 @@ def get_prompt_templates(stage):
     # the version a request without prompt_version gets (WEB_DEFAULT_PROMPT_VERSION)
     mt = {'duv_register': 'regfile'}.get(stage, stage[4:] if stage.startswith('duv_') else None)
     default = _web_default_prompt_version(mt) if mt else 'v1'
+    if stage.startswith('bdd_'):
+        default = _web_default_bdd_prompt_version(stage[4:])
     return jsonify({'success': True, 'stage': stage, 'versions': versions,
                     'default': default if default in versions else 'v1', 'templates': out})
 

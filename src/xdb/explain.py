@@ -218,6 +218,8 @@ def _requirement_status(s, q: M.Requirement, sim_run_id: Optional[int]) -> Dict:
         for ci, cr in res:
             if cr.status == 'setup':
                 continue                 # a write or reset row checks nothing by itself
+            if cr.status not in ('pass', 'fail'):
+                continue                 # never ran (skipped, not reached): no evidence either way (D50)
             if cr.verdict == 'undecided' and lib_present:
                 unchecked += 1           # the example cannot be checked as written (D28, D29)
                 continue
@@ -1954,6 +1956,18 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                 probs.append(_lost_bit_card(main, by_op, same_mistake, total_op, lost_bit[cause['bit']],
                                             cause, width))
             continue
+        if op == 'RESET':                         # D50: a reset row, not an operation
+            title = {'design_wrong': 'The design does not clear its result on reset',
+                     'both_wrong': 'Reset: both the design and the scenario are wrong',
+                     'consistent_wrong': 'Reset: the design repeats a mistake of the scenario'}.get(
+                v, 'A scenario expects a wrong value after reset')
+            detail = (f'{n} of {m} reset examples. After reset the result must be 0; '
+                      + (f'the design gives {res(O)}.' if v != 'scenario_wrong'
+                         else f'the scenario expects {res(B)}. The design is right.'))
+            probs.append({'severity': 'error' if v != 'scenario_wrong' else 'warning',
+                          'who': 'design' if v != 'scenario_wrong' else 'scenario',
+                          'title': title, 'detail': detail, 'explain': {'kind': 'check', 'tag': ci.tag}})
+            continue
         if v == 'design_wrong':
             title = f"The design {cause['says']}" if cause else f'The design computes {op} wrong'
             detail = (f'{n} of {m} {op} examples give a wrong result.{passing} E.g. {ex}: the design gives '
@@ -2100,7 +2114,7 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
                                     + (f' (e.g. {why})' if why else '') + '.', 'explain': None})
     for r in reqs:
         if r.get('cannot_test'):
-            probs.append({'severity': 'warning', 'who': 'test', 'title': 'The testbench cannot test a requirement',
+            probs.append({'severity': 'info', 'who': 'limit', 'title': 'The testbench cannot test a requirement',
                           'detail': f"“{r['text'].rstrip('.')}”: {r['cannot_test']}.",
                           'explain': {'kind': 'requirement', 'id': r['requirement_id']}})
         elif r['status'] == 'not_covered':
@@ -2134,9 +2148,11 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
             words = ' and '.join(_FLAG_WORD.get(p_, p_) for p_ in sorted(ports))
             pr['detail'] += f" The {words} of these examples {'are' if len(ports) > 1 else 'is'} wrong too, as a consequence."
 
-    counts = {'design': 0, 'scenario': 0, 'test': 0, 'coverage': 0}
+    counts = {'design': 0, 'scenario': 0, 'test': 0, 'coverage': 0, 'limit': 0}
     for pr in probs:
         counts[pr['who']] = counts.get(pr['who'], 0) + 1
+    # what the tool cannot check is not a problem of the run (D50): listed apart, not counted
+    probs.sort(key=lambda pr: pr['who'] == 'limit')
     n_checks = sum(total_op.values())
     if _is_cpu(mt):
         checked = [f'{n_checks} instructions were simulated, each in its own short program (the operands '
@@ -2161,5 +2177,5 @@ def build_problems(s, run_id: int, scenario_results: Optional[Dict], reqs: List[
     if reqs:
         ok = sum(1 for r in reqs if r['status'] in ('verified', 'verified_by_probe'))
         checked.append(f'{ok} of {len(reqs)} requirements are verified.')
-    overview = {'ok': not probs, 'counts': counts, 'checked': checked}
+    overview = {'ok': not any(pr['who'] != 'limit' for pr in probs), 'counts': counts, 'checked': checked}
     return probs, overview
