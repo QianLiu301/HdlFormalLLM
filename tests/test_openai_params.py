@@ -15,7 +15,7 @@ def _provider(model):
     return p
 
 
-@pytest.mark.parametrize('model', ['gpt-5-mini', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.1'])
+@pytest.mark.parametrize('model', ['gpt-5-mini', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.1', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna'])
 def test_every_gpt5_version_gets_the_gpt5_parameters_and_low_reasoning(model):
     p = _provider(model)
     assert p._is_gpt5_model(model)

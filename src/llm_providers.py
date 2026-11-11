@@ -1259,7 +1259,7 @@ class OpenAIProvider(LLMProvider):
 
     GPT5_MODELS = ["gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-5.1-codex"]
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5.4-mini"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-6-sol"):
         if not OPENAI_SDK_AVAILABLE:
             raise ImportError("OpenAI SDK required. Install with: pip install openai")
 
@@ -1273,9 +1273,10 @@ class OpenAIProvider(LLMProvider):
         self.max_retries = 3
 
     def _is_gpt5_model(self, model: str) -> bool:
-        """GPT-5 family (gpt-5, gpt-5-mini, gpt-5.4-mini, gpt-5.5, ...): max_completion_tokens,
-        temperature fixed at 1. A fixed list left out every later version."""
-        return (model or '').lower().startswith('gpt-5')
+        """GPT-5 and later (gpt-5-mini, gpt-5.4-mini, gpt-5.6-terra, gpt-6-sol, ...): reasoning
+        models with max_completion_tokens and temperature fixed at 1. A fixed list of names
+        left out every later version."""
+        return re.match(r'gpt-([5-9]|\d{2,})', (model or '').lower()) is not None
 
     # GPT-5 models reason before they answer, at "medium" unless told otherwise; for
     # Verilog and Gherkin that cost 60-170 s per call (llm_calls, 2026-11). "low" keeps
@@ -1284,7 +1285,8 @@ class OpenAIProvider(LLMProvider):
 
     def _reasoning(self) -> Dict:
         m = (self.model or '').lower()
-        return {'reasoning_effort': self.REASONING_EFFORT} if m.startswith('gpt-5') and 'codex' not in m else {}
+        return ({'reasoning_effort': self.REASONING_EFFORT}
+                if self._is_gpt5_model(m) and 'codex' not in m else {})
 
     def _is_codex_model(self, model: str) -> bool:
         """
@@ -1395,7 +1397,7 @@ class OpenAIProvider(LLMProvider):
                 "stream": True
             }
 
-            if 'gpt-5' in self.model.lower():
+            if self._is_gpt5_model(self.model):
                 params['max_completion_tokens'] = max_tokens
                 params['temperature'] = 1
                 params.update(self._reasoning())
@@ -2791,7 +2793,7 @@ class LLMFactory:
             elif provider_type == 'local':
                 print("📝 Using Local Templates (FREE)")
             elif provider_type in ['openai', 'gpt', 'chatgpt']:
-                model = kwargs.get('model', 'gpt-5.4-mini')
+                model = kwargs.get('model', 'gpt-6-sol')
                 if 'gpt-5' in model:
                     if 'codex' in model.lower():
                         print(f"💰 Using OpenAI GPT-5 Codex (PAID) - Model: {model} [Completions API]")
@@ -2868,7 +2870,7 @@ class LLMConfig:
                 "api_key": ""
             },
             "openai": {
-                "model": "gpt-5.4-mini",
+                "model": "gpt-6-sol",
                 "api_key": ""
             },
             "claude": {
